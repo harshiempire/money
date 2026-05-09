@@ -84,9 +84,14 @@ export default async function TransactionsPage({
     )
     .where(where)
     .orderBy(
+      // Within a date, group rows by their source import (Postgres now() is
+      // per-transaction so all rows from one import share createdAt), newest
+      // import first. Within an import, the bank's Sr.No is the only correct
+      // intraday order. Sr.No is per-statement and would collide across
+      // imports without the createdAt grouping.
       desc(schema.transactions.txnDate),
-      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
       desc(schema.transactions.createdAt),
+      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
     )
     .limit(1000);
 
