@@ -87,7 +87,11 @@ export const persistImport = (
           .insert(schema.transactions)
           .values(values)
           .onConflictDoNothing({
-            target: [schema.transactions.accountId, schema.transactions.refId],
+            target: [
+              schema.transactions.accountId,
+              schema.transactions.refId,
+              schema.transactions.drCr,
+            ],
           })
           .returning({ id: schema.transactions.id });
         rowsNew = inserted.length;

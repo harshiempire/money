@@ -216,8 +216,14 @@ export const transactions = pgTable(
       .notNull(),
   },
   (t) => ({
-    // The big idea: dedup across overlapping statements via (account, ref_id).
-    uniqAccountRef: uniqueIndex("txn_account_ref_uniq").on(t.accountId, t.refId),
+    // Dedup across overlapping statements. dr_cr is part of the key because
+    // banks reuse a UPI ref id when they reverse a payment (the original debit
+    // and the reversal credit share the same ref_id but flip dr/cr).
+    uniqAccountRef: uniqueIndex("txn_account_ref_uniq").on(
+      t.accountId,
+      t.refId,
+      t.drCr,
+    ),
     byAccountDate: index("txn_account_date_idx").on(t.accountId, t.txnDate),
   }),
 );
