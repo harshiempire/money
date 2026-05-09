@@ -16,6 +16,7 @@ import type {
   ExistingAllocation,
   ParticipantOption,
 } from "./SettleDialog";
+import { AutoDetectButton } from "./AutoDetectButton";
 
 export const dynamic = "force-dynamic";
 
@@ -244,16 +245,30 @@ export default async function TransactionsPage({
     <main className="mx-auto max-w-6xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
-        <a
-          href="/import"
-          className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
-        >
-          Import statement →
-        </a>
+        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
+          <a href="/" className="underline-offset-4 hover:underline">
+            Dashboard
+          </a>
+          <a href="/timeline" className="underline-offset-4 hover:underline">
+            Timeline
+          </a>
+          <a
+            href="/reimbursements"
+            className="underline-offset-4 hover:underline"
+          >
+            Reimbursements
+          </a>
+          <a href="/import" className="underline-offset-4 hover:underline">
+            Import
+          </a>
+        </nav>
       </header>
-      <p className="mt-1 text-xs text-neutral-500">
-        Account: <strong>{account.name}</strong> ({account.bank})
-      </p>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <p className="text-xs text-neutral-500">
+          Account: <strong>{account.name}</strong> ({account.bank})
+        </p>
+        <AutoDetectButton />
+      </div>
 
       <FiltersBar from={sp.from} to={sp.to} channel={sp.channel} />
 

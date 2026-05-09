@@ -1,9 +1,11 @@
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
+import { ensureDefaultBobAccount } from "@/db/seed-account";
 import { ensureSeedUser } from "@/db/seed-user";
+import { detectTransferPairs } from "@/domain/transfers/detect";
 
 /**
  * Set or clear a single transaction's category. Auto-flips `is_transfer` when
@@ -106,4 +108,40 @@ export async function setTransactionTransfer(input: {
     .where(eq(schema.transactions.id, input.transactionId));
   revalidatePath("/transactions");
   revalidatePath("/");
+}
+
+/**
+ * Walk every transaction in the seed account, pair up matching debit/credit
+ * (same amount, ±3 days) that aren't yet flagged as transfer, and flip
+ * is_transfer=true on both sides. Returns the count of pairs marked.
+ */
+export async function autoDetectTransfers(): Promise<{ pairs: number }> {
+  const account = await ensureDefaultBobAccount();
+  const rows = await db
+    .select({
+      id: schema.transactions.id,
+      txnDate: schema.transactions.txnDate,
+      amountPaise: schema.transactions.amountPaise,
+      drCr: schema.transactions.drCr,
+      channel: schema.transactions.channel,
+      counterpartyId: schema.transactions.counterpartyId,
+      isTransfer: schema.transactions.isTransfer,
+    })
+    .from(schema.transactions)
+    .where(eq(schema.transactions.accountId, account.id));
+
+  const pairs = detectTransferPairs(rows);
+  if (pairs.length === 0) {
+    revalidatePath("/transactions");
+    return { pairs: 0 };
+  }
+  const ids = pairs.flatMap((p) => [p.debitId, p.creditId]);
+  await db
+    .update(schema.transactions)
+    .set({ isTransfer: true })
+    .where(inArray(schema.transactions.id, ids));
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  revalidatePath("/timeline");
+  return { pairs: pairs.length };
 }
