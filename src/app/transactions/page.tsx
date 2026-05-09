@@ -1,12 +1,16 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ensureDefaultBobAccount } from "@/db/seed-account";
+import { ensureSeedUser } from "@/db/seed-user";
+import { ensureDefaultCategories } from "@/db/seed-categories";
+import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
   counterpartyLabel,
   formatDate,
   formatPaise,
   formatPaiseSigned,
 } from "@/lib/format";
+import { RowActions, type CategoryOption } from "./RowActions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +42,13 @@ export default async function TransactionsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const sp = await searchParams;
+  const userId = await ensureSeedUser();
   const account = await ensureDefaultBobAccount();
+
+  // Idempotent setup: seed default categories and backfill any transactions
+  // imported before counterparty linking existed.
+  await ensureDefaultCategories(userId);
+  await backfillCounterparties(account.id, userId);
 
   const filters = [eq(schema.transactions.accountId, account.id)];
   if (sp.from) filters.push(gte(schema.transactions.txnDate, sp.from));
@@ -49,28 +59,61 @@ export default async function TransactionsPage({
   const where = and(...filters);
 
   const rows = await db
-    .select()
+    .select({
+      id: schema.transactions.id,
+      txnDate: schema.transactions.txnDate,
+      amountPaise: schema.transactions.amountPaise,
+      drCr: schema.transactions.drCr,
+      channel: schema.transactions.channel,
+      rawDescription: schema.transactions.rawDescription,
+      parsedPurpose: schema.transactions.parsedPurpose,
+      balancePaise: schema.transactions.balancePaise,
+      counterpartyId: schema.transactions.counterpartyId,
+      counterpartyDisplayName: schema.counterparties.displayName,
+      categoryId: schema.transactions.categoryId,
+      isTransfer: schema.transactions.isTransfer,
+    })
     .from(schema.transactions)
+    .leftJoin(
+      schema.counterparties,
+      eq(schema.transactions.counterpartyId, schema.counterparties.id),
+    )
     .where(where)
-    .orderBy(desc(schema.transactions.txnDate), desc(schema.transactions.createdAt))
+    .orderBy(
+      desc(schema.transactions.txnDate),
+      desc(schema.transactions.createdAt),
+    )
     .limit(1000);
 
   const [totals] = await db
     .select({
       debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
       credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+      debitNet: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' and ${schema.transactions.isTransfer} = false then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+      creditNet: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' and ${schema.transactions.isTransfer} = false then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
       count: sql<number>`count(*)::int`,
     })
     .from(schema.transactions)
     .where(where);
 
-  // Drizzle returns bigint columns as strings; coerce.
   const totalDebit = Number(totals.debit);
   const totalCredit = Number(totals.credit);
-  const net = totalCredit - totalDebit;
+  const netSpend = Number(totals.debitNet) - Number(totals.creditNet);
+
+  const categories = await db
+    .select({
+      id: schema.categories.id,
+      name: schema.categories.name,
+      kind: schema.categories.kind,
+    })
+    .from(schema.categories)
+    .where(eq(schema.categories.userId, userId))
+    .orderBy(asc(schema.categories.kind), asc(schema.categories.name));
+
+  const categoryOptions: CategoryOption[] = categories;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
+    <main className="mx-auto max-w-6xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
         <a
@@ -86,12 +129,18 @@ export default async function TransactionsPage({
 
       <FiltersBar from={sp.from} to={sp.to} channel={sp.channel} />
 
-      <section className="mt-4 grid grid-cols-3 gap-3 text-sm">
+      <section className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
         <Stat label="Debits" value={formatPaise(totalDebit)} tone="debit" />
         <Stat label="Credits" value={formatPaise(totalCredit)} tone="credit" />
         <Stat
-          label="Net"
-          value={`${net >= 0 ? "+" : "−"} ${formatPaise(Math.abs(net))}`}
+          label="Gross net"
+          value={`${totalCredit - totalDebit >= 0 ? "+" : "−"} ${formatPaise(Math.abs(totalCredit - totalDebit))}`}
+        />
+        <Stat
+          label="Net personal spend"
+          value={formatPaise(netSpend)}
+          tone="debit"
+          hint="excluding transfers"
         />
       </section>
 
@@ -113,6 +162,7 @@ export default async function TransactionsPage({
                 <th className="py-2 pr-3">Channel</th>
                 <th className="py-2 pr-3">Counterparty</th>
                 <th className="py-2 pr-3 text-right">Amount</th>
+                <th className="py-2 pr-3">Tag</th>
                 <th className="py-2 pr-3 text-right">Balance</th>
               </tr>
             </thead>
@@ -120,7 +170,9 @@ export default async function TransactionsPage({
               {rows.map((r) => (
                 <tr
                   key={r.id}
-                  className="border-t border-neutral-200 align-top dark:border-neutral-800"
+                  className={`border-t border-neutral-200 align-top dark:border-neutral-800 ${
+                    r.isTransfer ? "opacity-60" : ""
+                  }`}
                 >
                   <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
                     {formatDate(r.txnDate)}
@@ -130,7 +182,8 @@ export default async function TransactionsPage({
                   </td>
                   <td className="py-2 pr-3">
                     <div className="font-medium">
-                      {counterpartyLabel(r.rawDescription)}
+                      {r.counterpartyDisplayName ??
+                        counterpartyLabel(r.rawDescription)}
                     </div>
                     {r.parsedPurpose && (
                       <div className="text-xs text-neutral-500">
@@ -146,6 +199,15 @@ export default async function TransactionsPage({
                     }`}
                   >
                     {formatPaiseSigned(r.amountPaise, r.drCr)}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <RowActions
+                      transactionId={r.id}
+                      categoryId={r.categoryId}
+                      isTransfer={r.isTransfer}
+                      counterpartyId={r.counterpartyId}
+                      categories={categoryOptions}
+                    />
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">
                     {formatPaise(r.balancePaise)}
@@ -164,10 +226,12 @@ function Stat({
   label,
   value,
   tone,
+  hint,
 }: {
   label: string;
   value: string;
   tone?: "debit" | "credit";
+  hint?: string;
 }) {
   const toneClass =
     tone === "debit"
@@ -179,6 +243,7 @@ function Stat({
     <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
       <div className="text-xs uppercase text-neutral-500">{label}</div>
       <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
+      {hint && <div className="mt-0.5 text-[10px] text-neutral-500">{hint}</div>}
     </div>
   );
 }

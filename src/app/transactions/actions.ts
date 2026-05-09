@@ -1,0 +1,109 @@
+"use server";
+
+import { and, eq, isNull } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { db, schema } from "@/db";
+import { ensureSeedUser } from "@/db/seed-user";
+
+/**
+ * Set or clear a single transaction's category. Auto-flips `is_transfer` when
+ * the chosen category is a transfer- or investment-kind, since those should
+ * never count as personal spend in the dashboard.
+ *
+ * `categoryId` is "" to clear.
+ */
+export async function setTransactionCategory(input: {
+  transactionId: string;
+  categoryId: string;
+}) {
+  const userId = await ensureSeedUser();
+  const newCategoryId = input.categoryId === "" ? null : input.categoryId;
+  const isTransfer = newCategoryId
+    ? await categoryIsTransfer(newCategoryId, userId)
+    : false;
+
+  await db
+    .update(schema.transactions)
+    .set({ categoryId: newCategoryId, isTransfer })
+    .where(eq(schema.transactions.id, input.transactionId));
+
+  revalidatePath("/transactions");
+  revalidatePath("/");
+}
+
+/**
+ * Use this row's category as the default for its counterparty, then apply it
+ * to every other transaction from that counterparty that still has no
+ * category set. The "rule learning" behavior from the plan.
+ */
+export async function applyCategoryToCounterparty(input: {
+  transactionId: string;
+}) {
+  const userId = await ensureSeedUser();
+
+  const [txn] = await db
+    .select({
+      counterpartyId: schema.transactions.counterpartyId,
+      categoryId: schema.transactions.categoryId,
+    })
+    .from(schema.transactions)
+    .where(eq(schema.transactions.id, input.transactionId))
+    .limit(1);
+  if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0 };
+
+  const isTransfer = await categoryIsTransfer(txn.categoryId, userId);
+
+  await db
+    .update(schema.counterparties)
+    .set({ defaultCategoryId: txn.categoryId })
+    .where(
+      and(
+        eq(schema.counterparties.id, txn.counterpartyId),
+        eq(schema.counterparties.userId, userId),
+      ),
+    );
+
+  const updated = await db
+    .update(schema.transactions)
+    .set({ categoryId: txn.categoryId, isTransfer })
+    .where(
+      and(
+        eq(schema.transactions.counterpartyId, txn.counterpartyId),
+        isNull(schema.transactions.categoryId),
+      ),
+    )
+    .returning({ id: schema.transactions.id });
+
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  return { updated: updated.length };
+}
+
+async function categoryIsTransfer(
+  categoryId: string,
+  userId: string,
+): Promise<boolean> {
+  const [cat] = await db
+    .select({ kind: schema.categories.kind })
+    .from(schema.categories)
+    .where(
+      and(
+        eq(schema.categories.id, categoryId),
+        eq(schema.categories.userId, userId),
+      ),
+    )
+    .limit(1);
+  return cat?.kind === "transfer" || cat?.kind === "investment";
+}
+
+export async function setTransactionTransfer(input: {
+  transactionId: string;
+  isTransfer: boolean;
+}) {
+  await db
+    .update(schema.transactions)
+    .set({ isTransfer: input.isTransfer })
+    .where(eq(schema.transactions.id, input.transactionId));
+  revalidatePath("/transactions");
+  revalidatePath("/");
+}
