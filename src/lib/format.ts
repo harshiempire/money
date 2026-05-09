@@ -1,0 +1,46 @@
+/**
+ * Display helpers shared across pages. All money is paise (integer); dates
+ * are ISO strings from Postgres `date` columns.
+ */
+
+const inrFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 2,
+});
+
+export const formatPaise = (paise: number | null | undefined): string => {
+  if (paise == null) return "—";
+  return inrFormatter.format(paise / 100);
+};
+
+export const formatPaiseSigned = (
+  paise: number,
+  drCr: "debit" | "credit",
+): string => {
+  const sign = drCr === "debit" ? "−" : "+";
+  return `${sign} ${inrFormatter.format(paise / 100)}`;
+};
+
+export const formatDate = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  // Treat YYYY-MM-DD as a calendar date, not a timestamp, so it doesn't shift
+  // by timezone when rendered.
+  const [y, m, d] = iso.split("-");
+  return `${d}-${m}-${y}`;
+};
+
+/**
+ * Best-effort display label from the raw description. Falls back to a
+ * truncated description so every row has *something* readable.
+ */
+export const counterpartyLabel = (raw: string): string => {
+  const upi = raw.match(/^UPI\/\d+\/[\d:]+\/(?:UPI|UDIR)\/([^\s/]+)/i);
+  if (upi) return upi[1].replace(/\s+/g, "").toLowerCase();
+  const imps = raw.match(/^IMPS\/(?:P2A|P2P|P2M)\/\d+\/([^/]+?)(?:\/.*)?$/);
+  if (imps) return imps[1].trim();
+  const neft = raw.match(/^NEFT-[A-Z0-9]+-(.+?)(?:\s*-\s*)?$/);
+  if (neft) return neft[1].trim();
+  if (/Opening Balance/i.test(raw)) return "Opening Balance";
+  return raw.length > 40 ? raw.slice(0, 40) + "…" : raw;
+};
