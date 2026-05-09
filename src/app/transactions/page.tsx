@@ -85,6 +85,7 @@ export default async function TransactionsPage({
     .where(where)
     .orderBy(
       desc(schema.transactions.txnDate),
+      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
       desc(schema.transactions.createdAt),
     )
     .limit(1000);

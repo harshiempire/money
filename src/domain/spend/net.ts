@@ -138,7 +138,7 @@ export async function dailyClosingBalance(
     .select({
       date: schema.transactions.txnDate,
       balancePaise: sql<number>`(
-        array_agg(${schema.transactions.balancePaise} order by ${schema.transactions.createdAt} desc)
+        array_agg(${schema.transactions.balancePaise} order by (${schema.transactions.rawPayload}->>'serial')::int desc nulls last, ${schema.transactions.createdAt} desc)
       )[1]::bigint`,
     })
     .from(schema.transactions)
