@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ensureDefaultBobAccount } from "@/db/seed-account";
 import { ensureSeedUser } from "@/db/seed-user";
@@ -11,6 +11,11 @@ import {
   formatPaiseSigned,
 } from "@/lib/format";
 import { RowActions, type CategoryOption } from "./RowActions";
+import type { ExistingSplit } from "./SplitDialog";
+import type {
+  ExistingAllocation,
+  ParticipantOption,
+} from "./SettleDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -45,8 +50,6 @@ export default async function TransactionsPage({
   const userId = await ensureSeedUser();
   const account = await ensureDefaultBobAccount();
 
-  // Idempotent setup: seed default categories and backfill any transactions
-  // imported before counterparty linking existed.
   await ensureDefaultCategories(userId);
   await backfillCounterparties(account.id, userId);
 
@@ -85,12 +88,137 @@ export default async function TransactionsPage({
     )
     .limit(1000);
 
+  // Load splits, participants, and settlements for the rows in view.
+  const txnIds = rows.map((r) => r.id);
+  const splits = txnIds.length
+    ? await db
+        .select()
+        .from(schema.splits)
+        .where(inArray(schema.splits.transactionId, txnIds))
+    : [];
+  const splitIds = splits.map((s) => s.id);
+  const participantsAll = splitIds.length
+    ? await db
+        .select()
+        .from(schema.splitParticipants)
+        .where(inArray(schema.splitParticipants.splitId, splitIds))
+    : [];
+  const settlementsForRows = txnIds.length
+    ? await db
+        .select()
+        .from(schema.settlements)
+        .where(inArray(schema.settlements.inflowTransactionId, txnIds))
+    : [];
+
+  // Group lookups for the row renderer.
+  const splitByTxn = new Map<string, ExistingSplit>();
+  for (const s of splits) {
+    splitByTxn.set(s.transactionId, {
+      totalPaise: Number(s.totalPaise),
+      yourSharePaise: Number(s.yourSharePaise),
+      note: s.note,
+      participants: participantsAll
+        .filter((p) => p.splitId === s.id)
+        .map((p) => ({
+          id: p.id,
+          personName: p.personName,
+          expectedAmountPaise: Number(p.expectedAmountPaise),
+        })),
+    });
+  }
+  const settlementsByInflow = new Map<string, ExistingAllocation[]>();
+  for (const st of settlementsForRows) {
+    const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
+    arr.push({
+      splitParticipantId: st.splitParticipantId,
+      amountPaise: Number(st.amountPaise),
+    });
+    settlementsByInflow.set(st.inflowTransactionId, arr);
+  }
+
+  // For the SettleDialog: list every participant across all splits in the
+  // account, with how much has already been settled across all inflows.
+  const allSplitsForAccount = await db
+    .select({
+      id: schema.splits.id,
+      transactionId: schema.splits.transactionId,
+      txnDate: schema.transactions.txnDate,
+      rawDescription: schema.transactions.rawDescription,
+    })
+    .from(schema.splits)
+    .innerJoin(
+      schema.transactions,
+      eq(schema.splits.transactionId, schema.transactions.id),
+    )
+    .where(eq(schema.transactions.accountId, account.id));
+  const allParticipants = allSplitsForAccount.length
+    ? await db
+        .select()
+        .from(schema.splitParticipants)
+        .where(
+          inArray(
+            schema.splitParticipants.splitId,
+            allSplitsForAccount.map((s) => s.id),
+          ),
+        )
+    : [];
+  const allSettlements = allSplitsForAccount.length
+    ? await db
+        .select({
+          splitParticipantId: schema.settlements.splitParticipantId,
+          amountPaise: schema.settlements.amountPaise,
+        })
+        .from(schema.settlements)
+        .where(
+          inArray(
+            schema.settlements.splitParticipantId,
+            allParticipants.map((p) => p.id),
+          ),
+        )
+    : [];
+  const settledByParticipant = new Map<string, number>();
+  for (const s of allSettlements) {
+    settledByParticipant.set(
+      s.splitParticipantId,
+      (settledByParticipant.get(s.splitParticipantId) ?? 0) +
+        Number(s.amountPaise),
+    );
+  }
+  const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
+  const participantOptions: ParticipantOption[] = allParticipants.map((p) => {
+    const meta = splitMetaById.get(p.splitId)!;
+    return {
+      id: p.id,
+      personName: p.personName,
+      expectedAmountPaise: Number(p.expectedAmountPaise),
+      splitTransactionDate: formatDate(meta.txnDate),
+      splitTransactionDescription:
+        counterpartyLabel(meta.rawDescription) ?? meta.rawDescription,
+      alreadySettledPaise: settledByParticipant.get(p.id) ?? 0,
+    };
+  });
+
+  // Net spend SQL: when a debit has a split, count only your_share; when a
+  // credit is a settlement, exclude it (already accounted for via your_share).
   const [totals] = await db
     .select({
       debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
       credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      debitNet: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' and ${schema.transactions.isTransfer} = false then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      creditNet: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' and ${schema.transactions.isTransfer} = false then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+      netSelf: sql<number>`
+        coalesce(sum(
+          case
+            when ${schema.transactions.isTransfer} = true then 0
+            when ${schema.transactions.drCr} = 'debit'
+              then coalesce((select ${schema.splits.yourSharePaise} from ${schema.splits} where ${schema.splits.transactionId} = ${schema.transactions.id}), ${schema.transactions.amountPaise})
+            when ${schema.transactions.drCr} = 'credit'
+              and exists (select 1 from ${schema.settlements} where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id})
+              then 0
+            when ${schema.transactions.drCr} = 'credit'
+              then -1 * ${schema.transactions.amountPaise}
+            else 0
+          end
+        ), 0)::bigint
+      `,
       count: sql<number>`count(*)::int`,
     })
     .from(schema.transactions)
@@ -98,7 +226,7 @@ export default async function TransactionsPage({
 
   const totalDebit = Number(totals.debit);
   const totalCredit = Number(totals.credit);
-  const netSpend = Number(totals.debitNet) - Number(totals.creditNet);
+  const netSpend = Number(totals.netSelf);
 
   const categories = await db
     .select({
@@ -140,7 +268,7 @@ export default async function TransactionsPage({
           label="Net personal spend"
           value={formatPaise(netSpend)}
           tone="debit"
-          hint="excluding transfers"
+          hint="excludes transfers, splits use your share, settlements neutralized"
         />
       </section>
 
@@ -203,10 +331,15 @@ export default async function TransactionsPage({
                   <td className="py-2 pr-3">
                     <RowActions
                       transactionId={r.id}
+                      drCr={r.drCr}
+                      amountPaise={r.amountPaise}
                       categoryId={r.categoryId}
                       isTransfer={r.isTransfer}
                       counterpartyId={r.counterpartyId}
                       categories={categoryOptions}
+                      existingSplit={splitByTxn.get(r.id) ?? null}
+                      existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      participants={participantOptions}
                     />
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">

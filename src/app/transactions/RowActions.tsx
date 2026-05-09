@@ -6,6 +6,12 @@ import {
   setTransactionCategory,
   setTransactionTransfer,
 } from "./actions";
+import { SplitButton, type ExistingSplit } from "./SplitDialog";
+import {
+  SettleButton,
+  type ExistingAllocation,
+  type ParticipantOption,
+} from "./SettleDialog";
 
 export interface CategoryOption {
   id: string;
@@ -15,21 +21,31 @@ export interface CategoryOption {
 
 export function RowActions({
   transactionId,
+  drCr,
+  amountPaise,
   categoryId,
   isTransfer,
   counterpartyId,
   categories,
+  existingSplit,
+  existingSettlement,
+  participants,
 }: {
   transactionId: string;
+  drCr: "debit" | "credit";
+  amountPaise: number;
   categoryId: string | null;
   isTransfer: boolean;
   counterpartyId: string | null;
   categories: CategoryOption[];
+  existingSplit: ExistingSplit | null;
+  existingSettlement: ExistingAllocation[];
+  participants: ParticipantOption[];
 }) {
   const [pending, startTransition] = useTransition();
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <select
         value={categoryId ?? ""}
         disabled={pending}
@@ -85,6 +101,22 @@ export function RowActions({
         />
         Transfer
       </label>
+
+      {drCr === "debit" && (
+        <SplitButton
+          transactionId={transactionId}
+          amountPaise={amountPaise}
+          existing={existingSplit}
+        />
+      )}
+      {drCr === "credit" && (
+        <SettleButton
+          inflowTransactionId={transactionId}
+          amountPaise={amountPaise}
+          participants={participants}
+          existing={existingSettlement}
+        />
+      )}
     </div>
   );
 }
