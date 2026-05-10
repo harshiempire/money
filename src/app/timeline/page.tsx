@@ -250,7 +250,7 @@ function BalanceChart({
           className="fill-sky-600 dark:fill-sky-400"
         >
           <title>
-            {p.date} · ₹{(p.balancePaise / 100).toLocaleString("en-IN")}
+            {p.date} · {formatPaise(p.balancePaise)}
           </title>
         </circle>
       ))}
@@ -265,7 +265,7 @@ function BalanceChart({
           fill="currentColor"
           opacity={0.7}
         >
-          ₹{Math.round(v / 100).toLocaleString("en-IN")}
+          {formatPaise(Math.round(v))}
         </text>
       ))}
       {ticks.map((i) => (

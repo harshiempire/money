@@ -139,11 +139,25 @@ function SplitForm({
         personName: p.personName.trim(),
         expectedAmountPaise: rupeesToPaise(p.expectedRupees),
       }));
+    const totalPaise = rupeesToPaise(total);
+    // If "your share" is left blank, default to total minus sum of named
+    // participant shares — i.e. "I paid the rest". Falls back to total when
+    // there are no participants, and to 0 if math goes sideways.
+    let yourSharePaise = rupeesToPaise(yourShare);
+    if (!Number.isFinite(yourSharePaise)) {
+      const participantsSum = cleaned.reduce(
+        (s, p) => s + p.expectedAmountPaise,
+        0,
+      );
+      yourSharePaise = Number.isFinite(totalPaise)
+        ? Math.max(0, totalPaise - participantsSum)
+        : 0;
+    }
     startTransition(async () => {
       await createSplit({
         transactionId,
-        totalPaise: rupeesToPaise(total),
-        yourSharePaise: rupeesToPaise(yourShare),
+        totalPaise: Number.isFinite(totalPaise) ? totalPaise : 0,
+        yourSharePaise,
         note: note.trim() || null,
         participants: cleaned,
       });
@@ -186,9 +200,13 @@ function SplitForm({
           <input
             inputMode="decimal"
             value={yourShare}
+            placeholder="auto"
             onChange={(e) => setYourShare(e.target.value)}
             className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
           />
+          <span className="mt-1 text-[10px] text-neutral-500">
+            Leave blank to auto-compute as total − participants.
+          </span>
         </label>
       </div>
 
