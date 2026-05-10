@@ -187,9 +187,17 @@ export function NoteButton({
                               {c.rawDescription}
                             </div>
                             {c.currentNote && (
-                              <div className="truncate text-[10px] italic text-amber-700 dark:text-amber-400">
-                                current: {c.currentNote}
-                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDraft(c.currentNote ?? "");
+                                }}
+                                title="Click to copy this note into the textarea"
+                                className="block truncate text-left text-[10px] italic text-amber-700 underline-offset-4 hover:underline dark:text-amber-400"
+                              >
+                                current: {c.currentNote} ↑
+                              </button>
                             )}
                           </div>
                           <span
