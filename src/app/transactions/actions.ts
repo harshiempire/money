@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
 import { ensureDefaultBobAccount } from "@/db/seed-account";
@@ -123,35 +123,81 @@ export async function setTransactionNote(input: {
   revalidatePath("/");
 }
 
+export interface NoteCandidate {
+  id: string;
+  txnDate: string;
+  amountPaise: number;
+  drCr: "debit" | "credit";
+  rawDescription: string;
+  currentNote: string | null;
+}
+
 /**
- * Copy this row's note onto every other transaction with the same
- * counterparty that doesn't already have a note. Returns the count of rows
- * updated. Skips silently if this row has no counterparty or no note.
+ * Sibling rows the user might want to copy a note to: other transactions
+ * sharing this row's counterparty (excluding this row itself).
+ *
+ * Returned via server action so the note dialog can lazy-fetch when
+ * opened, instead of bloating every row's initial render with a candidate
+ * list it usually won't need.
  */
-export async function applyNoteToCounterparty(input: {
+export async function getNoteCandidates(input: {
   transactionId: string;
-}): Promise<{ updated: number }> {
-  const [txn] = await db
-    .select({
-      counterpartyId: schema.transactions.counterpartyId,
-      note: schema.transactions.note,
-    })
+}): Promise<NoteCandidate[]> {
+  const [self] = await db
+    .select({ counterpartyId: schema.transactions.counterpartyId })
     .from(schema.transactions)
     .where(eq(schema.transactions.id, input.transactionId))
     .limit(1);
-  if (!txn || !txn.counterpartyId || !txn.note) return { updated: 0 };
+  if (!self || !self.counterpartyId) return [];
 
-  const updated = await db
-    .update(schema.transactions)
-    .set({ note: txn.note })
+  const rows = await db
+    .select({
+      id: schema.transactions.id,
+      txnDate: schema.transactions.txnDate,
+      amountPaise: schema.transactions.amountPaise,
+      drCr: schema.transactions.drCr,
+      rawDescription: schema.transactions.rawDescription,
+      currentNote: schema.transactions.note,
+    })
+    .from(schema.transactions)
     .where(
       and(
-        eq(schema.transactions.counterpartyId, txn.counterpartyId),
-        isNull(schema.transactions.note),
+        eq(schema.transactions.counterpartyId, self.counterpartyId),
+        // Exclude self: we set this row's note via setTransactionNote.
       ),
     )
-    .returning({ id: schema.transactions.id });
+    .orderBy(desc(schema.transactions.txnDate));
 
+  return rows
+    .filter((r) => r.id !== input.transactionId)
+    .map((r) => ({
+      id: r.id,
+      txnDate: r.txnDate,
+      amountPaise: Number(r.amountPaise),
+      drCr: r.drCr,
+      rawDescription: r.rawDescription,
+      currentNote: r.currentNote,
+    }));
+}
+
+/**
+ * Bulk-set the same note on a list of transaction ids. Used by the note
+ * dialog when the user explicitly selects which siblings should adopt the
+ * note — distinct from "auto apply to all from counterparty" which we
+ * deliberately don't have, because the same counterparty often covers
+ * different real charges (Apple Services → F1 vs Anthropic vs iCloud).
+ */
+export async function applyNoteToTransactions(input: {
+  transactionIds: string[];
+  note: string;
+}): Promise<{ updated: number }> {
+  const cleaned = input.note.trim();
+  if (input.transactionIds.length === 0) return { updated: 0 };
+  const updated = await db
+    .update(schema.transactions)
+    .set({ note: cleaned === "" ? null : cleaned })
+    .where(inArray(schema.transactions.id, input.transactionIds))
+    .returning({ id: schema.transactions.id });
   revalidatePath("/transactions");
   revalidatePath("/");
   return { updated: updated.length };
