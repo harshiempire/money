@@ -166,50 +166,51 @@ export function NoteButton({
                     {candidates.map((c) => (
                       <li
                         key={c.id}
-                        className="flex items-center gap-2 p-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
+                        className="hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
                       >
-                        <input
-                          type="checkbox"
-                          checked={picked.has(c.id)}
-                          onChange={() => togglePick(c.id)}
-                          className="mt-0.5 shrink-0"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => togglePick(c.id)}
-                          className="flex flex-1 items-baseline justify-between gap-3 text-left"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="font-mono text-xs text-neutral-500">
-                              {formatDate(c.txnDate)}
+                        <label className="flex cursor-pointer items-center gap-2 p-2">
+                          <input
+                            type="checkbox"
+                            checked={picked.has(c.id)}
+                            onChange={() => togglePick(c.id)}
+                            className="mt-0.5 shrink-0"
+                          />
+                          <div className="flex flex-1 items-baseline justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-mono text-xs text-neutral-500">
+                                {formatDate(c.txnDate)}
+                              </div>
+                              <div className="truncate text-xs">
+                                {c.rawDescription}
+                              </div>
+                              {c.currentNote && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    // Prevent the wrapping <label> from also
+                                    // toggling the checkbox.
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setDraft(c.currentNote ?? "");
+                                  }}
+                                  title="Click to copy this note into the textarea"
+                                  className="block truncate text-left text-[10px] italic text-amber-700 underline-offset-4 hover:underline dark:text-amber-400"
+                                >
+                                  current: {c.currentNote} ↑
+                                </button>
+                              )}
                             </div>
-                            <div className="truncate text-xs">
-                              {c.rawDescription}
-                            </div>
-                            {c.currentNote && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDraft(c.currentNote ?? "");
-                                }}
-                                title="Click to copy this note into the textarea"
-                                className="block truncate text-left text-[10px] italic text-amber-700 underline-offset-4 hover:underline dark:text-amber-400"
-                              >
-                                current: {c.currentNote} ↑
-                              </button>
-                            )}
+                            <span
+                              className={`font-mono text-xs whitespace-nowrap ${
+                                c.drCr === "debit"
+                                  ? "text-red-700 dark:text-red-400"
+                                  : "text-emerald-700 dark:text-emerald-400"
+                              }`}
+                            >
+                              {formatPaiseSigned(c.amountPaise, c.drCr)}
+                            </span>
                           </div>
-                          <span
-                            className={`font-mono text-xs whitespace-nowrap ${
-                              c.drCr === "debit"
-                                ? "text-red-700 dark:text-red-400"
-                                : "text-emerald-700 dark:text-emerald-400"
-                            }`}
-                          >
-                            {formatPaiseSigned(c.amountPaise, c.drCr)}
-                          </span>
-                        </button>
+                        </label>
                       </li>
                     ))}
                   </ul>
