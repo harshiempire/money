@@ -213,6 +213,12 @@ export function NoteButton({
                   saving will overwrite them.
                 </p>
               )}
+              {picked.size > 0 && draft.trim().length === 0 && (
+                <p className="mt-2 text-[10px] text-red-600 dark:text-red-400">
+                  Type the note text above first — checked rows are ignored
+                  when the field is empty.
+                </p>
+              )}
             </div>
           )}
 
@@ -239,7 +245,7 @@ export function NoteButton({
             >
               {pending
                 ? "Saving…"
-                : picked.size > 0
+                : picked.size > 0 && draft.trim().length > 0
                   ? `Save (+${picked.size})`
                   : "Save"}
             </button>
