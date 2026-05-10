@@ -121,7 +121,11 @@ export function RowActions({
         />
       )}
 
-      <NoteButton transactionId={transactionId} note={note} />
+      <NoteButton
+        transactionId={transactionId}
+        note={note}
+        hasCounterparty={counterpartyId !== null}
+      />
     </div>
   );
 }

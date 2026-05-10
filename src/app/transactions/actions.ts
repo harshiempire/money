@@ -124,6 +124,40 @@ export async function setTransactionNote(input: {
 }
 
 /**
+ * Copy this row's note onto every other transaction with the same
+ * counterparty that doesn't already have a note. Returns the count of rows
+ * updated. Skips silently if this row has no counterparty or no note.
+ */
+export async function applyNoteToCounterparty(input: {
+  transactionId: string;
+}): Promise<{ updated: number }> {
+  const [txn] = await db
+    .select({
+      counterpartyId: schema.transactions.counterpartyId,
+      note: schema.transactions.note,
+    })
+    .from(schema.transactions)
+    .where(eq(schema.transactions.id, input.transactionId))
+    .limit(1);
+  if (!txn || !txn.counterpartyId || !txn.note) return { updated: 0 };
+
+  const updated = await db
+    .update(schema.transactions)
+    .set({ note: txn.note })
+    .where(
+      and(
+        eq(schema.transactions.counterpartyId, txn.counterpartyId),
+        isNull(schema.transactions.note),
+      ),
+    )
+    .returning({ id: schema.transactions.id });
+
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  return { updated: updated.length };
+}
+
+/**
  * Walk every transaction in the seed account, pair up matching debit/credit
  * (same amount, ±3 days) that aren't yet flagged as transfer, and flip
  * is_transfer=true on both sides. Returns the count of pairs marked.
