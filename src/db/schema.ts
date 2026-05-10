@@ -207,6 +207,7 @@ export const transactions = pgTable(
     categoryId: text("category_id").references(() => categories.id),
     isTransfer: boolean("is_transfer").default(false).notNull(),
     balancePaise: bigint("balance_paise", { mode: "number" }),
+    note: text("note"),
     sourceImportId: text("source_import_id").references(() => imports.id, {
       onDelete: "set null",
     }),

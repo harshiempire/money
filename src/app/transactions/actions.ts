@@ -110,6 +110,19 @@ export async function setTransactionTransfer(input: {
   revalidatePath("/");
 }
 
+export async function setTransactionNote(input: {
+  transactionId: string;
+  note: string;
+}) {
+  const cleaned = input.note.trim();
+  await db
+    .update(schema.transactions)
+    .set({ note: cleaned === "" ? null : cleaned })
+    .where(eq(schema.transactions.id, input.transactionId));
+  revalidatePath("/transactions");
+  revalidatePath("/");
+}
+
 /**
  * Walk every transaction in the seed account, pair up matching debit/credit
  * (same amount, ±3 days) that aren't yet flagged as transfer, and flip

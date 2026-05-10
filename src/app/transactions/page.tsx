@@ -76,6 +76,7 @@ export default async function TransactionsPage({
       counterpartyDisplayName: schema.counterparties.displayName,
       categoryId: schema.transactions.categoryId,
       isTransfer: schema.transactions.isTransfer,
+      note: schema.transactions.note,
     })
     .from(schema.transactions)
     .leftJoin(
@@ -339,6 +340,11 @@ export default async function TransactionsPage({
                         {r.parsedPurpose}
                       </div>
                     )}
+                    {r.note && (
+                      <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
+                        {r.note}
+                      </div>
+                    )}
                   </td>
                   <td
                     className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
@@ -361,6 +367,7 @@ export default async function TransactionsPage({
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
                       participants={participantOptions}
+                      note={r.note}
                     />
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">

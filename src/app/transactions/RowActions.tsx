@@ -12,6 +12,7 @@ import {
   type ExistingAllocation,
   type ParticipantOption,
 } from "./SettleDialog";
+import { NoteButton } from "./NoteDialog";
 
 export interface CategoryOption {
   id: string;
@@ -30,6 +31,7 @@ export function RowActions({
   existingSplit,
   existingSettlement,
   participants,
+  note,
 }: {
   transactionId: string;
   drCr: "debit" | "credit";
@@ -41,6 +43,7 @@ export function RowActions({
   existingSplit: ExistingSplit | null;
   existingSettlement: ExistingAllocation[];
   participants: ParticipantOption[];
+  note: string | null;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -117,6 +120,8 @@ export function RowActions({
           existing={existingSettlement}
         />
       )}
+
+      <NoteButton transactionId={transactionId} note={note} />
     </div>
   );
 }
