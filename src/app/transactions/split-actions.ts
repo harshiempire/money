@@ -16,6 +16,11 @@ export interface ParticipantInput {
  * Constraint: yourSharePaise + sum(expected) does NOT have to equal total —
  * we tolerate the bank's rounding and partial reimbursements.
  */
+// Coerce a possibly-NaN/Infinity number to a safe integer at the server
+// boundary — Postgres bigint columns reject "NaN" strings.
+const safePaise = (n: number, fallback = 0): number =>
+  Number.isFinite(n) ? Math.round(n) : fallback;
+
 export async function createSplit(input: {
   transactionId: string;
   totalPaise: number;
@@ -23,6 +28,23 @@ export async function createSplit(input: {
   note: string | null;
   participants: ParticipantInput[];
 }) {
+  // Sanitize numeric inputs so a buggy/old client can't crash the insert.
+  const cleanParticipants = input.participants.map((p) => ({
+    personName: p.personName,
+    expectedAmountPaise: safePaise(p.expectedAmountPaise),
+  }));
+  const totalPaise = safePaise(input.totalPaise);
+  // If yourSharePaise is NaN/Infinity, fall back to total minus sum of
+  // participant shares (the "I paid the rest" interpretation).
+  const participantsSum = cleanParticipants.reduce(
+    (s, p) => s + p.expectedAmountPaise,
+    0,
+  );
+  const yourSharePaise = safePaise(
+    input.yourSharePaise,
+    Math.max(0, totalPaise - participantsSum),
+  );
+
   // Drop any existing split first; cascades remove participants and settlements.
   const existing = await db
     .select({ id: schema.splits.id })
@@ -36,15 +58,15 @@ export async function createSplit(input: {
     .insert(schema.splits)
     .values({
       transactionId: input.transactionId,
-      totalPaise: input.totalPaise,
-      yourSharePaise: input.yourSharePaise,
+      totalPaise,
+      yourSharePaise,
       note: input.note,
     })
     .returning({ id: schema.splits.id });
 
-  if (input.participants.length > 0) {
+  if (cleanParticipants.length > 0) {
     await db.insert(schema.splitParticipants).values(
-      input.participants.map((p) => ({
+      cleanParticipants.map((p) => ({
         splitId: split.id,
         personName: p.personName,
         expectedAmountPaise: p.expectedAmountPaise,
@@ -82,9 +104,16 @@ export async function recordSettlement(input: {
       eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
     );
 
-  if (input.allocations.length > 0) {
+  const cleanAllocations = input.allocations
+    .map((a) => ({
+      splitParticipantId: a.splitParticipantId,
+      amountPaise: safePaise(a.amountPaise),
+    }))
+    .filter((a) => a.amountPaise > 0);
+
+  if (cleanAllocations.length > 0) {
     await db.insert(schema.settlements).values(
-      input.allocations.map((a) => ({
+      cleanAllocations.map((a) => ({
         inflowTransactionId: input.inflowTransactionId,
         splitParticipantId: a.splitParticipantId,
         amountPaise: a.amountPaise,
