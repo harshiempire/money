@@ -4,7 +4,7 @@ This file is the **source of truth** for AI agents and contributors working on t
 
 ## What this app is
 
-Personal finance tracker (Next.js App Router): Bank of Baroda PDF import, transactions, categories, splits/reimbursements, dashboard/net spend. Stack: **Bun**, **Next.js 16**, **Drizzle ORM**, **Neon Postgres**, **Auth.js v5** (next-auth beta), **Effect** (ingest pipeline).
+Personal finance tracker (Next.js App Router): Bank of Baroda PDF import, transactions, categories, splits/reimbursements, dashboard/net spend. Stack: **Bun**, **Next.js 16**, **Drizzle ORM**, **Neon Postgres** (via `postgres` TCP driver + `drizzle-orm/postgres-js`), **Auth.js v5** (next-auth beta), **Effect** (ingest pipeline).
 
 Multi-tenant by `user_id`: every domain row belongs to a user. One special legacy user id holds pre-auth data (see below).
 
@@ -63,7 +63,8 @@ New users get a **new UUID** via registration; they start with empty data (`ensu
 
 | File | Role |
 |------|------|
-| [`src/db/index.ts`](src/db/index.ts) | App DB client — has `import "server-only"` |
+| [`src/db/index.ts`](src/db/index.ts) | App DB client (`postgres.js` + `resolveDatabaseUrl`) — has `import "server-only"` |
+| [`src/db/connection-url.ts`](src/db/connection-url.ts) | Strips `channel_binding` from `DATABASE_URL` |
 | [`src/db/schema.ts`](src/db/schema.ts) | Drizzle schema; Auth.js tables use names `user`, `account`, `session`; domain bank accounts are **`money_account`** |
 | [`src/db/money-account.ts`](src/db/money-account.ts) | `getOrCreateAccountForBank(userId, "bob")` |
 | [`scripts/lib/db.ts`](scripts/lib/db.ts) | **CLI-only** DB client (no `server-only`) — use in `scripts/*` |
