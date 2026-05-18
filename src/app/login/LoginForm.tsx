@@ -26,21 +26,6 @@ export function LoginForm() {
     setPending(false);
 
     if (result?.error) {
-      try {
-        const health = await fetch("/api/health/db", { cache: "no-store" });
-        const body = (await health.json()) as { ok?: boolean };
-        if (!health.ok || !body.ok) {
-          setError(
-            "Cannot reach the database (Neon). On mobile data, try Wi‑Fi or wake the project in the Neon console, then retry.",
-          );
-          return;
-        }
-      } catch {
-        setError(
-          "Cannot reach the database. Check your network and that the dev server is running.",
-        );
-        return;
-      }
       setError("Invalid email or password.");
       return;
     }

@@ -52,24 +52,7 @@ export async function checkLoginRateLimit(
     ipLim.limit(ip),
     emailLim.limit(email.toLowerCase()),
   ]);
-  const ok = byIp.success && byEmail.success;
-  // #region agent log
-  if (!ok) {
-    fetch("http://127.0.0.1:7379/ingest/92c017b4-ffd6-4d9c-8805-6620c34ef33c", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8f76a4" },
-      body: JSON.stringify({
-        sessionId: "8f76a4",
-        location: "src/lib/rate-limit.ts:checkLoginRateLimit",
-        message: "rate_limit:blocked",
-        data: { ipOk: byIp.success, emailOk: byEmail.success, ipPrefix: ip.slice(0, 8) },
-        hypothesisId: "A",
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-  return ok;
+  return byIp.success && byEmail.success;
 }
 
 export async function checkRegisterRateLimit(ip: string): Promise<boolean> {

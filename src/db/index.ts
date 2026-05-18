@@ -1,14 +1,13 @@
 import "server-only";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import { resolveDatabaseUrl } from "./connection-url";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-const client = postgres(resolveDatabaseUrl(), {
-  max: 10,
-  idle_timeout: 20,
-  connect_timeout: 15,
-});
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not set");
+}
 
-export const db = drizzle(client, { schema });
+const sql = neon(connectionString);
+export const db = drizzle(sql, { schema });
 export { schema };
