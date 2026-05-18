@@ -79,6 +79,10 @@ export class ParseError extends Data.TaggedError("ParseError")<{
   readonly detail: string;
 }> {}
 
+export class PdfPasswordError extends Data.TaggedError("PdfPasswordError")<{
+  readonly reason: "required" | "incorrect";
+}> {}
+
 export class DedupeConflict extends Data.TaggedError("DedupeConflict")<{
   readonly refId: string;
   readonly reason: string;

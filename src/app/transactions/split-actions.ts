@@ -3,21 +3,18 @@
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
+import { getOrCreatePerson } from "@/db/person";
+import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
+import {
+  assertSplitParticipantOwned,
+  assertTransactionOwned,
+} from "@/lib/auth/ownership";
 
 export interface ParticipantInput {
   personName: string;
   expectedAmountPaise: number;
 }
 
-/**
- * Create a split for a debit transaction. Replaces any prior split on the
- * same transaction (delete-then-insert) so editing is just "save again".
- *
- * Constraint: yourSharePaise + sum(expected) does NOT have to equal total —
- * we tolerate the bank's rounding and partial reimbursements.
- */
-// Coerce a possibly-NaN/Infinity number to a safe integer at the server
-// boundary — Postgres bigint columns reject "NaN" strings.
 const safePaise = (n: number, fallback = 0): number =>
   Number.isFinite(n) ? Math.round(n) : fallback;
 
@@ -28,14 +25,14 @@ export async function createSplit(input: {
   note: string | null;
   participants: ParticipantInput[];
 }) {
-  // Sanitize numeric inputs so a buggy/old client can't crash the insert.
+  const user = await requireCurrentUserAction();
+  await assertTransactionOwned(user.id, input.transactionId);
+
   const cleanParticipants = input.participants.map((p) => ({
     personName: p.personName,
     expectedAmountPaise: safePaise(p.expectedAmountPaise),
   }));
   const totalPaise = safePaise(input.totalPaise);
-  // If yourSharePaise is NaN/Infinity, fall back to total minus sum of
-  // participant shares (the "I paid the rest" interpretation).
   const participantsSum = cleanParticipants.reduce(
     (s, p) => s + p.expectedAmountPaise,
     0,
@@ -45,7 +42,6 @@ export async function createSplit(input: {
     Math.max(0, totalPaise - participantsSum),
   );
 
-  // Drop any existing split first; cascades remove participants and settlements.
   const existing = await db
     .select({ id: schema.splits.id })
     .from(schema.splits)
@@ -65,20 +61,28 @@ export async function createSplit(input: {
     .returning({ id: schema.splits.id });
 
   if (cleanParticipants.length > 0) {
-    await db.insert(schema.splitParticipants).values(
-      cleanParticipants.map((p) => ({
+    const rows = [];
+    for (const p of cleanParticipants) {
+      const personId = await getOrCreatePerson(user.id, p.personName);
+      rows.push({
         splitId: split.id,
+        personId,
         personName: p.personName,
         expectedAmountPaise: p.expectedAmountPaise,
-      })),
-    );
+      });
+    }
+    await db.insert(schema.splitParticipants).values(rows);
   }
 
   revalidatePath("/transactions");
+  revalidatePath("/reimbursements");
   revalidatePath("/");
 }
 
 export async function deleteSplit(input: { transactionId: string }) {
+  const user = await requireCurrentUserAction();
+  await assertTransactionOwned(user.id, input.transactionId);
+
   const existing = await db
     .select({ id: schema.splits.id })
     .from(schema.splits)
@@ -87,17 +91,21 @@ export async function deleteSplit(input: { transactionId: string }) {
     await db.delete(schema.splits).where(eq(schema.splits.id, s.id));
   }
   revalidatePath("/transactions");
+  revalidatePath("/reimbursements");
   revalidatePath("/");
 }
 
-/**
- * Mark an inflow transaction as a settlement against one or more split
- * participants. Replaces any prior settlements on the same inflow.
- */
 export async function recordSettlement(input: {
   inflowTransactionId: string;
   allocations: Array<{ splitParticipantId: string; amountPaise: number }>;
 }) {
+  const user = await requireCurrentUserAction();
+  await assertTransactionOwned(user.id, input.inflowTransactionId);
+
+  for (const a of input.allocations) {
+    await assertSplitParticipantOwned(user.id, a.splitParticipantId);
+  }
+
   await db
     .delete(schema.settlements)
     .where(
@@ -117,20 +125,26 @@ export async function recordSettlement(input: {
         inflowTransactionId: input.inflowTransactionId,
         splitParticipantId: a.splitParticipantId,
         amountPaise: a.amountPaise,
+        method: "bank" as const,
       })),
     );
   }
 
   revalidatePath("/transactions");
+  revalidatePath("/reimbursements");
   revalidatePath("/");
 }
 
 export async function clearSettlement(input: { inflowTransactionId: string }) {
+  const user = await requireCurrentUserAction();
+  await assertTransactionOwned(user.id, input.inflowTransactionId);
+
   await db
     .delete(schema.settlements)
     .where(
       eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
     );
   revalidatePath("/transactions");
+  revalidatePath("/reimbursements");
   revalidatePath("/");
 }

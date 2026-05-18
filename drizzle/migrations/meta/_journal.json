@@ -22,6 +22,27 @@
       "when": 1778415621137,
       "tag": "0002_greedy_rawhide_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779102145839,
+      "tag": "0003_stormy_zuras",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779104317916,
+      "tag": "0004_steep_donald_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779107291661,
+      "tag": "0005_handy_mandarin",
+      "breakpoints": true
     }
   ]
 }

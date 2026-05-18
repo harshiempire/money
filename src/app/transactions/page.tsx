@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
-import { ensureSeedUser } from "@/db/seed-user";
+import { getOrCreateAccountForBank } from "@/db/money-account";
+import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { AppNav } from "@/components/AppNav";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
@@ -11,6 +12,11 @@ import {
   formatPaiseSigned,
 } from "@/lib/format";
 import { RowActions, type CategoryOption } from "./RowActions";
+import {
+  SplitSettlementLinks,
+  buildExpenseLinks,
+  buildReimbursementLinks,
+} from "./SplitSettlementLinks";
 import type { ExistingSplit } from "./SplitDialog";
 import type {
   ExistingAllocation,
@@ -48,8 +54,9 @@ export default async function TransactionsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const sp = await searchParams;
-  const userId = await ensureSeedUser();
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUser();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const userId = user.id;
 
   await ensureDefaultCategories(userId);
   await backfillCounterparties(account.id, userId);
@@ -118,6 +125,88 @@ export default async function TransactionsPage({
         .where(inArray(schema.settlements.inflowTransactionId, txnIds))
     : [];
 
+  const expenseTxn = schema.transactions;
+  const expenseCp = schema.counterparties;
+  const inflowTxn = schema.transactions;
+
+  const settlementExpenseRows =
+    settlementsForRows.length > 0
+      ? await db
+          .select({
+            inflowTransactionId: schema.settlements.inflowTransactionId,
+            amountPaise: schema.settlements.amountPaise,
+            personName: schema.splitParticipants.personName,
+            expenseTransactionId: schema.splits.transactionId,
+            expenseTxnDate: expenseTxn.txnDate,
+            expenseRawDescription: expenseTxn.rawDescription,
+            expenseParsedPurpose: expenseTxn.parsedPurpose,
+            expenseCounterpartyDisplayName: expenseCp.displayName,
+          })
+          .from(schema.settlements)
+          .innerJoin(
+            schema.splitParticipants,
+            eq(
+              schema.settlements.splitParticipantId,
+              schema.splitParticipants.id,
+            ),
+          )
+          .innerJoin(
+            schema.splits,
+            eq(schema.splitParticipants.splitId, schema.splits.id),
+          )
+          .innerJoin(expenseTxn, eq(schema.splits.transactionId, expenseTxn.id))
+          .leftJoin(expenseCp, eq(expenseTxn.counterpartyId, expenseCp.id))
+          .where(
+            inArray(
+              schema.settlements.inflowTransactionId,
+              settlementsForRows
+                .map((s) => s.inflowTransactionId)
+                .filter((id): id is string => id != null),
+            ),
+          )
+      : [];
+
+  const participantIds = participantsAll.map((p) => p.id);
+  const reimbursementRows =
+    participantIds.length > 0
+      ? await db
+          .select({
+            splitTransactionId: schema.splits.transactionId,
+            inflowTransactionId: schema.settlements.inflowTransactionId,
+            amountPaise: schema.settlements.amountPaise,
+            personName: schema.splitParticipants.personName,
+            inflowTxnDate: inflowTxn.txnDate,
+            inflowRawDescription: inflowTxn.rawDescription,
+            inflowCounterpartyDisplayName: schema.counterparties.displayName,
+          })
+          .from(schema.settlements)
+          .innerJoin(
+            schema.splitParticipants,
+            eq(
+              schema.settlements.splitParticipantId,
+              schema.splitParticipants.id,
+            ),
+          )
+          .innerJoin(
+            schema.splits,
+            eq(schema.splitParticipants.splitId, schema.splits.id),
+          )
+          .innerJoin(
+            inflowTxn,
+            eq(schema.settlements.inflowTransactionId, inflowTxn.id),
+          )
+          .leftJoin(
+            schema.counterparties,
+            eq(inflowTxn.counterpartyId, schema.counterparties.id),
+          )
+          .where(
+            inArray(schema.settlements.splitParticipantId, participantIds),
+          )
+      : [];
+
+  const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
+  const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
+
   // Group lookups for the row renderer.
   const splitByTxn = new Map<string, ExistingSplit>();
   for (const s of splits) {
@@ -136,6 +225,7 @@ export default async function TransactionsPage({
   }
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
   for (const st of settlementsForRows) {
+    if (!st.inflowTransactionId) continue;
     const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
     arr.push({
       splitParticipantId: st.splitParticipantId,
@@ -248,27 +338,18 @@ export default async function TransactionsPage({
 
   const categoryOptions: CategoryOption[] = categories;
 
+  const personRows = await db
+    .select({ name: schema.persons.name })
+    .from(schema.persons)
+    .where(eq(schema.persons.userId, userId))
+    .orderBy(asc(schema.persons.name));
+  const knownPersonNames = personRows.map((p) => p.name);
+
   return (
     <main className="mx-auto max-w-6xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
-        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
-          <a href="/" className="underline-offset-4 hover:underline">
-            Dashboard
-          </a>
-          <a href="/timeline" className="underline-offset-4 hover:underline">
-            Timeline
-          </a>
-          <a
-            href="/reimbursements"
-            className="underline-offset-4 hover:underline"
-          >
-            Reimbursements
-          </a>
-          <a href="/import" className="underline-offset-4 hover:underline">
-            Import
-          </a>
-        </nav>
+        <AppNav current="/transactions" />
       </header>
       <div className="mt-1 flex items-center justify-between gap-3">
         <p className="text-xs text-neutral-500">
@@ -317,12 +398,19 @@ export default async function TransactionsPage({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.map((r) => {
+                const expenseLinks = expenseLinksByInflow.get(r.id);
+                const reimbursementLinks = reimbursementsByExpense.get(r.id);
+                const isLinked =
+                  (expenseLinks?.length ?? 0) > 0 ||
+                  (reimbursementLinks?.length ?? 0) > 0;
+                return (
                 <tr
                   key={r.id}
-                  className={`border-t border-neutral-200 align-top dark:border-neutral-800 ${
+                  id={`txn-${r.id}`}
+                  className={`scroll-mt-4 border-t border-neutral-200 align-top dark:border-neutral-800 ${
                     r.isTransfer ? "opacity-60" : ""
-                  }`}
+                  } ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
                 >
                   <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
                     {formatDate(r.txnDate)}
@@ -345,6 +433,10 @@ export default async function TransactionsPage({
                         {r.note}
                       </div>
                     )}
+                    <SplitSettlementLinks
+                      expenseLinks={expenseLinks}
+                      reimbursementLinks={reimbursementLinks}
+                    />
                   </td>
                   <td
                     className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
@@ -367,6 +459,7 @@ export default async function TransactionsPage({
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
                       participants={participantOptions}
+                      knownPersonNames={knownPersonNames}
                       note={r.note}
                     />
                   </td>
@@ -374,7 +467,8 @@ export default async function TransactionsPage({
                     {formatPaise(r.balancePaise)}
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>

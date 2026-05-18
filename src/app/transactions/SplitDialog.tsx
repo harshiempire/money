@@ -18,10 +18,12 @@ export function SplitButton({
   transactionId,
   amountPaise,
   existing,
+  knownPersonNames,
 }: {
   transactionId: string;
   amountPaise: number;
   existing: ExistingSplit | null;
+  knownPersonNames: string[];
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const open = () => dialogRef.current?.showModal();
@@ -57,6 +59,7 @@ export function SplitButton({
           transactionId={transactionId}
           amountPaise={amountPaise}
           existing={existing}
+          knownPersonNames={knownPersonNames}
           onClose={close}
         />
       </dialog>
@@ -76,11 +79,13 @@ function SplitForm({
   transactionId,
   amountPaise,
   existing,
+  knownPersonNames,
   onClose,
 }: {
   transactionId: string;
   amountPaise: number;
   existing: ExistingSplit | null;
+  knownPersonNames: string[];
   onClose: () => void;
 }) {
   const [total, setTotal] = useState(
@@ -231,11 +236,17 @@ function SplitForm({
             Equal split
           </button>
         </div>
+        <datalist id="person-names">
+          {knownPersonNames.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
         <div className="mt-2 space-y-2">
           {participants.map((p, i) => (
             <div key={i} className="flex items-center gap-2 text-sm">
               <input
                 placeholder="Name"
+                list="person-names"
                 value={p.personName}
                 onChange={(e) =>
                   updateParticipant(i, { personName: e.target.value })

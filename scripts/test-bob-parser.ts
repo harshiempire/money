@@ -4,14 +4,16 @@ import { Effect } from "effect";
 import { bobAdapter } from "../src/domain/adapters/bob/parser";
 
 const file = process.argv[2] ?? "./sample-data/transactions.pdf";
+const pdfPassword = process.argv[3];
 const buf = readFileSync(file);
+const ctx = pdfPassword ? { pdfPassword } : {};
 
 const program = Effect.gen(function* () {
-  const detected = yield* bobAdapter.detect(buf, "application/pdf");
+  const detected = yield* bobAdapter.detect(buf, "application/pdf", ctx);
   console.log(`detect(${file}) = ${detected}`);
   if (!detected) return;
 
-  const parsed = yield* bobAdapter.parse(buf);
+  const parsed = yield* bobAdapter.parse(buf, ctx);
   const { meta, rows } = parsed;
 
   console.log(`bank: ${meta.bank}`);

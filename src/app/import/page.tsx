@@ -1,15 +1,19 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
+import { getOrCreateAccountForBank } from "@/db/money-account";
+import { AppNav } from "@/components/AppNav";
+import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { UploadForm } from "./UploadForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function ImportPage() {
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUser();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
   const recent = await db
     .select()
     .from(schema.imports)
+    .where(eq(schema.imports.accountId, account.id))
     .orderBy(desc(schema.imports.createdAt))
     .limit(10);
 
@@ -17,17 +21,7 @@ export default async function ImportPage() {
     <main className="mx-auto max-w-2xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Import statement</h1>
-        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
-          <a href="/" className="underline-offset-4 hover:underline">
-            Dashboard
-          </a>
-          <a href="/transactions" className="underline-offset-4 hover:underline">
-            Transactions
-          </a>
-          <a href="/timeline" className="underline-offset-4 hover:underline">
-            Timeline
-          </a>
-        </nav>
+        <AppNav current="/import" />
       </header>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Upload a Bank of Baroda PDF. Re-uploading the same period inserts zero

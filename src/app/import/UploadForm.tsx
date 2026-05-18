@@ -30,6 +30,20 @@ export function UploadForm() {
           className="mt-1 block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-neutral-300 dark:file:bg-neutral-800 dark:hover:file:bg-neutral-700"
         />
       </label>
+      <label className="block">
+        <span className="block text-sm font-medium">PDF password (if required)</span>
+        <input
+          type="password"
+          name="pdfPassword"
+          autoComplete="off"
+          placeholder="e.g. DDMMYYYY for Bank of Baroda"
+          className="mt-1 block w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+        />
+        <span className="mt-1 block text-xs text-neutral-500">
+          Many bank statement PDFs are encrypted. BoB usually uses your date of birth
+          (DDMMYYYY).
+        </span>
+      </label>
       <button
         type="submit"
         disabled={pending}

@@ -1,16 +1,26 @@
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
+import { getOrCreateAccountForBank } from "@/db/money-account";
+import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { AppNav } from "@/components/AppNav";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
+import {
+  CashSettlementButton,
+  type CashSettlement,
+} from "./CashSettlementDialog";
 
 export const dynamic = "force-dynamic";
 
 interface ParticipantRow {
   participantId: string;
+  personId: string | null;
   personName: string;
   expectedPaise: number;
   settledPaise: number;
+  bankSettledPaise: number;
+  cashSettledPaise: number;
   outstandingPaise: number;
+  cashSettlements: CashSettlement[];
   ageDays: number;
   txnDate: string;
   txnDescription: string;
@@ -26,7 +36,8 @@ const ageBucket = (days: number): string => {
 };
 
 export default async function ReimbursementsPage() {
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUser();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
 
   // Splits attached to transactions in this account.
   const splitsRaw = await db
@@ -52,11 +63,17 @@ export default async function ReimbursementsPage() {
     : [];
 
   const settlementsByParticipant = new Map<string, number>();
+  const bankSettledByParticipant = new Map<string, number>();
+  const cashSettledByParticipant = new Map<string, number>();
+  const cashSettlementsByParticipant = new Map<string, CashSettlement[]>();
   if (participants.length > 0) {
     const sets = await db
       .select({
+        id: schema.settlements.id,
         splitParticipantId: schema.settlements.splitParticipantId,
         amountPaise: schema.settlements.amountPaise,
+        method: schema.settlements.method,
+        note: schema.settlements.note,
       })
       .from(schema.settlements)
       .where(
@@ -71,6 +88,27 @@ export default async function ReimbursementsPage() {
         (settlementsByParticipant.get(s.splitParticipantId) ?? 0) +
           Number(s.amountPaise),
       );
+      if (s.method === "cash") {
+        cashSettledByParticipant.set(
+          s.splitParticipantId,
+          (cashSettledByParticipant.get(s.splitParticipantId) ?? 0) +
+            Number(s.amountPaise),
+        );
+        const cash =
+          cashSettlementsByParticipant.get(s.splitParticipantId) ?? [];
+        cash.push({
+          id: s.id,
+          amountPaise: Number(s.amountPaise),
+          note: s.note,
+        });
+        cashSettlementsByParticipant.set(s.splitParticipantId, cash);
+      } else {
+        bankSettledByParticipant.set(
+          s.splitParticipantId,
+          (bankSettledByParticipant.get(s.splitParticipantId) ?? 0) +
+            Number(s.amountPaise),
+        );
+      }
     }
   }
 
@@ -87,10 +125,14 @@ export default async function ReimbursementsPage() {
     );
     return {
       participantId: p.id,
+      personId: p.personId,
       personName: p.personName,
       expectedPaise: expected,
       settledPaise: settled,
+      bankSettledPaise: bankSettledByParticipant.get(p.id) ?? 0,
+      cashSettledPaise: cashSettledByParticipant.get(p.id) ?? 0,
       outstandingPaise: Math.max(0, expected - settled),
+      cashSettlements: cashSettlementsByParticipant.get(p.id) ?? [],
       ageDays,
       txnDate: meta.txnDate,
       txnDescription: counterpartyLabel(meta.rawDescription),
@@ -115,26 +157,39 @@ export default async function ReimbursementsPage() {
     0,
   );
 
+  const personSummary = new Map<
+    string,
+    { displayName: string; outstandingPaise: number; openCount: number }
+  >();
+  for (const r of outstanding) {
+    const key = r.personId ? `person:${r.personId}` : `name:${r.personName}`;
+    const entry = personSummary.get(key) ?? {
+      displayName: r.personName,
+      outstandingPaise: 0,
+      openCount: 0,
+    };
+    entry.outstandingPaise += r.outstandingPaise;
+    entry.openCount += 1;
+    personSummary.set(key, entry);
+  }
+  const byPerson = [...personSummary.entries()]
+    .map(([groupKey, row]) => ({ groupKey, ...row }))
+    .sort((a, b) => b.outstandingPaise - a.outstandingPaise);
+
   return (
     <main className="mx-auto max-w-5xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Reimbursements</h1>
-        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
-          <a href="/" className="underline-offset-4 hover:underline">
-            Dashboard
-          </a>
-          <a href="/transactions" className="underline-offset-4 hover:underline">
-            Transactions
-          </a>
-          <a href="/timeline" className="underline-offset-4 hover:underline">
-            Timeline
-          </a>
-        </nav>
+        <AppNav current="/reimbursements" />
       </header>
 
       <p className="mt-1 text-xs text-neutral-500">
         People who still owe you, grouped by how long the split has been
-        open. Settle inflows from <a className="underline" href="/transactions">/transactions</a>.
+        open. Settle inflows from{" "}
+        <a className="underline" href="/transactions">
+          /transactions
+        </a>
+        , or record cash directly here.
       </p>
 
       <section className="mt-6">
@@ -150,6 +205,37 @@ export default async function ReimbursementsPage() {
           {splitsRaw.length === 1 ? "" : "s"}.
         </p>
       </section>
+
+      {byPerson.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold">By person</h2>
+          <table className="mt-3 w-full border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase text-neutral-500">
+                <th className="py-2 pr-3">Person</th>
+                <th className="py-2 pr-3 text-right">Outstanding</th>
+                <th className="py-2 pr-3 text-right">Open splits</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byPerson.map((p) => (
+                <tr
+                  key={p.groupKey}
+                  className="border-t border-neutral-200 dark:border-neutral-800"
+                >
+                  <td className="py-2 pr-3 font-medium">{p.displayName}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
+                    {formatPaise(p.outstandingPaise)}
+                  </td>
+                  <td className="py-2 pr-3 text-right text-xs text-neutral-500">
+                    {p.openCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {buckets.size > 0 && (
         <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -189,6 +275,7 @@ export default async function ReimbursementsPage() {
                 <th className="py-2 pr-3 text-right">Settled</th>
                 <th className="py-2 pr-3 text-right">Outstanding</th>
                 <th className="py-2 pr-3 text-right">Age</th>
+                <th className="py-2 pr-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -208,13 +295,32 @@ export default async function ReimbursementsPage() {
                       {formatPaise(r.expectedPaise)}
                     </td>
                     <td className="py-2 pr-3 text-right font-mono text-xs text-neutral-500">
-                      {formatPaise(r.settledPaise)}
+                      <div>{formatPaise(r.settledPaise)}</div>
+                      {(r.bankSettledPaise > 0 || r.cashSettledPaise > 0) && (
+                        <div className="mt-0.5 font-sans text-[10px] text-neutral-500">
+                          {r.bankSettledPaise > 0 &&
+                            `${formatPaise(r.bankSettledPaise)} bank`}
+                          {r.bankSettledPaise > 0 &&
+                            r.cashSettledPaise > 0 &&
+                            " · "}
+                          {r.cashSettledPaise > 0 &&
+                            `${formatPaise(r.cashSettledPaise)} cash`}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
                       {formatPaise(r.outstandingPaise)}
                     </td>
                     <td className="py-2 pr-3 text-right text-xs text-neutral-500">
                       {r.ageDays}d
+                    </td>
+                    <td className="py-2 pr-3 text-right">
+                      <CashSettlementButton
+                        splitParticipantId={r.participantId}
+                        personName={r.personName}
+                        outstandingPaise={r.outstandingPaise}
+                        cashSettlements={r.cashSettlements}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -230,9 +336,34 @@ export default async function ReimbursementsPage() {
           </h2>
           <ul className="mt-2 space-y-1 text-xs text-neutral-500">
             {settled.map((r) => (
-              <li key={r.participantId}>
-                {r.personName} · {formatPaise(r.expectedPaise)} ·{" "}
-                {formatDate(r.txnDate)} · {r.txnDescription}
+              <li
+                key={r.participantId}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <span>
+                  {r.personName} · {formatPaise(r.expectedPaise)} ·{" "}
+                  {formatDate(r.txnDate)} · {r.txnDescription}
+                  {(r.bankSettledPaise > 0 || r.cashSettledPaise > 0) && (
+                    <>
+                      {" "}
+                      · {r.bankSettledPaise > 0 &&
+                        `${formatPaise(r.bankSettledPaise)} bank`}
+                      {r.bankSettledPaise > 0 &&
+                        r.cashSettledPaise > 0 &&
+                        " · "}
+                      {r.cashSettledPaise > 0 &&
+                        `${formatPaise(r.cashSettledPaise)} cash`}
+                    </>
+                  )}
+                </span>
+                {r.cashSettlements.length > 0 && (
+                  <CashSettlementButton
+                    splitParticipantId={r.participantId}
+                    personName={r.personName}
+                    outstandingPaise={r.outstandingPaise}
+                    cashSettlements={r.cashSettlements}
+                  />
+                )}
               </li>
             ))}
           </ul>

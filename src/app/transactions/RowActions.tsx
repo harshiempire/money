@@ -31,6 +31,7 @@ export function RowActions({
   existingSplit,
   existingSettlement,
   participants,
+  knownPersonNames,
   note,
 }: {
   transactionId: string;
@@ -43,6 +44,7 @@ export function RowActions({
   existingSplit: ExistingSplit | null;
   existingSettlement: ExistingAllocation[];
   participants: ParticipantOption[];
+  knownPersonNames: string[];
   note: string | null;
 }) {
   const [pending, startTransition] = useTransition();
@@ -110,6 +112,7 @@ export function RowActions({
           transactionId={transactionId}
           amountPaise={amountPaise}
           existing={existingSplit}
+          knownPersonNames={knownPersonNames}
         />
       )}
       {drCr === "credit" && (

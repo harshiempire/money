@@ -1,9 +1,10 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
-import { ensureSeedUser } from "@/db/seed-user";
+import { getOrCreateAccountForBank } from "@/db/money-account";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
+import { AppNav } from "@/components/AppNav";
+import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import {
   categoryBreakdown,
   netSpendTotals,
@@ -26,8 +27,9 @@ export default async function DashboardPage({
   searchParams: Promise<SP>;
 }) {
   const sp = await searchParams;
-  const userId = await ensureSeedUser();
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUser();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const userId = user.id;
   await ensureDefaultCategories(userId);
   await backfillCounterparties(account.id, userId);
 
@@ -40,6 +42,7 @@ export default async function DashboardPage({
         periodEnd: schema.imports.periodEnd,
       })
       .from(schema.imports)
+      .where(eq(schema.imports.accountId, account.id))
       .orderBy(desc(schema.imports.createdAt))
       .limit(1);
     if (latest?.periodStart && latest?.periodEnd) {
@@ -66,23 +69,7 @@ export default async function DashboardPage({
     <main className="mx-auto max-w-5xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Money</h1>
-        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
-          <a href="/transactions" className="underline-offset-4 hover:underline">
-            Transactions
-          </a>
-          <a href="/timeline" className="underline-offset-4 hover:underline">
-            Timeline
-          </a>
-          <a
-            href="/reimbursements"
-            className="underline-offset-4 hover:underline"
-          >
-            Reimbursements
-          </a>
-          <a href="/import" className="underline-offset-4 hover:underline">
-            Import
-          </a>
-        </nav>
+        <AppNav current="/" />
       </header>
 
       <PeriodPicker period={period} active={sp.preset} />

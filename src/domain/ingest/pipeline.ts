@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import {
   AdapterNotFound,
   ParseError,
+  PdfPasswordError,
   PersistError,
 } from "../canonical";
 import { pickAdapter } from "../adapters";
@@ -13,6 +14,7 @@ export interface IngestInput {
   filename: string;
   mime: string;
   buffer: Buffer;
+  pdfPassword?: string;
 }
 
 /**
@@ -25,11 +27,12 @@ export const ingestStatement = (
   input: IngestInput,
 ): Effect.Effect<
   ImportSummary,
-  AdapterNotFound | ParseError | PersistError
+  AdapterNotFound | ParseError | PdfPasswordError | PersistError
 > =>
   Effect.gen(function* () {
-    const adapter = yield* pickAdapter(input.buffer, input.mime);
-    const parsed = yield* adapter.parse(input.buffer);
+    const ctx = { pdfPassword: input.pdfPassword };
+    const adapter = yield* pickAdapter(input.buffer, input.mime, ctx);
+    const parsed = yield* adapter.parse(input.buffer, ctx);
     return yield* persistImport({
       accountId: input.accountId,
       bank: adapter.name,

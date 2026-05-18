@@ -6,6 +6,7 @@ import { bobAdapter } from "../src/domain/adapters/bob/parser";
 import type { CanonicalTxn } from "../src/domain/canonical";
 
 const buf = readFileSync("./sample-data/transactions.pdf");
+const ctx = process.argv[2] ? { pdfPassword: process.argv[2] } : {};
 
 const fallback = (r: CanonicalTxn) =>
   "fallback:" +
@@ -15,7 +16,7 @@ const fallback = (r: CanonicalTxn) =>
     .slice(0, 24);
 
 const program = Effect.gen(function* () {
-  const parsed = yield* bobAdapter.parse(buf);
+  const parsed = yield* bobAdapter.parse(buf, ctx);
   const groups = new Map<string, { idx: number; r: CanonicalTxn }[]>();
   for (const [idx, r] of parsed.rows.entries()) {
     const ref = r.refId ?? fallback(r);

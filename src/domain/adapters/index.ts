@@ -3,16 +3,28 @@ import {
   AdapterNotFound,
   type ParsedStatement,
   type ParseError,
+  type PdfPasswordError,
 } from "../canonical";
+
+export interface AdapterContext {
+  readonly pdfPassword?: string;
+}
 import { bobAdapter } from "./bob/parser";
 
 export interface BankAdapter {
   /** Slug used in the DB's `bank` column. */
   readonly name: string;
   /** Quick sniff to decide whether this adapter should handle the file. */
-  detect: (file: Buffer, mime: string) => Effect.Effect<boolean>;
+  detect: (
+    file: Buffer,
+    mime: string,
+    ctx: AdapterContext,
+  ) => Effect.Effect<boolean, PdfPasswordError>;
   /** Parse the file into the canonical shape, or fail with ParseError. */
-  parse: (file: Buffer) => Effect.Effect<ParsedStatement, ParseError>;
+  parse: (
+    file: Buffer,
+    ctx: AdapterContext,
+  ) => Effect.Effect<ParsedStatement, ParseError | PdfPasswordError>;
 }
 
 const REGISTRY: readonly BankAdapter[] = [bobAdapter];
@@ -25,10 +37,11 @@ const REGISTRY: readonly BankAdapter[] = [bobAdapter];
 export const pickAdapter = (
   file: Buffer,
   mime: string,
-): Effect.Effect<BankAdapter, AdapterNotFound> =>
+  ctx: AdapterContext = {},
+): Effect.Effect<BankAdapter, AdapterNotFound | PdfPasswordError> =>
   Effect.gen(function* () {
     for (const adapter of REGISTRY) {
-      const matched = yield* adapter.detect(file, mime);
+      const matched = yield* adapter.detect(file, mime, ctx);
       if (matched) return adapter;
     }
     return yield* Effect.fail(

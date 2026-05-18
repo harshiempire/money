@@ -5,14 +5,16 @@ import { readFileSync } from "node:fs";
 // .env.local. Pull it in manually so `bun run db:*` works without the user
 // having to source env vars.
 if (!process.env.DATABASE_URL) {
-  try {
-    const raw = readFileSync(".env.local", "utf8");
-    for (const line of raw.split("\n")) {
-      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$/i);
-      if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  for (const envFile of [".env.local", ".env"]) {
+    try {
+      const raw = readFileSync(envFile, "utf8");
+      for (const line of raw.split("\n")) {
+        const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$/i);
+        if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+      }
+    } catch {
+      /* file missing */
     }
-  } catch {
-    // .env.local missing — caller will get a clear error from drizzle-kit.
   }
 }
 

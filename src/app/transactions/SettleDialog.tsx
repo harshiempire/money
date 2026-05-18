@@ -143,6 +143,14 @@ function SettleForm({
         Inflow ₹{paiseToRupeesStr(amountPaise)} · attribute to one or more split
         participants.
       </p>
+      <p className="mt-1 text-xs text-neutral-500">
+        If the person also paid cash, save the bank amount here, then record the
+        cash part from{" "}
+        <a className="underline" href="/reimbursements">
+          Reimbursements
+        </a>
+        .
+      </p>
 
       {visible.length === 0 ? (
         <p className="mt-4 text-sm text-neutral-500">

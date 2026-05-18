@@ -1,11 +1,12 @@
-import { Effect } from "effect";
-import { extractText } from "unpdf";
+import { Effect, Either } from "effect";
 import {
   ParseError,
+  PdfPasswordError,
   type CanonicalTxn,
   type Channel,
   type ParsedStatement,
 } from "../../canonical";
+import { extractPdfText, toPdfPasswordError } from "../../pdf/extract";
 import type { BankAdapter } from "../index";
 
 // ─── Anchor regex ────────────────────────────────────────────────────────────
@@ -233,29 +234,60 @@ const extractPeriod = (firstPageText: string) => {
 export const bobAdapter: BankAdapter = {
   name: "bob",
 
-  detect: (file, mime) =>
+  detect: (file, mime, ctx) =>
     Effect.gen(function* () {
       // Quick sniff: PDF with the "bob World" or BoB statement header in it.
       if (!mime.includes("pdf") && !file.subarray(0, 4).toString().includes("PDF")) {
         return false;
       }
-      const { text } = yield* Effect.promise(() =>
-        extractText(new Uint8Array(file), { mergePages: true }),
+      const extracted = yield* Effect.either(
+        Effect.tryPromise({
+          try: () =>
+            extractPdfText(new Uint8Array(file), {
+              password: ctx.pdfPassword,
+              mergePages: true,
+            }),
+          catch: (e) => {
+            if (e instanceof PdfPasswordError) return e;
+            const passwordErr = toPdfPasswordError(e);
+            if (passwordErr) return passwordErr;
+            return new ParseError({
+              bank: "bob",
+              stage: "extractText",
+              detail: String(e),
+            });
+          },
+        }),
       );
+      if (Either.isLeft(extracted)) {
+        if (extracted.left._tag === "PdfPasswordError") {
+          return yield* Effect.fail(extracted.left);
+        }
+        return false;
+      }
+      const { text } = extracted.right;
       const blob = Array.isArray(text) ? text.join(" ") : text;
       return /bob World|Bank of Baroda|BARB0/.test(blob);
     }),
 
-  parse: (file) =>
+  parse: (file, ctx) =>
     Effect.gen(function* () {
       const { text } = yield* Effect.tryPromise({
-        try: () => extractText(new Uint8Array(file), { mergePages: false }),
-        catch: (e) =>
-          new ParseError({
+        try: () =>
+          extractPdfText(new Uint8Array(file), {
+            password: ctx.pdfPassword,
+            mergePages: false,
+          }),
+        catch: (e) => {
+          if (e instanceof PdfPasswordError) return e;
+          const passwordErr = toPdfPasswordError(e);
+          if (passwordErr) return passwordErr;
+          return new ParseError({
             bank: "bob",
             stage: "extractText",
             detail: String(e),
-          }),
+          });
+        },
       });
 
       const pages = (Array.isArray(text) ? text : [text]).map((p) => p ?? "");

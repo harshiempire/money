@@ -3,45 +3,55 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
-import { ensureSeedUser } from "@/db/seed-user";
+import { getOrCreateAccountForBank } from "@/db/money-account";
 import { detectTransferPairs } from "@/domain/transfers/detect";
+import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
+import {
+  assertCategoryOwned,
+  assertCounterpartyOwned,
+  assertTransactionOwned,
+  assertTransactionsOwned,
+} from "@/lib/auth/ownership";
 
-/**
- * Set or clear a single transaction's category. Auto-flips `is_transfer` when
- * the chosen category is a transfer- or investment-kind, since those should
- * never count as personal spend in the dashboard.
- *
- * `categoryId` is "" to clear.
- */
 export async function setTransactionCategory(input: {
   transactionId: string;
   categoryId: string;
 }) {
-  const userId = await ensureSeedUser();
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
   const newCategoryId = input.categoryId === "" ? null : input.categoryId;
+  if (newCategoryId) {
+    await assertCategoryOwned(user.id, newCategoryId);
+  }
   const isTransfer = newCategoryId
-    ? await categoryIsTransfer(newCategoryId, userId)
+    ? await categoryIsTransfer(newCategoryId, user.id)
     : false;
 
   await db
     .update(schema.transactions)
     .set({ categoryId: newCategoryId, isTransfer })
-    .where(eq(schema.transactions.id, input.transactionId));
+    .where(
+      and(
+        eq(schema.transactions.id, input.transactionId),
+        eq(schema.transactions.accountId, accountId),
+      ),
+    );
 
   revalidatePath("/transactions");
   revalidatePath("/");
 }
 
-/**
- * Use this row's category as the default for its counterparty, then apply it
- * to every other transaction from that counterparty that still has no
- * category set. The "rule learning" behavior from the plan.
- */
 export async function applyCategoryToCounterparty(input: {
   transactionId: string;
 }) {
-  const userId = await ensureSeedUser();
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
 
   const [txn] = await db
     .select({
@@ -53,7 +63,9 @@ export async function applyCategoryToCounterparty(input: {
     .limit(1);
   if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0 };
 
-  const isTransfer = await categoryIsTransfer(txn.categoryId, userId);
+  const isTransfer = await categoryIsTransfer(txn.categoryId, user.id);
+
+  await assertCounterpartyOwned(user.id, txn.counterpartyId);
 
   await db
     .update(schema.counterparties)
@@ -61,7 +73,7 @@ export async function applyCategoryToCounterparty(input: {
     .where(
       and(
         eq(schema.counterparties.id, txn.counterpartyId),
-        eq(schema.counterparties.userId, userId),
+        eq(schema.counterparties.userId, user.id),
       ),
     );
 
@@ -71,6 +83,7 @@ export async function applyCategoryToCounterparty(input: {
     .where(
       and(
         eq(schema.transactions.counterpartyId, txn.counterpartyId),
+        eq(schema.transactions.accountId, accountId),
         isNull(schema.transactions.categoryId),
       ),
     )
@@ -102,10 +115,20 @@ export async function setTransactionTransfer(input: {
   transactionId: string;
   isTransfer: boolean;
 }) {
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
   await db
     .update(schema.transactions)
     .set({ isTransfer: input.isTransfer })
-    .where(eq(schema.transactions.id, input.transactionId));
+    .where(
+      and(
+        eq(schema.transactions.id, input.transactionId),
+        eq(schema.transactions.accountId, accountId),
+      ),
+    );
   revalidatePath("/transactions");
   revalidatePath("/");
 }
@@ -114,11 +137,21 @@ export async function setTransactionNote(input: {
   transactionId: string;
   note: string;
 }) {
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
   const cleaned = input.note.trim();
   await db
     .update(schema.transactions)
     .set({ note: cleaned === "" ? null : cleaned })
-    .where(eq(schema.transactions.id, input.transactionId));
+    .where(
+      and(
+        eq(schema.transactions.id, input.transactionId),
+        eq(schema.transactions.accountId, accountId),
+      ),
+    );
   revalidatePath("/transactions");
   revalidatePath("/");
 }
@@ -132,17 +165,15 @@ export interface NoteCandidate {
   currentNote: string | null;
 }
 
-/**
- * Sibling rows the user might want to copy a note to: other transactions
- * sharing this row's counterparty (excluding this row itself).
- *
- * Returned via server action so the note dialog can lazy-fetch when
- * opened, instead of bloating every row's initial render with a candidate
- * list it usually won't need.
- */
 export async function getNoteCandidates(input: {
   transactionId: string;
 }): Promise<NoteCandidate[]> {
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
+
   const [self] = await db
     .select({ counterpartyId: schema.transactions.counterpartyId })
     .from(schema.transactions)
@@ -163,7 +194,7 @@ export async function getNoteCandidates(input: {
     .where(
       and(
         eq(schema.transactions.counterpartyId, self.counterpartyId),
-        // Exclude self: we set this row's note via setTransactionNote.
+        eq(schema.transactions.accountId, accountId),
       ),
     )
     .orderBy(desc(schema.transactions.txnDate));
@@ -180,19 +211,14 @@ export async function getNoteCandidates(input: {
     }));
 }
 
-/**
- * Bulk-set the same note on a list of transaction ids. Used by the note
- * dialog when the user explicitly selects which siblings should adopt the
- * note — distinct from "auto apply to all from counterparty" which we
- * deliberately don't have, because the same counterparty often covers
- * different real charges (Apple Services → F1 vs Anthropic vs iCloud).
- */
 export async function applyNoteToTransactions(input: {
   transactionIds: string[];
   note: string;
 }): Promise<{ updated: number }> {
+  const user = await requireCurrentUserAction();
   const cleaned = input.note.trim();
   if (input.transactionIds.length === 0) return { updated: 0 };
+  await assertTransactionsOwned(user.id, input.transactionIds);
   const updated = await db
     .update(schema.transactions)
     .set({ note: cleaned === "" ? null : cleaned })
@@ -203,13 +229,9 @@ export async function applyNoteToTransactions(input: {
   return { updated: updated.length };
 }
 
-/**
- * Walk every transaction in the seed account, pair up matching debit/credit
- * (same amount, ±3 days) that aren't yet flagged as transfer, and flip
- * is_transfer=true on both sides. Returns the count of pairs marked.
- */
 export async function autoDetectTransfers(): Promise<{ pairs: number }> {
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUserAction();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
   const rows = await db
     .select({
       id: schema.transactions.id,

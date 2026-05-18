@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { ensureDefaultBobAccount } from "@/db/seed-account";
+import { getOrCreateAccountForBank } from "@/db/money-account";
+import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { AppNav } from "@/components/AppNav";
 import { dailyClosingBalance } from "@/domain/spend/net";
 import { resolvePeriod, PRESET_PERIODS } from "@/lib/period";
 import {
@@ -24,7 +26,8 @@ export default async function TimelinePage({
   searchParams: Promise<SP>;
 }) {
   const sp = await searchParams;
-  const account = await ensureDefaultBobAccount();
+  const user = await requireCurrentUser();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
 
   let period = resolvePeriod(sp);
   if (!sp.preset && !sp.from && !sp.to) {
@@ -34,6 +37,7 @@ export default async function TimelinePage({
         periodEnd: schema.imports.periodEnd,
       })
       .from(schema.imports)
+      .where(eq(schema.imports.accountId, account.id))
       .orderBy(desc(schema.imports.createdAt))
       .limit(1);
     if (latest?.periodStart && latest?.periodEnd) {
@@ -80,23 +84,7 @@ export default async function TimelinePage({
     <main className="mx-auto max-w-5xl p-8">
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Timeline</h1>
-        <nav className="flex gap-4 text-sm text-neutral-600 dark:text-neutral-400">
-          <a href="/" className="underline-offset-4 hover:underline">
-            Dashboard
-          </a>
-          <a href="/transactions" className="underline-offset-4 hover:underline">
-            Transactions
-          </a>
-          <a
-            href="/reimbursements"
-            className="underline-offset-4 hover:underline"
-          >
-            Reimbursements
-          </a>
-          <a href="/import" className="underline-offset-4 hover:underline">
-            Import
-          </a>
-        </nav>
+        <AppNav current="/timeline" />
       </header>
 
       <PeriodPicker period={period} active={sp.preset} />

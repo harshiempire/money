@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -45,6 +46,10 @@ export const ruleMatchKindEnum = pgEnum("rule_match_kind", [
   "counterparty",
   "regex",
 ]);
+export const settlementMethodEnum = pgEnum("settlement_method", [
+  "bank",
+  "cash",
+]);
 
 // ─── Auth tables (Auth.js drizzle adapter expects these exact names) ─────────
 
@@ -56,6 +61,8 @@ export const users = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: timestamp("emailVerified", { mode: "date" }),
   image: text("image"),
+  passwordHash: text("password_hash"),
+  tokenVersion: integer("token_version").notNull().default(0),
 });
 
 export const accountsAuth = pgTable(
@@ -244,6 +251,28 @@ export const splits = pgTable("split", {
     .notNull(),
 });
 
+export const persons = pgTable(
+  "person",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    uniqUserLowerName: uniqueIndex("person_user_lower_name_uniq").on(
+      t.userId,
+      sql`lower(${t.name})`,
+    ),
+  }),
+);
+
 export const splitParticipants = pgTable("split_participant", {
   id: text("id")
     .primaryKey()
@@ -251,6 +280,9 @@ export const splitParticipants = pgTable("split_participant", {
   splitId: text("split_id")
     .notNull()
     .references(() => splits.id, { onDelete: "cascade" }),
+  personId: text("person_id").references(() => persons.id, {
+    onDelete: "set null",
+  }),
   personName: text("person_name").notNull(),
   expectedAmountPaise: bigint("expected_amount_paise", {
     mode: "number",
@@ -261,13 +293,16 @@ export const settlements = pgTable("settlement", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
-  inflowTransactionId: text("inflow_transaction_id")
-    .notNull()
-    .references(() => transactions.id, { onDelete: "cascade" }),
+  inflowTransactionId: text("inflow_transaction_id").references(
+    () => transactions.id,
+    { onDelete: "cascade" },
+  ),
   splitParticipantId: text("split_participant_id")
     .notNull()
     .references(() => splitParticipants.id, { onDelete: "cascade" }),
   amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+  method: settlementMethodEnum("method").notNull().default("bank"),
+  note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
