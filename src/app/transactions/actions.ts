@@ -130,6 +130,30 @@ export async function setTransactionTransfer(input: {
       ),
     );
   revalidatePath("/transactions");
+  revalidatePath("/review");
+  revalidatePath("/");
+}
+
+export async function setTransactionNeedsReview(input: {
+  transactionId: string;
+  needsReview: boolean;
+}) {
+  const user = await requireCurrentUserAction();
+  const { accountId } = await assertTransactionOwned(
+    user.id,
+    input.transactionId,
+  );
+  await db
+    .update(schema.transactions)
+    .set({ needsReview: input.needsReview })
+    .where(
+      and(
+        eq(schema.transactions.id, input.transactionId),
+        eq(schema.transactions.accountId, accountId),
+      ),
+    );
+  revalidatePath("/transactions");
+  revalidatePath("/review");
   revalidatePath("/");
 }
 

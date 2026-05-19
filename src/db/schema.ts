@@ -213,6 +213,7 @@ export const transactions = pgTable(
     counterpartyId: text("counterparty_id").references(() => counterparties.id),
     categoryId: text("category_id").references(() => categories.id),
     isTransfer: boolean("is_transfer").default(false).notNull(),
+    needsReview: boolean("needs_review").default(false).notNull(),
     balancePaise: bigint("balance_paise", { mode: "number" }),
     note: text("note"),
     sourceImportId: text("source_import_id").references(() => imports.id, {

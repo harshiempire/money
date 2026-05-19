@@ -83,6 +83,7 @@ export default async function TransactionsPage({
       counterpartyDisplayName: schema.counterparties.displayName,
       categoryId: schema.transactions.categoryId,
       isTransfer: schema.transactions.isTransfer,
+      needsReview: schema.transactions.needsReview,
       note: schema.transactions.note,
     })
     .from(schema.transactions)
@@ -410,7 +411,7 @@ export default async function TransactionsPage({
                   id={`txn-${r.id}`}
                   className={`scroll-mt-4 border-t border-neutral-200 align-top dark:border-neutral-800 ${
                     r.isTransfer ? "opacity-60" : ""
-                  } ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
+                  } ${r.needsReview ? "border-l-2 border-l-amber-400/70 pl-1 dark:border-l-amber-500/60" : ""} ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
                 >
                   <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
                     {formatDate(r.txnDate)}
@@ -461,6 +462,7 @@ export default async function TransactionsPage({
                       participants={participantOptions}
                       knownPersonNames={knownPersonNames}
                       note={r.note}
+                      needsReview={r.needsReview}
                     />
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">

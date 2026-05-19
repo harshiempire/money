@@ -43,6 +43,13 @@
       "when": 1779107291661,
       "tag": "0005_handy_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779168447020,
+      "tag": "0006_fat_starhawk",
+      "breakpoints": true
     }
   ]
 }

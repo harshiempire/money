@@ -13,6 +13,7 @@ import {
   type ParticipantOption,
 } from "./SettleDialog";
 import { NoteButton } from "./NoteDialog";
+import { ReviewLaterButton } from "./ReviewLaterButton";
 
 export interface CategoryOption {
   id: string;
@@ -33,6 +34,7 @@ export function RowActions({
   participants,
   knownPersonNames,
   note,
+  needsReview,
 }: {
   transactionId: string;
   drCr: "debit" | "credit";
@@ -46,6 +48,7 @@ export function RowActions({
   participants: ParticipantOption[];
   knownPersonNames: string[];
   note: string | null;
+  needsReview: boolean;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -123,6 +126,11 @@ export function RowActions({
           existing={existingSettlement}
         />
       )}
+
+      <ReviewLaterButton
+        transactionId={transactionId}
+        needsReview={needsReview}
+      />
 
       <NoteButton
         transactionId={transactionId}

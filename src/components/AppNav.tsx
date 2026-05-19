@@ -5,6 +5,7 @@ type NavLink = { href: string; label: string };
 const defaultLinks: NavLink[] = [
   { href: "/", label: "Dashboard" },
   { href: "/transactions", label: "Transactions" },
+  { href: "/review", label: "Review" },
   { href: "/timeline", label: "Timeline" },
   { href: "/reimbursements", label: "Reimbursements" },
   { href: "/import", label: "Import" },
