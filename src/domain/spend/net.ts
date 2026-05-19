@@ -1,5 +1,5 @@
 import "server-only";
-import { type SQL, and, eq, gte, lte, sql } from "drizzle-orm";
+import { type SQL, and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 /**
@@ -198,4 +198,192 @@ export async function topCounterparties(
     .filter((r) => r.netSelfPaise > 0)
     .sort((a, b) => b.netSelfPaise - a.netSelfPaise)
     .slice(0, limit);
+}
+
+const yourShareDebitExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit'
+      then coalesce(
+        (select ${schema.splits.yourSharePaise} from ${schema.splits}
+         where ${schema.splits.transactionId} = ${schema.transactions.id}),
+        ${schema.transactions.amountPaise}
+      )
+    else 0
+  end
+`;
+
+const personalDebitGrossExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit'
+      then ${schema.transactions.amountPaise}
+    else 0
+  end
+`;
+
+const netCreditExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'credit'
+      and exists (
+        select 1 from ${schema.settlements}
+        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      )
+      then 0
+    when ${schema.transactions.drCr} = 'credit'
+      then ${schema.transactions.amountPaise}
+    else 0
+  end
+`;
+
+export interface SplitBridgeTotals {
+  personalDebitGrossPaise: number;
+  yourShareDebitPaise: number;
+  othersSharePaise: number;
+  netCreditPaise: number;
+  splitTxnCount: number;
+}
+
+/** Decompose gross debits into your share vs others' share on split transactions. */
+export async function splitBridgeTotals(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+): Promise<SplitBridgeTotals> {
+  const where = buildWhere(accountId, from, to);
+  const [r] = await db
+    .select({
+      personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
+      yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
+      netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
+      splitTxnCount: sql<number>`coalesce(sum(
+        case
+          when ${schema.transactions.drCr} = 'debit'
+            and ${schema.transactions.isTransfer} = false
+            and exists (
+              select 1 from ${schema.splits}
+              where ${schema.splits.transactionId} = ${schema.transactions.id}
+            )
+          then 1 else 0
+        end
+      ), 0)::int`,
+    })
+    .from(schema.transactions)
+    .where(where);
+
+  const personalDebitGrossPaise = Number(r.personalDebitGross);
+  const yourShareDebitPaise = Number(r.yourShareDebit);
+  return {
+    personalDebitGrossPaise,
+    yourShareDebitPaise,
+    othersSharePaise: personalDebitGrossPaise - yourShareDebitPaise,
+    netCreditPaise: Number(r.netCredit),
+    splitTxnCount: r.splitTxnCount,
+  };
+}
+
+export interface TriageStats {
+  uncategorizedNetSelfPaise: number;
+  uncategorizedCount: number;
+  needsReviewCount: number;
+}
+
+export async function triageStats(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+): Promise<TriageStats> {
+  const where = buildWhere(accountId, from, to);
+  const [uncat] = await db
+    .select({
+      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.transactions)
+    .where(and(where, isNull(schema.transactions.categoryId)));
+
+  const [review] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.transactions)
+    .where(and(where, eq(schema.transactions.needsReview, true)));
+
+  return {
+    uncategorizedNetSelfPaise: Number(uncat.netSelf),
+    uncategorizedCount: uncat.count,
+    needsReviewCount: review.count,
+  };
+}
+
+export interface DailyNetSpend {
+  date: string;
+  netSelfPaise: number;
+}
+
+/** Net personal spend per calendar day — for dashboard sparkline. */
+export async function dailyNetSpend(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+): Promise<DailyNetSpend[]> {
+  const where = buildWhere(accountId, from, to);
+  const rows = await db
+    .select({
+      date: schema.transactions.txnDate,
+      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+    })
+    .from(schema.transactions)
+    .where(where)
+    .groupBy(schema.transactions.txnDate)
+    .orderBy(schema.transactions.txnDate);
+
+  return rows.map((r) => ({
+    date: r.date,
+    netSelfPaise: Number(r.netSelf),
+  }));
+}
+
+export interface TopDebit {
+  id: string;
+  txnDate: string;
+  rawDescription: string;
+  netSelfPaise: number;
+}
+
+/** Largest personal debits by net-self amount (split-aware). */
+export async function topDebits(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+  limit = 5,
+): Promise<TopDebit[]> {
+  const where = buildWhere(accountId, from, to);
+  const rows = await db
+    .select({
+      id: schema.transactions.id,
+      txnDate: schema.transactions.txnDate,
+      rawDescription: schema.transactions.rawDescription,
+      netSelf: yourShareDebitExpr,
+    })
+    .from(schema.transactions)
+    .where(
+      and(
+        where,
+        eq(schema.transactions.drCr, "debit"),
+        eq(schema.transactions.isTransfer, false),
+      ),
+    )
+    .orderBy(desc(yourShareDebitExpr))
+    .limit(limit);
+
+  return rows
+    .map((r) => ({
+      id: r.id,
+      txnDate: r.txnDate,
+      rawDescription: r.rawDescription,
+      netSelfPaise: Number(r.netSelf),
+    }))
+    .filter((r) => r.netSelfPaise > 0);
 }
