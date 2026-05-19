@@ -14,6 +14,26 @@ export const formatPaise = (paise: number | null | undefined): string => {
   return inrFormatter.format(paise / 100);
 };
 
+/** Deterministic INR string (no Intl) — avoids SSR/client hydration mismatches in SVG. */
+export const formatPaisePlain = (paise: number | null | undefined): string => {
+  if (paise == null) return "—";
+  const sign = paise < 0 ? "−" : "";
+  const abs = Math.abs(paise);
+  const rupees = Math.trunc(abs / 100);
+  const cents = String(abs % 100).padStart(2, "0");
+  const rs = String(rupees);
+  if (rs.length <= 3) return `${sign}₹${rs}.${cents}`;
+  const last3 = rs.slice(-3);
+  let rest = rs.slice(0, -3);
+  const groups: string[] = [];
+  while (rest.length > 2) {
+    groups.unshift(rest.slice(-2));
+    rest = rest.slice(0, -2);
+  }
+  if (rest.length > 0) groups.unshift(rest);
+  return `${sign}₹${groups.join(",")},${last3}.${cents}`;
+};
+
 export const formatPaiseSigned = (
   paise: number,
   drCr: "debit" | "credit",
