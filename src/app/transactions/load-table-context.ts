@@ -11,12 +11,12 @@ import {
 } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { counterpartyLabel, formatDate } from "@/lib/format";
+import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
 import {
   buildExpenseLinks,
   buildReimbursementLinks,
 } from "./SplitSettlementLinks";
 import type { CategoryOption } from "./RowActions";
-import type { ExistingSplit } from "./SplitDialog";
 import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
 
 export type TransactionListRow = {
@@ -177,22 +177,6 @@ export async function loadTransactionTableContext(
   const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
   const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
 
-  const splitByTxn = new Map<string, ExistingSplit>();
-  for (const s of splits) {
-    splitByTxn.set(s.transactionId, {
-      totalPaise: Number(s.totalPaise),
-      yourSharePaise: Number(s.yourSharePaise),
-      note: s.note,
-      participants: participantsAll
-        .filter((p) => p.splitId === s.id)
-        .map((p) => ({
-          id: p.id,
-          personName: p.personName,
-          expectedAmountPaise: Number(p.expectedAmountPaise),
-        })),
-    });
-  }
-
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
   for (const st of settlementsForRows) {
     if (!st.inflowTransactionId) continue;
@@ -253,6 +237,12 @@ export async function loadTransactionTableContext(
         Number(s.amountPaise),
     );
   }
+
+  const splitByTxn = buildSplitByTxn(
+    splits,
+    participantsAll,
+    settledByParticipant,
+  );
 
   const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
   const participantOptions: ParticipantOption[] = allParticipants.map((p) => {

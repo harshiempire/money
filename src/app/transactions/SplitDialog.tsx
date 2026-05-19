@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { formatPaise } from "@/lib/format";
+import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 import { createSplit, deleteSplit } from "./split-actions";
 
 export interface ExistingSplit {
@@ -11,8 +13,84 @@ export interface ExistingSplit {
     id: string;
     personName: string;
     expectedAmountPaise: number;
+    settledAmountPaise: number;
+    outstandingAmountPaise: number;
   }>;
+  status: SplitSettlementStatus;
+  expectedReimbursePaise: number;
+  settledReimbursePaise: number;
+  outstandingReimbursePaise: number;
+  settledParticipantCount: number;
+  totalParticipantCount: number;
 }
+
+function splitButtonLabel(existing: ExistingSplit): string {
+  const yourShare = (existing.yourSharePaise / 100).toFixed(2);
+  switch (existing.status) {
+    case "settled":
+      return `Split done ✓`;
+    case "partial":
+      return `Split · partial`;
+    case "open":
+      return `Split · pending`;
+    default:
+      return `Split ₹${yourShare}`;
+  }
+}
+
+function splitButtonTitle(existing: ExistingSplit): string {
+  const yourShare = (existing.yourSharePaise / 100).toFixed(2);
+  const base = `Split: your share ₹${yourShare}`;
+  if (existing.status === "none") return base;
+  if (existing.status === "settled") {
+    return `${base} · all ${existing.totalParticipantCount} participant${existing.totalParticipantCount === 1 ? "" : "s"} settled`;
+  }
+  return `${base} · ${existing.settledParticipantCount}/${existing.totalParticipantCount} settled · ${formatPaise(existing.outstandingReimbursePaise)} outstanding`;
+}
+
+function splitButtonClass(status: SplitSettlementStatus, hasSplit: boolean): string {
+  if (!hasSplit) {
+    return "border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800";
+  }
+  switch (status) {
+    case "settled":
+      return "border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300";
+    case "partial":
+      return "border-amber-400 text-amber-800 dark:border-amber-700 dark:text-amber-300";
+    case "open":
+      return "border-amber-400 text-amber-800 dark:border-amber-700 dark:text-amber-300";
+    default:
+      return "border-violet-400 text-violet-700 dark:border-violet-700 dark:text-violet-300";
+  }
+}
+
+export function SplitSettlementStatusLine({
+  split,
+}: {
+  split: ExistingSplit;
+}) {
+  if (split.status === "none") return null;
+
+  const settledLabel =
+    split.status === "settled"
+      ? "All reimbursements received"
+      : `${split.settledParticipantCount}/${split.totalParticipantCount} settled · ${formatPaise(split.outstandingReimbursePaise)} pending`;
+
+  const tone =
+    split.status === "settled"
+      ? "text-emerald-700/90 dark:text-emerald-300/90"
+      : split.status === "partial"
+        ? "text-amber-800/90 dark:text-amber-300/90"
+        : "text-amber-800/90 dark:text-amber-300/90";
+
+  return (
+    <div className={`mt-0.5 text-[11px] leading-snug ${tone}`}>
+      <span className="opacity-70">↳</span>{" "}
+      <span className="font-medium">{settledLabel}</span>
+    </div>
+  );
+}
+
 
 export function SplitButton({
   transactionId,
@@ -29,27 +107,20 @@ export function SplitButton({
   const open = () => dialogRef.current?.showModal();
   const close = () => dialogRef.current?.close();
 
-  const yourShareRupees = existing
-    ? (existing.yourSharePaise / 100).toFixed(2)
-    : null;
-
   return (
     <>
       <button
         type="button"
         onClick={open}
-        className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
-          existing
-            ? "border-violet-400 text-violet-700 dark:border-violet-700 dark:text-violet-300"
-            : "border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-        }`}
+        className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${splitButtonClass(
+          existing?.status ?? "none",
+          existing != null,
+        )}`}
         title={
-          existing
-            ? `Split: your share ₹${yourShareRupees}`
-            : "Split this transaction"
+          existing ? splitButtonTitle(existing) : "Split this transaction"
         }
       >
-        {existing ? `Split ₹${yourShareRupees}` : "Split…"}
+        {existing ? splitButtonLabel(existing) : "Split…"}
       </button>
       <dialog
         ref={dialogRef}

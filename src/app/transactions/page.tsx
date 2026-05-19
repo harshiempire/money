@@ -17,7 +17,8 @@ import {
   buildExpenseLinks,
   buildReimbursementLinks,
 } from "./SplitSettlementLinks";
-import type { ExistingSplit } from "./SplitDialog";
+import { SplitSettlementStatusLine } from "./SplitDialog";
+import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
 import type {
   ExistingAllocation,
   ParticipantOption,
@@ -208,22 +209,6 @@ export default async function TransactionsPage({
   const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
   const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
 
-  // Group lookups for the row renderer.
-  const splitByTxn = new Map<string, ExistingSplit>();
-  for (const s of splits) {
-    splitByTxn.set(s.transactionId, {
-      totalPaise: Number(s.totalPaise),
-      yourSharePaise: Number(s.yourSharePaise),
-      note: s.note,
-      participants: participantsAll
-        .filter((p) => p.splitId === s.id)
-        .map((p) => ({
-          id: p.id,
-          personName: p.personName,
-          expectedAmountPaise: Number(p.expectedAmountPaise),
-        })),
-    });
-  }
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
   for (const st of settlementsForRows) {
     if (!st.inflowTransactionId) continue;
@@ -283,6 +268,13 @@ export default async function TransactionsPage({
         Number(s.amountPaise),
     );
   }
+
+  const splitByTxn = buildSplitByTxn(
+    splits,
+    participantsAll,
+    settledByParticipant,
+  );
+
   const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
   const participantOptions: ParticipantOption[] = allParticipants.map((p) => {
     const meta = splitMetaById.get(p.splitId)!;
@@ -402,6 +394,7 @@ export default async function TransactionsPage({
               {rows.map((r) => {
                 const expenseLinks = expenseLinksByInflow.get(r.id);
                 const reimbursementLinks = reimbursementsByExpense.get(r.id);
+                const existingSplit = splitByTxn.get(r.id);
                 const isLinked =
                   (expenseLinks?.length ?? 0) > 0 ||
                   (reimbursementLinks?.length ?? 0) > 0;
@@ -438,6 +431,9 @@ export default async function TransactionsPage({
                       expenseLinks={expenseLinks}
                       reimbursementLinks={reimbursementLinks}
                     />
+                    {existingSplit && (
+                      <SplitSettlementStatusLine split={existingSplit} />
+                    )}
                   </td>
                   <td
                     className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${

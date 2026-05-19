@@ -5,6 +5,7 @@ import {
   formatPaiseSigned,
 } from "@/lib/format";
 import { RowActions, type CategoryOption } from "./RowActions";
+import { SplitSettlementStatusLine } from "./SplitDialog";
 import { SplitSettlementLinks } from "./SplitSettlementLinks";
 import type { TransactionListRow } from "./load-table-context";
 import type { ExistingSplit } from "./SplitDialog";
@@ -74,6 +75,7 @@ export function TransactionTable({
           {rows.map((r) => {
             const expenseLinks = expenseLinksByInflow.get(r.id);
             const reimbursementLinks = reimbursementsByExpense.get(r.id);
+            const existingSplit = splitByTxn.get(r.id);
             const isLinked =
               (expenseLinks?.length ?? 0) > 0 ||
               (reimbursementLinks?.length ?? 0) > 0;
@@ -114,6 +116,9 @@ export function TransactionTable({
                     expenseLinks={expenseLinks}
                     reimbursementLinks={reimbursementLinks}
                   />
+                  {existingSplit && (
+                    <SplitSettlementStatusLine split={existingSplit} />
+                  )}
                 </td>
                 <td
                   className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${

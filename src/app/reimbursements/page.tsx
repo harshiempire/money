@@ -5,6 +5,10 @@ import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppNav } from "@/components/AppNav";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import {
+  summarizeSplitSettlement,
+  type SplitSettlementStatus,
+} from "@/lib/splits/settlement-status";
+import {
   CashSettlementButton,
   type CashSettlement,
 } from "./CashSettlementDialog";
@@ -13,6 +17,7 @@ export const dynamic = "force-dynamic";
 
 interface ParticipantRow {
   participantId: string;
+  splitId: string;
   personId: string | null;
   personName: string;
   expectedPaise: number;
@@ -25,6 +30,45 @@ interface ParticipantRow {
   txnDate: string;
   txnDescription: string;
   txnId: string;
+}
+
+interface SplitSummaryRow {
+  splitId: string;
+  txnDate: string;
+  txnDescription: string;
+  txnId: string;
+  status: SplitSettlementStatus;
+  expectedReimbursePaise: number;
+  settledReimbursePaise: number;
+  outstandingReimbursePaise: number;
+  settledParticipantCount: number;
+  totalParticipantCount: number;
+}
+
+function splitStatusLabel(status: SplitSettlementStatus): string {
+  switch (status) {
+    case "settled":
+      return "All settled";
+    case "partial":
+      return "Partially settled";
+    case "open":
+      return "Pending";
+    default:
+      return "";
+  }
+}
+
+function splitStatusTone(status: SplitSettlementStatus): string {
+  switch (status) {
+    case "settled":
+      return "text-emerald-700 dark:text-emerald-400";
+    case "partial":
+      return "text-amber-800 dark:text-amber-400";
+    case "open":
+      return "text-amber-800 dark:text-amber-400";
+    default:
+      return "text-neutral-500";
+  }
 }
 
 const today = new Date();
@@ -125,6 +169,7 @@ export default async function ReimbursementsPage() {
     );
     return {
       participantId: p.id,
+      splitId: p.splitId,
       personId: p.personId,
       personName: p.personName,
       expectedPaise: expected,
@@ -176,6 +221,38 @@ export default async function ReimbursementsPage() {
     .map(([groupKey, row]) => ({ groupKey, ...row }))
     .sort((a, b) => b.outstandingPaise - a.outstandingPaise);
 
+  const participantsBySplit = new Map<string, ParticipantRow[]>();
+  for (const r of rows) {
+    const group = participantsBySplit.get(r.splitId) ?? [];
+    group.push(r);
+    participantsBySplit.set(r.splitId, group);
+  }
+
+  const splitSummaries: SplitSummaryRow[] = [...participantsBySplit.entries()]
+    .map(([splitId, parts]) => {
+      const meta = splitMeta.get(splitId)!;
+      const summary = summarizeSplitSettlement(
+        parts.map((p) => ({
+          expectedAmountPaise: p.expectedPaise,
+          settledAmountPaise: p.settledPaise,
+        })),
+      );
+      return {
+        splitId,
+        txnDate: meta.txnDate,
+        txnDescription: counterpartyLabel(meta.rawDescription),
+        txnId: meta.transactionId,
+        ...summary,
+      };
+    })
+    .filter((s) => s.status !== "none")
+    .sort((a, b) => a.txnDate.localeCompare(b.txnDate));
+
+  const openSplits = splitSummaries.filter(
+    (s) => s.status === "open" || s.status === "partial",
+  );
+  const settledSplits = splitSummaries.filter((s) => s.status === "settled");
+
   return (
     <main className="mx-auto max-w-5xl p-8">
       <header className="flex items-baseline justify-between">
@@ -205,6 +282,71 @@ export default async function ReimbursementsPage() {
           {splitsRaw.length === 1 ? "" : "s"}.
         </p>
       </section>
+
+      {openSplits.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold">Splits awaiting reimbursement</h2>
+          <ul className="mt-3 space-y-2">
+            {openSplits.map((s) => (
+              <li
+                key={s.splitId}
+                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
+              >
+                <div>
+                  <div className="font-medium">
+                    {formatDate(s.txnDate)} · {s.txnDescription}
+                  </div>
+                  <div
+                    className={`mt-0.5 text-xs ${splitStatusTone(s.status)}`}
+                  >
+                    {splitStatusLabel(s.status)} ·{" "}
+                    {s.settledParticipantCount}/{s.totalParticipantCount}{" "}
+                    participants
+                  </div>
+                </div>
+                <div className="text-right font-mono text-sm">
+                  <div className="text-amber-700 dark:text-amber-400">
+                    {formatPaise(s.outstandingReimbursePaise)} pending
+                  </div>
+                  <div className="text-[10px] font-sans text-neutral-500">
+                    {formatPaise(s.settledReimbursePaise)} of{" "}
+                    {formatPaise(s.expectedReimbursePaise)} received
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {settledSplits.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold text-neutral-500">
+            Fully settled splits ({settledSplits.length})
+          </h2>
+          <ul className="mt-2 space-y-1 text-xs text-neutral-500">
+            {settledSplits.map((s) => (
+              <li key={s.splitId} className="flex flex-wrap items-center gap-2">
+                <span className="text-emerald-700 dark:text-emerald-400">
+                  ✓
+                </span>
+                <span>
+                  {formatDate(s.txnDate)} · {s.txnDescription} ·{" "}
+                  {formatPaise(s.expectedReimbursePaise)} ·{" "}
+                  {s.totalParticipantCount} participant
+                  {s.totalParticipantCount === 1 ? "" : "s"}
+                </span>
+                <a
+                  href={`/transactions#txn-${s.txnId}`}
+                  className="underline-offset-2 hover:underline"
+                >
+                  View
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {byPerson.length > 0 && (
         <section className="mt-6">
