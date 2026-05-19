@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { clearSettlement, recordSettlement } from "./split-actions";
 
 export interface ParticipantOption {
@@ -19,6 +19,35 @@ export interface ExistingAllocation {
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
 const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
+
+const outstandingPaise = (p: ParticipantOption) =>
+  Math.max(0, p.expectedAmountPaise - p.alreadySettledPaise);
+
+function matchesParticipantFilters(
+  p: ParticipantOption,
+  personQuery: string,
+  amountQuery: string,
+): boolean {
+  const nameQ = personQuery.trim().toLowerCase();
+  if (nameQ && !p.personName.toLowerCase().includes(nameQ)) {
+    return false;
+  }
+  const amountQ = amountQuery.trim();
+  if (!amountQ) return true;
+
+  const targetPaise = rupeesToPaise(amountQ);
+  if (!Number.isFinite(targetPaise) || targetPaise < 0) return true;
+
+  const owed = outstandingPaise(p);
+  if (owed === targetPaise || p.expectedAmountPaise === targetPaise) {
+    return true;
+  }
+  // Allow typing "661" to match ₹661.50
+  const q = amountQ.replace(/[^\d.]/g, "");
+  const owedStr = paiseToRupeesStr(owed);
+  const expectedStr = paiseToRupeesStr(p.expectedAmountPaise);
+  return owedStr.includes(q) || expectedStr.includes(q);
+}
 
 export function SettleButton({
   inflowTransactionId,
@@ -91,11 +120,26 @@ function SettleForm({
   const [allocations, setAllocations] = useState<Record<string, string>>(
     initialAllocs,
   );
+  const [personFilter, setPersonFilter] = useState("");
+  const [amountFilter, setAmountFilter] = useState("");
   const [pending, startTransition] = useTransition();
 
-  // Show all participants (even those already fully settled by other inflows)
-  // because the user may want to attribute this credit to any of them.
-  const visible = participants;
+  const personSuggestions = useMemo(() => {
+    const names = new Set(participants.map((p) => p.personName));
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [participants]);
+
+  const hasFilters =
+    personFilter.trim().length > 0 || amountFilter.trim().length > 0;
+
+  // Rows with an allocation stay visible even when filtered out.
+  const visible = useMemo(() => {
+    return participants.filter((p) => {
+      const hasAllocation = Boolean(allocations[p.id]?.trim());
+      if (hasAllocation) return true;
+      return matchesParticipantFilters(p, personFilter, amountFilter);
+    });
+  }, [participants, personFilter, amountFilter, allocations]);
 
   const allocatedPaise = Object.values(allocations).reduce((s, v) => {
     const n = Number.parseFloat(v);
@@ -152,14 +196,70 @@ function SettleForm({
         .
       </p>
 
-      {visible.length === 0 ? (
+      {participants.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-end gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800">
+          <label className="flex min-w-[8rem] flex-1 flex-col text-xs">
+            <span className="uppercase text-neutral-500">Person</span>
+            <input
+              type="search"
+              list="settle-person-suggestions"
+              value={personFilter}
+              onChange={(e) => setPersonFilter(e.target.value)}
+              placeholder="e.g. Shyam"
+              className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+            />
+          </label>
+          <label className="flex min-w-[6rem] flex-1 flex-col text-xs">
+            <span className="uppercase text-neutral-500">Amount (₹)</span>
+            <input
+              type="search"
+              inputMode="decimal"
+              value={amountFilter}
+              onChange={(e) => setAmountFilter(e.target.value)}
+              placeholder="e.g. 661.50"
+              className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+            />
+          </label>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setPersonFilter("");
+                setAmountFilter("");
+              }}
+              className="rounded px-2 py-1 text-xs text-neutral-500 underline-offset-4 hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
+          <datalist id="settle-person-suggestions">
+            {personSuggestions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </div>
+      )}
+
+      {participants.length === 0 ? (
         <p className="mt-4 text-sm text-neutral-500">
           No split participants exist yet. Create a split on a debit first.
         </p>
+      ) : visible.length === 0 ? (
+        <p className="mt-4 text-sm text-neutral-500">
+          No lines match these filters. Try another name or amount, or clear
+          filters.
+        </p>
       ) : (
         <div className="mt-4 space-y-2">
+          {hasFilters && (
+            <p className="text-[11px] text-neutral-500">
+              Showing {visible.length} of {participants.length}
+              {Object.values(allocations).some((v) => v.trim()) &&
+                " (including rows you already allocated)"}
+            </p>
+          )}
           {visible.map((p) => {
-            const owed = p.expectedAmountPaise - p.alreadySettledPaise;
+            const owed = outstandingPaise(p);
             return (
               <div
                 key={p.id}
@@ -170,7 +270,7 @@ function SettleForm({
                   <div className="text-[11px] text-neutral-500">
                     {p.splitTransactionDate} · {p.splitTransactionDescription} ·
                     expected ₹{paiseToRupeesStr(p.expectedAmountPaise)} ·
-                    outstanding ₹{paiseToRupeesStr(Math.max(0, owed))}
+                    outstanding ₹{paiseToRupeesStr(owed)}
                   </div>
                 </div>
                 <input
@@ -187,7 +287,7 @@ function SettleForm({
                   onClick={() =>
                     setAllocations((m) => ({
                       ...m,
-                      [p.id]: paiseToRupeesStr(Math.max(0, owed)),
+                      [p.id]: paiseToRupeesStr(owed),
                     }))
                   }
                   className="text-[10px] uppercase tracking-wide text-neutral-500 underline-offset-4 hover:underline"

@@ -9,6 +9,7 @@ import {
   counterpartyLabel,
   formatDate,
   formatPaise,
+  formatPaisePlain,
   formatPaiseSigned,
 } from "@/lib/format";
 
@@ -164,6 +165,9 @@ export default async function TimelinePage({
   );
 }
 
+/** Round SVG coords so server and client produce identical attribute strings. */
+const svgCoord = (n: number) => Number(n.toFixed(1));
+
 function BalanceChart({
   points,
 }: {
@@ -184,24 +188,23 @@ function BalanceChart({
     );
   }
 
-  const xs = points.map((_, i) => i);
   const ys = points.map((p) => p.balancePaise);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   const yRange = Math.max(1, maxY - minY);
+  const lastIndex = points.length - 1;
 
-  const sx = (i: number) => PAD_X + (i / Math.max(1, xs.length - 1)) * innerW;
-  const sy = (v: number) => PAD_Y + innerH - ((v - minY) / yRange) * innerH;
+  const sx = (i: number) =>
+    svgCoord(PAD_X + (i / Math.max(1, lastIndex)) * innerW);
+  const sy = (v: number) =>
+    svgCoord(PAD_Y + innerH - ((v - minY) / yRange) * innerH);
 
   const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${sx(i).toFixed(1)} ${sy(p.balancePaise).toFixed(1)}`)
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${sx(i)} ${sy(p.balancePaise)}`)
     .join(" ");
 
-  // 4 horizontal grid lines.
   const gridYs = [0, 0.25, 0.5, 0.75, 1].map((t) => minY + t * yRange);
-
-  // Pick a few date labels on x-axis.
-  const ticks = [0, Math.floor(points.length / 2), points.length - 1];
+  const ticks = [0, Math.floor(points.length / 2), lastIndex];
 
   return (
     <svg
@@ -209,9 +212,9 @@ function BalanceChart({
       className="h-60 w-full text-neutral-500"
       preserveAspectRatio="none"
     >
-      {gridYs.map((v) => (
+      {gridYs.map((v, gi) => (
         <line
-          key={v}
+          key={gi}
           x1={PAD_X}
           x2={W - PAD_X}
           y1={sy(v)}
@@ -231,20 +234,18 @@ function BalanceChart({
       />
       {points.map((p, i) => (
         <circle
-          key={i}
+          key={p.date}
           cx={sx(i)}
           cy={sy(p.balancePaise)}
           r={2}
           className="fill-sky-600 dark:fill-sky-400"
         >
-          <title>
-            {p.date} · {formatPaise(p.balancePaise)}
-          </title>
+          <title>{`${p.date} · ${formatPaisePlain(p.balancePaise)}`}</title>
         </circle>
       ))}
-      {gridYs.map((v) => (
+      {gridYs.map((v, gi) => (
         <text
-          key={`l-${v}`}
+          key={gi}
           x={PAD_X - 6}
           y={sy(v)}
           textAnchor="end"
@@ -253,12 +254,12 @@ function BalanceChart({
           fill="currentColor"
           opacity={0.7}
         >
-          {formatPaise(Math.round(v))}
+          {formatPaisePlain(Math.round(v))}
         </text>
       ))}
       {ticks.map((i) => (
         <text
-          key={`t-${i}`}
+          key={points[i].date}
           x={sx(i)}
           y={H - 4}
           textAnchor="middle"
