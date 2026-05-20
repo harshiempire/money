@@ -12,6 +12,44 @@ const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 const today = () => iso(new Date());
+
+export interface CalendarMonthPeriod extends Period {
+  monthKey: string;
+  isPartial: boolean;
+}
+
+/** Full calendar month; `to` is last day of month or today if current month. */
+export function calendarMonthPeriod(
+  year: number,
+  month: number,
+): CalendarMonthPeriod {
+  const fromDate = new Date(year, month - 1, 1);
+  const lastDay = new Date(year, month, 0);
+  const now = new Date();
+  const isCurrentMonth =
+    now.getFullYear() === year && now.getMonth() === month - 1;
+  const toDate = isCurrentMonth ? now : lastDay;
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const monthLabel = fromDate.toLocaleString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+  return {
+    from: iso(fromDate),
+    to: iso(toDate),
+    label: isCurrentMonth ? `${monthLabel} (in progress)` : monthLabel,
+    monthKey,
+    isPartial: isCurrentMonth,
+  };
+}
+
+/** Shift YYYY-MM by delta months. */
+export function shiftCalendarMonth(monthKey: string, delta: number): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const daysAgo = (n: number) => {
   const d = new Date();
   d.setDate(d.getDate() - n);

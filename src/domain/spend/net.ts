@@ -252,34 +252,41 @@ export async function splitBridgeTotals(
   to: string | null,
 ): Promise<SplitBridgeTotals> {
   const where = buildWhere(accountId, from, to);
-  const [r] = await db
-    .select({
-      personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
-      yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
-      netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
-      splitTxnCount: sql<number>`coalesce(sum(
-        case
-          when ${schema.transactions.drCr} = 'debit'
-            and ${schema.transactions.isTransfer} = false
-            and exists (
-              select 1 from ${schema.splits}
-              where ${schema.splits.transactionId} = ${schema.transactions.id}
-            )
-          then 1 else 0
-        end
-      ), 0)::int`,
-    })
-    .from(schema.transactions)
-    .where(where);
+  const [r, splitCountRow] = await Promise.all([
+    db
+      .select({
+        personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
+        yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
+        netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
+      })
+      .from(schema.transactions)
+      .where(where),
+    db
+      .select({
+        count: sql<number>`count(distinct ${schema.splits.transactionId})::int`,
+      })
+      .from(schema.splits)
+      .innerJoin(
+        schema.transactions,
+        eq(schema.splits.transactionId, schema.transactions.id),
+      )
+      .where(
+        and(
+          where,
+          eq(schema.transactions.drCr, "debit"),
+          eq(schema.transactions.isTransfer, false),
+        ),
+      ),
+  ]);
 
-  const personalDebitGrossPaise = Number(r.personalDebitGross);
-  const yourShareDebitPaise = Number(r.yourShareDebit);
+  const personalDebitGrossPaise = Number(r[0].personalDebitGross);
+  const yourShareDebitPaise = Number(r[0].yourShareDebit);
   return {
     personalDebitGrossPaise,
     yourShareDebitPaise,
     othersSharePaise: personalDebitGrossPaise - yourShareDebitPaise,
-    netCreditPaise: Number(r.netCredit),
-    splitTxnCount: r.splitTxnCount,
+    netCreditPaise: Number(r[0].netCredit),
+    splitTxnCount: splitCountRow[0]?.count ?? 0,
   };
 }
 

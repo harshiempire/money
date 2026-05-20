@@ -4,28 +4,24 @@ import { getOrCreateAccountForBank } from "@/db/money-account";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { AppNav } from "@/components/AppNav";
+import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import {
   categoryBreakdown,
-  dailyNetSpend,
   netSpendTotals,
   splitBridgeTotals,
   topCounterparties,
-  topDebits,
   triageStats,
 } from "@/domain/spend/net";
+import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
 import {
   inclusiveDayCount,
   previousPeriodWindow,
   resolvePeriod,
   PRESET_PERIODS,
 } from "@/lib/period";
-import {
-  counterpartyLabel,
-  formatDate,
-  formatPaise,
-  formatPaisePlain,
-} from "@/lib/format";
+import { spendPeriodHref } from "@/lib/spend/period";
+import { formatPaise } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +45,6 @@ export default async function DashboardPage({
 
   const isStatementMode = !sp.preset && !sp.from && !sp.to;
 
-  // Default to the latest imported statement period when no params given.
   let period = resolvePeriod(sp);
   if (isStatementMode) {
     const [latest] = await db
@@ -70,35 +65,29 @@ export default async function DashboardPage({
     }
   }
 
-  const [
-    totals,
-    bridge,
-    triage,
-    cats,
-    tops,
-    debits,
-    daily,
-    prevTotals,
-  ] = await Promise.all([
-    netSpendTotals(account.id, period.from, period.to),
-    splitBridgeTotals(account.id, period.from, period.to),
-    triageStats(account.id, period.from, period.to),
-    categoryBreakdown(account.id, period.from, period.to),
-    topCounterparties(account.id, period.from, period.to, 8),
-    topDebits(account.id, period.from, period.to, 5),
-    dailyNetSpend(account.id, period.from, period.to),
-    loadPreviousPeriodTotals(account.id, period, isStatementMode),
-  ]);
+  const spendLink = spendPeriodHref(
+    sp.preset
+      ? { preset: sp.preset }
+      : period.from && period.to
+        ? { from: period.from, to: period.to }
+        : {},
+  );
+
+  const [totals, bridge, reimbursement, triage, cats, tops, prevTotals] =
+    await Promise.all([
+      netSpendTotals(account.id, period.from, period.to),
+      splitBridgeTotals(account.id, period.from, period.to),
+      reimbursementBridgeTotals(account.id, period.from, period.to),
+      triageStats(account.id, period.from, period.to),
+      categoryBreakdown(account.id, period.from, period.to),
+      topCounterparties(account.id, period.from, period.to, 8),
+      loadPreviousPeriodTotals(account.id, period, isStatementMode),
+    ]);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const refundCats = cats.filter((c) => c.netSelfPaise < 0);
   const totalSpendPaise = spendCats.reduce((s, c) => s + c.netSelfPaise, 0);
   const maxSpend = spendCats[0]?.netSelfPaise ?? 1;
-  const top3 = spendCats.slice(0, 3);
-  const top3Share =
-    totalSpendPaise > 0
-      ? top3.reduce((s, c) => s + c.netSelfPaise, 0) / totalSpendPaise
-      : 0;
 
   const dayCount =
     period.from && period.to
@@ -114,6 +103,9 @@ export default async function DashboardPage({
 
   const showTriage =
     triage.uncategorizedCount > 0 || triage.needsReviewCount > 0;
+
+  const showBreakdown =
+    bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0;
 
   return (
     <main className="mx-auto max-w-5xl p-8">
@@ -143,9 +135,7 @@ export default async function DashboardPage({
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && (
-            <PeriodDelta delta={periodDelta} />
-          )}
+          {periodDelta != null && <PeriodDelta delta={periodDelta} />}
           {burnPerDay != null && (
             <span>
               ~{formatPaise(burnPerDay)}/day over {dayCount} day
@@ -189,76 +179,25 @@ export default async function DashboardPage({
         </section>
       )}
 
-      {(bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0) && (
+      {showBreakdown && (
         <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <h2 className="text-sm font-semibold">Spend breakdown</h2>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            How bank debits become your net personal spend.
-          </p>
-          <dl className="mt-3 space-y-1.5 font-mono text-sm">
-            <BridgeRow
-              label="Personal debits (gross)"
-              value={bridge.personalDebitGrossPaise}
-            />
-            {bridge.othersSharePaise > 0 && (
-              <BridgeRow
-                label="Others' share (splits)"
-                value={-bridge.othersSharePaise}
-                tone="credit"
-                hint={`${bridge.splitTxnCount} split txn${bridge.splitTxnCount === 1 ? "" : "s"}`}
-              />
-            )}
-            <BridgeRow
-              label="Your share of debits"
-              value={bridge.yourShareDebitPaise}
-              bold
-            />
-            {bridge.netCreditPaise > 0 && (
-              <BridgeRow
-                label="Refunds & income"
-                value={-bridge.netCreditPaise}
-                tone="credit"
-              />
-            )}
-            <div className="border-t border-neutral-200 pt-1.5 dark:border-neutral-700">
-              <BridgeRow
-                label="Net personal spend"
-                value={totals.netSelfPaise}
-                bold
-                tone={totals.netSelfPaise >= 0 ? "debit" : "credit"}
-              />
-            </div>
-          </dl>
-        </section>
-      )}
-
-      {daily.length >= 2 && (
-        <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <h2 className="text-sm font-semibold">Daily spend</h2>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            Net personal spend per day in this period.
-          </p>
-          <div className="mt-3">
-            <DailySpendChart points={daily} />
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold">Spend breakdown</h2>
+            <a
+              href={spendLink}
+              className="text-xs text-neutral-500 underline-offset-2 hover:underline"
+            >
+              Full report →
+            </a>
           </div>
-        </section>
-      )}
-
-      {top3.length > 0 && (
-        <section className="mt-8 text-sm">
-          <p className="text-neutral-600 dark:text-neutral-400">
-            Top {top3.length} categor{top3.length === 1 ? "y" : "ies"} —{" "}
-            <span className="font-mono">
-              {(top3Share * 100).toFixed(0)}%
-            </span>{" "}
-            of spend:{" "}
-            {top3
-              .map(
-                (c) =>
-                  `${c.categoryName} (${totalSpendPaise > 0 ? ((c.netSelfPaise / totalSpendPaise) * 100).toFixed(0) : 0}%)`,
-              )
-              .join(" · ")}
-          </p>
+          <div className="mt-3">
+            <SpendBreakdown
+              bridge={bridge}
+              netSelfPaise={totals.netSelfPaise}
+              reimbursement={reimbursement}
+              compact
+            />
+          </div>
         </section>
       )}
 
@@ -328,61 +267,27 @@ export default async function DashboardPage({
           )}
         </div>
 
-        <div className="space-y-8">
-          <div>
-            <h2 className="text-lg font-semibold">Top counterparties</h2>
-            {tops.length === 0 ? (
-              <p className="mt-2 text-sm text-neutral-500">
-                No counterparty spend in this period.
-              </p>
-            ) : (
-              <ul className="mt-3 space-y-1.5 text-sm">
-                {tops.map((t) => (
-                  <li
-                    key={t.counterpartyId}
-                    className="flex items-baseline justify-between gap-3"
-                  >
-                    <span className="truncate">{t.displayName}</span>
-                    <span className="font-mono text-xs whitespace-nowrap">
-                      {formatPaise(t.netSelfPaise)}{" "}
-                      <span className="text-neutral-500">
-                        · {t.count}
-                        {t.count > 1 && (
-                          <> · {formatPaise(Math.round(t.netSelfPaise / t.count))} avg</>
-                        )}
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {debits.length > 0 && (
-            <div>
-              <h2 className="text-lg font-semibold">Biggest expenses</h2>
-              <p className="mt-0.5 text-xs text-neutral-500">
-                Top debits by your share (split-aware).
-              </p>
-              <ul className="mt-3 space-y-1.5 text-sm">
-                {debits.map((d) => (
-                  <li
-                    key={d.id}
-                    className="flex items-baseline justify-between gap-3"
-                  >
-                    <span className="min-w-0 truncate">
-                      <span className="font-mono text-xs text-neutral-500">
-                        {formatDate(d.txnDate)}{" "}
-                      </span>
-                      {counterpartyLabel(d.rawDescription)}
-                    </span>
-                    <span className="font-mono text-xs whitespace-nowrap text-red-700 dark:text-red-400">
-                      {formatPaise(d.netSelfPaise)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+        <div>
+          <h2 className="text-lg font-semibold">Top counterparties</h2>
+          {tops.length === 0 ? (
+            <p className="mt-2 text-sm text-neutral-500">
+              No counterparty spend in this period.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-1.5 text-sm">
+              {tops.map((t) => (
+                <li
+                  key={t.counterpartyId}
+                  className="flex items-baseline justify-between gap-3"
+                >
+                  <span className="truncate">{t.displayName}</span>
+                  <span className="font-mono text-xs whitespace-nowrap">
+                    {formatPaise(t.netSelfPaise)}{" "}
+                    <span className="text-neutral-500">· {t.count}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </section>
@@ -438,113 +343,16 @@ function PeriodDelta({ delta }: { delta: number }) {
   }
   const up = delta > 0;
   return (
-    <span className={up ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>
+    <span
+      className={
+        up
+          ? "text-red-700 dark:text-red-400"
+          : "text-emerald-700 dark:text-emerald-400"
+      }
+    >
       {up ? "+" : "−"}
       {formatPaise(Math.abs(delta))} vs previous period
     </span>
-  );
-}
-
-function BridgeRow({
-  label,
-  value,
-  tone,
-  bold,
-  hint,
-}: {
-  label: string;
-  value: number;
-  tone?: "debit" | "credit";
-  bold?: boolean;
-  hint?: string;
-}) {
-  const resolvedTone =
-    tone ?? (value >= 0 ? "debit" : "credit");
-  const toneClass =
-    resolvedTone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : "text-emerald-700 dark:text-emerald-400";
-  const prefix = value < 0 ? "−" : "";
-  return (
-    <div className={`flex items-baseline justify-between gap-3 ${bold ? "font-semibold" : ""}`}>
-      <dt className="font-sans text-neutral-600 dark:text-neutral-400">
-        {label}
-        {hint && (
-          <span className="ml-1 font-normal text-neutral-400">({hint})</span>
-        )}
-      </dt>
-      <dd className={`whitespace-nowrap ${toneClass}`}>
-        {prefix}
-        {formatPaise(Math.abs(value))}
-      </dd>
-    </div>
-  );
-}
-
-const svgCoord = (n: number) => Number(n.toFixed(1));
-
-function DailySpendChart({
-  points,
-}: {
-  points: Array<{ date: string; netSelfPaise: number }>;
-}) {
-  const W = 800;
-  const H = 120;
-  const PAD_X = 8;
-  const PAD_Y = 8;
-  const innerW = W - PAD_X * 2;
-  const innerH = H - PAD_Y * 2;
-
-  const ys = points.map((p) => Math.max(0, p.netSelfPaise));
-  const maxY = Math.max(1, ...ys);
-  const barW = innerW / points.length;
-  const lastIndex = points.length - 1;
-  const ticks = [0, Math.floor(points.length / 2), lastIndex].filter(
-    (v, i, a) => a.indexOf(v) === i,
-  );
-
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="h-28 w-full text-neutral-500"
-      preserveAspectRatio="none"
-    >
-      {points.map((p, i) => {
-        const h =
-          p.netSelfPaise > 0
-            ? (p.netSelfPaise / maxY) * innerH
-            : 0;
-        const x = svgCoord(PAD_X + i * barW + barW * 0.15);
-        const w = svgCoord(barW * 0.7);
-        const y = svgCoord(PAD_Y + innerH - h);
-        return (
-          <rect
-            key={p.date}
-            x={x}
-            y={y}
-            width={w}
-            height={svgCoord(Math.max(0, h))}
-            className="fill-red-500/60 dark:fill-red-400/60"
-            rx={1}
-          >
-            <title>{`${p.date} · ${formatPaisePlain(p.netSelfPaise)}`}</title>
-          </rect>
-        );
-      })}
-      {ticks.map((i) => (
-        <text
-          key={points[i].date}
-          x={svgCoord(PAD_X + i * barW + barW / 2)}
-          y={H - 1}
-          textAnchor="middle"
-          fontSize={9}
-          fill="currentColor"
-          opacity={0.7}
-        >
-          {points[i].date.slice(5)}
-        </text>
-      ))}
-    </svg>
   );
 }
 
@@ -589,6 +397,12 @@ function PeriodPicker({
             {p.label}
           </a>
         ))}
+        <a
+          href="/spend"
+          className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
+        >
+          Spend report
+        </a>
       </div>
     </div>
   );

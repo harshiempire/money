@@ -1,9 +1,16 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppNav } from "@/components/AppNav";
+import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
+import {
+  listStatementPeriods,
+  resolveSpendPeriod,
+  spendPeriodHref,
+  type SpendSearchParams,
+} from "@/lib/spend/period";
 import {
   summarizeSplitSettlement,
   type SplitSettlementStatus,
@@ -12,6 +19,7 @@ import {
   CashSettlementButton,
   type CashSettlement,
 } from "./CashSettlementDialog";
+import { SplitAwaitingItem } from "./SplitAwaitingItem";
 
 export const dynamic = "force-dynamic";
 
@@ -45,32 +53,6 @@ interface SplitSummaryRow {
   totalParticipantCount: number;
 }
 
-function splitStatusLabel(status: SplitSettlementStatus): string {
-  switch (status) {
-    case "settled":
-      return "All settled";
-    case "partial":
-      return "Partially settled";
-    case "open":
-      return "Pending";
-    default:
-      return "";
-  }
-}
-
-function splitStatusTone(status: SplitSettlementStatus): string {
-  switch (status) {
-    case "settled":
-      return "text-emerald-700 dark:text-emerald-400";
-    case "partial":
-      return "text-amber-800 dark:text-amber-400";
-    case "open":
-      return "text-amber-800 dark:text-amber-400";
-    default:
-      return "text-neutral-500";
-  }
-}
-
 const today = new Date();
 const ageBucket = (days: number): string => {
   if (days <= 7) return "0–7 days";
@@ -79,11 +61,27 @@ const ageBucket = (days: number): string => {
   return "60+ days";
 };
 
-export default async function ReimbursementsPage() {
+export default async function ReimbursementsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SpendSearchParams>;
+}) {
+  const sp = await searchParams;
   const user = await requireCurrentUser();
   const account = await getOrCreateAccountForBank(user.id, "bob");
 
-  // Splits attached to transactions in this account.
+  const [resolved, statements] = await Promise.all([
+    resolveSpendPeriod(account.id, sp),
+    listStatementPeriods(account.id),
+  ]);
+  const { period } = resolved;
+
+  const txnFilters = [eq(schema.transactions.accountId, account.id)];
+  if (period.from) txnFilters.push(gte(schema.transactions.txnDate, period.from));
+  if (period.to) txnFilters.push(lte(schema.transactions.txnDate, period.to));
+  const txnWhere = and(...txnFilters);
+
+  // Splits attached to transactions in this account and period.
   const splitsRaw = await db
     .select({
       splitId: schema.splits.id,
@@ -96,7 +94,7 @@ export default async function ReimbursementsPage() {
       schema.transactions,
       eq(schema.splits.transactionId, schema.transactions.id),
     )
-    .where(eq(schema.transactions.accountId, account.id));
+    .where(txnWhere);
 
   const splitIds = splitsRaw.map((s) => s.splitId);
   const participants = splitIds.length
@@ -261,17 +259,26 @@ export default async function ReimbursementsPage() {
       </header>
 
       <p className="mt-1 text-xs text-neutral-500">
-        People who still owe you, grouped by how long the split has been
-        open. Settle inflows from{" "}
+        Reimbursements for splits in the selected period. Settle inflows from{" "}
         <a className="underline" href="/transactions">
           /transactions
         </a>
-        , or record cash directly here.
+        , or record cash directly here.{" "}
+        <a className="underline" href={spendPeriodHref(sp)}>
+          Spend report
+        </a>
       </p>
+
+      <SpendPeriodPicker
+        resolved={resolved}
+        sp={sp}
+        basePath="/reimbursements"
+        statementPeriods={statements}
+      />
 
       <section className="mt-6">
         <div className="text-xs uppercase tracking-wide text-neutral-500">
-          Total outstanding
+          Outstanding · {period.label}
         </div>
         <div className="mt-1 font-mono text-3xl">
           {formatPaise(totalOutstanding)}
@@ -286,33 +293,36 @@ export default async function ReimbursementsPage() {
       {openSplits.length > 0 && (
         <section className="mt-6">
           <h2 className="text-sm font-semibold">Splits awaiting reimbursement</h2>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            Expand a split to see who still owes you and record cash paybacks.
+          </p>
           <ul className="mt-3 space-y-2">
             {openSplits.map((s) => (
-              <li
-                key={s.splitId}
-                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
-              >
-                <div>
-                  <div className="font-medium">
-                    {formatDate(s.txnDate)} · {s.txnDescription}
-                  </div>
-                  <div
-                    className={`mt-0.5 text-xs ${splitStatusTone(s.status)}`}
-                  >
-                    {splitStatusLabel(s.status)} ·{" "}
-                    {s.settledParticipantCount}/{s.totalParticipantCount}{" "}
-                    participants
-                  </div>
-                </div>
-                <div className="text-right font-mono text-sm">
-                  <div className="text-amber-700 dark:text-amber-400">
-                    {formatPaise(s.outstandingReimbursePaise)} pending
-                  </div>
-                  <div className="text-[10px] font-sans text-neutral-500">
-                    {formatPaise(s.settledReimbursePaise)} of{" "}
-                    {formatPaise(s.expectedReimbursePaise)} received
-                  </div>
-                </div>
+              <li key={s.splitId}>
+                <SplitAwaitingItem
+                  splitId={s.splitId}
+                  txnId={s.txnId}
+                  txnDate={s.txnDate}
+                  txnDescription={s.txnDescription}
+                  status={s.status}
+                  expectedReimbursePaise={s.expectedReimbursePaise}
+                  settledReimbursePaise={s.settledReimbursePaise}
+                  outstandingReimbursePaise={s.outstandingReimbursePaise}
+                  settledParticipantCount={s.settledParticipantCount}
+                  totalParticipantCount={s.totalParticipantCount}
+                  participants={(participantsBySplit.get(s.splitId) ?? []).map(
+                    (p) => ({
+                      participantId: p.participantId,
+                      personName: p.personName,
+                      expectedPaise: p.expectedPaise,
+                      settledPaise: p.settledPaise,
+                      bankSettledPaise: p.bankSettledPaise,
+                      cashSettledPaise: p.cashSettledPaise,
+                      outstandingPaise: p.outstandingPaise,
+                      cashSettlements: p.cashSettlements,
+                    }),
+                  )}
+                />
               </li>
             ))}
           </ul>
