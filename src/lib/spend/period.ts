@@ -94,28 +94,35 @@ export async function resolveSpendPeriod(
   };
 }
 
+/** Timeline default: latest statement period; falls back like spend when none imported. */
+export async function resolveTimelinePeriod(
+  accountId: string,
+  sp: SpendSearchParams,
+): Promise<ResolvedSpendPeriod> {
+  const hasExplicit =
+    sp.month ||
+    sp.preset ||
+    sp.from ||
+    sp.to ||
+    sp.statement === "1" ||
+    sp.statement === "true";
+
+  if (!hasExplicit) {
+    return resolveStatementPeriod(accountId);
+  }
+
+  return resolveSpendPeriod(accountId, sp);
+}
+
 async function resolveStatementPeriod(
   accountId: string,
 ): Promise<ResolvedSpendPeriod> {
-  const [latest] = await db
-    .select({
-      periodStart: schema.imports.periodStart,
-      periodEnd: schema.imports.periodEnd,
-    })
-    .from(schema.imports)
-    .where(eq(schema.imports.accountId, accountId))
-    .orderBy(desc(schema.imports.createdAt))
-    .limit(1);
-
-  if (latest?.periodStart && latest?.periodEnd) {
+  const period = await getLatestStatementPeriod(accountId);
+  if (period) {
     return {
-      period: {
-        from: latest.periodStart,
-        to: latest.periodEnd,
-        label: `${latest.periodStart} → ${latest.periodEnd}`,
-      },
+      period,
       mode: "statement",
-      isPartial: latest.periodEnd < todayIso(),
+      isPartial: period.to! < todayIso(),
     };
   }
 
@@ -126,6 +133,28 @@ async function resolveStatementPeriod(
     mode: "month",
     monthKey: p.monthKey,
     isPartial: p.isPartial,
+  };
+}
+
+/** Latest imported statement date range, or null if none. */
+export async function getLatestStatementPeriod(
+  accountId: string,
+): Promise<Period | null> {
+  const [latest] = await db
+    .select({
+      periodStart: schema.imports.periodStart,
+      periodEnd: schema.imports.periodEnd,
+    })
+    .from(schema.imports)
+    .where(eq(schema.imports.accountId, accountId))
+    .orderBy(desc(schema.imports.createdAt))
+    .limit(1);
+
+  if (!latest?.periodStart || !latest?.periodEnd) return null;
+  return {
+    from: latest.periodStart,
+    to: latest.periodEnd,
+    label: `${latest.periodStart} → ${latest.periodEnd}`,
   };
 }
 

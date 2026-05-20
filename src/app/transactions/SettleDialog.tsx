@@ -77,13 +77,13 @@ export function SettleButton({
             ? "No outstanding split participants — record a split on a debit first"
             : "Mark this credit as a reimbursement against a split"
         }
-        className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+        className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
           isSettlement
             ? "border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300"
             : "border-neutral-300 text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
         }`}
       >
-        {isSettlement ? "Settled ✓" : "Settle…"}
+        {isSettlement ? "Settled ✓" : "Settle"}
       </button>
       <dialog
         ref={dialogRef}

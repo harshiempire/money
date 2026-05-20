@@ -45,6 +45,7 @@ interface SplitSummaryRow {
   txnDate: string;
   txnDescription: string;
   txnId: string;
+  txnNote: string | null;
   status: SplitSettlementStatus;
   expectedReimbursePaise: number;
   settledReimbursePaise: number;
@@ -88,6 +89,7 @@ export default async function ReimbursementsPage({
       transactionId: schema.splits.transactionId,
       txnDate: schema.transactions.txnDate,
       rawDescription: schema.transactions.rawDescription,
+      txnNote: schema.transactions.note,
     })
     .from(schema.splits)
     .innerJoin(
@@ -240,6 +242,7 @@ export default async function ReimbursementsPage({
         txnDate: meta.txnDate,
         txnDescription: counterpartyLabel(meta.rawDescription),
         txnId: meta.transactionId,
+        txnNote: meta.txnNote,
         ...summary,
       };
     })
@@ -261,7 +264,7 @@ export default async function ReimbursementsPage({
       <p className="mt-1 text-xs text-neutral-500">
         Reimbursements for splits in the selected period. Settle inflows from{" "}
         <a className="underline" href="/transactions">
-          /transactions
+          Transactions
         </a>
         , or record cash directly here.{" "}
         <a className="underline" href={spendPeriodHref(sp)}>
@@ -304,6 +307,7 @@ export default async function ReimbursementsPage({
                   txnId={s.txnId}
                   txnDate={s.txnDate}
                   txnDescription={s.txnDescription}
+                  txnNote={s.txnNote}
                   status={s.status}
                   expectedReimbursePaise={s.expectedReimbursePaise}
                   settledReimbursePaise={s.settledReimbursePaise}

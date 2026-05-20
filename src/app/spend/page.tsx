@@ -67,13 +67,11 @@ export default async function SpendReportPage({
     monthlySpendHistory(account.id, 12),
     listStatementPeriods(account.id),
     period.from && period.to
-      ? netSpendTotals(
-          account.id,
-          ...(() => {
-            const p = previousPeriodWindow(period.from!, period.to!);
-            return [p.from, p.to] as const;
-          })(),
-        )
+      ? (async () => {
+          const p = previousPeriodWindow(period.from!, period.to!);
+          const totals = await netSpendTotals(account.id, p.from, p.to);
+          return { totals, label: p.label };
+        })()
       : null,
   ]);
 
@@ -84,7 +82,9 @@ export default async function SpendReportPage({
       ? inclusiveDayCount(period.from, period.to)
       : null;
   const periodDelta =
-    prevTotals != null ? totals.netSelfPaise - prevTotals.netSelfPaise : null;
+    prevTotals != null
+      ? totals.netSelfPaise - prevTotals.totals.netSelfPaise
+      : null;
 
   return (
     <main className="mx-auto max-w-5xl p-8">
@@ -117,7 +117,9 @@ export default async function SpendReportPage({
           {formatPaise(Math.abs(totals.netSelfPaise))}
         </div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && <PeriodDelta delta={periodDelta} />}
+          {periodDelta != null && (
+            <PeriodDelta delta={periodDelta} previousLabel={prevTotals?.label} />
+          )}
           {dayCount != null && totals.netSelfPaise > 0 && (
             <span>
               ~{formatPaise(Math.round(totals.netSelfPaise / dayCount))}/day
@@ -158,6 +160,11 @@ export default async function SpendReportPage({
       {spendCats.length > 0 && (
         <section className="mt-8">
           <h2 className="text-lg font-semibold">By category</h2>
+          {totalSpendPaise > 0 && (
+            <p className="mt-0.5 text-xs text-neutral-500">
+              % of net personal spend in this period
+            </p>
+          )}
           <ul className="mt-3 space-y-2 text-sm">
             {spendCats.map((c) => (
               <li
@@ -288,8 +295,21 @@ export default async function SpendReportPage({
   );
 }
 
-function PeriodDelta({ delta }: { delta: number }) {
-  if (delta === 0) return <span>Same as previous period</span>;
+function PeriodDelta({
+  delta,
+  previousLabel,
+}: {
+  delta: number;
+  previousLabel?: string;
+}) {
+  if (delta === 0) {
+    return (
+      <span>
+        Same as previous period
+        {previousLabel ? ` (${previousLabel})` : ""}
+      </span>
+    );
+  }
   const up = delta > 0;
   return (
     <span
@@ -300,7 +320,8 @@ function PeriodDelta({ delta }: { delta: number }) {
       }
     >
       {up ? "+" : "−"}
-      {formatPaise(Math.abs(delta))} vs previous period
+      {formatPaise(Math.abs(delta))} vs previous
+      {previousLabel ? ` (${previousLabel})` : " period"}
     </span>
   );
 }

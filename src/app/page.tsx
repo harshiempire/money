@@ -73,7 +73,7 @@ export default async function DashboardPage({
         : {},
   );
 
-  const [totals, bridge, reimbursement, triage, cats, tops, prevTotals] =
+  const [totals, bridge, reimbursement, triage, cats, tops, prevComparison] =
     await Promise.all([
       netSpendTotals(account.id, period.from, period.to),
       splitBridgeTotals(account.id, period.from, period.to),
@@ -81,7 +81,7 @@ export default async function DashboardPage({
       triageStats(account.id, period.from, period.to),
       categoryBreakdown(account.id, period.from, period.to),
       topCounterparties(account.id, period.from, period.to, 8),
-      loadPreviousPeriodTotals(account.id, period, isStatementMode),
+      loadPreviousPeriodComparison(account.id, period, isStatementMode),
     ]);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
@@ -99,7 +99,9 @@ export default async function DashboardPage({
       : null;
 
   const periodDelta =
-    prevTotals != null ? totals.netSelfPaise - prevTotals.netSelfPaise : null;
+    prevComparison != null
+      ? totals.netSelfPaise - prevComparison.totals.netSelfPaise
+      : null;
 
   const showTriage =
     triage.uncategorizedCount > 0 || triage.needsReviewCount > 0;
@@ -135,7 +137,12 @@ export default async function DashboardPage({
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && <PeriodDelta delta={periodDelta} />}
+          {periodDelta != null && (
+            <PeriodDelta
+              delta={periodDelta}
+              previousLabel={prevComparison?.label}
+            />
+          )}
           {burnPerDay != null && (
             <span>
               ~{formatPaise(burnPerDay)}/day over {dayCount} day
@@ -204,6 +211,11 @@ export default async function DashboardPage({
       <section className="mt-10 grid gap-8 md:grid-cols-2">
         <div>
           <h2 className="text-lg font-semibold">By category</h2>
+          {totalSpendPaise > 0 && (
+            <p className="mt-0.5 text-xs text-neutral-500">
+              % of net personal spend in this period
+            </p>
+          )}
           {spendCats.length === 0 ? (
             <p className="mt-2 text-sm text-neutral-500">
               Nothing categorized yet — head to{" "}
@@ -295,7 +307,7 @@ export default async function DashboardPage({
   );
 }
 
-async function loadPreviousPeriodTotals(
+async function loadPreviousPeriodComparison(
   accountId: string,
   period: { from: string | null; to: string | null },
   isStatementMode: boolean,
@@ -304,6 +316,7 @@ async function loadPreviousPeriodTotals(
 
   let prevFrom = period.from;
   let prevTo = period.to;
+  let label = `${prevFrom} → ${prevTo}`;
 
   if (isStatementMode) {
     const imports = await db
@@ -323,23 +336,38 @@ async function loadPreviousPeriodTotals(
     if (prev?.periodStart && prev?.periodEnd) {
       prevFrom = prev.periodStart;
       prevTo = prev.periodEnd;
+      label = `${prevFrom} → ${prevTo}`;
     } else {
       const shifted = previousPeriodWindow(period.from, period.to);
       prevFrom = shifted.from;
       prevTo = shifted.to;
+      label = shifted.label;
     }
   } else {
     const shifted = previousPeriodWindow(period.from, period.to);
     prevFrom = shifted.from;
     prevTo = shifted.to;
+    label = shifted.label;
   }
 
-  return netSpendTotals(accountId, prevFrom, prevTo);
+  const totals = await netSpendTotals(accountId, prevFrom, prevTo);
+  return { totals, label };
 }
 
-function PeriodDelta({ delta }: { delta: number }) {
+function PeriodDelta({
+  delta,
+  previousLabel,
+}: {
+  delta: number;
+  previousLabel?: string;
+}) {
   if (delta === 0) {
-    return <span>Same as previous period</span>;
+    return (
+      <span>
+        Same as previous period
+        {previousLabel ? ` (${previousLabel})` : ""}
+      </span>
+    );
   }
   const up = delta > 0;
   return (
@@ -351,7 +379,8 @@ function PeriodDelta({ delta }: { delta: number }) {
       }
     >
       {up ? "+" : "−"}
-      {formatPaise(Math.abs(delta))} vs previous period
+      {formatPaise(Math.abs(delta))} vs previous
+      {previousLabel ? ` (${previousLabel})` : " period"}
     </span>
   );
 }

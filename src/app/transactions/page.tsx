@@ -24,6 +24,7 @@ import type {
   ParticipantOption,
 } from "./SettleDialog";
 import { AutoDetectButton } from "./AutoDetectButton";
+import { getLatestStatementPeriod } from "@/lib/spend/period";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ interface PageSearchParams {
   from?: string;
   to?: string;
   channel?: string;
+  all?: string;
 }
 
 const isChannel = (s: unknown): s is Channel =>
@@ -62,9 +64,31 @@ export default async function TransactionsPage({
   await ensureDefaultCategories(userId);
   await backfillCounterparties(account.id, userId);
 
+  const showAllTime = sp.all === "1";
+  let effectiveFrom = sp.from;
+  let effectiveTo = sp.to;
+  let usingDefaultStatement = false;
+
+  if (!showAllTime && !effectiveFrom && !effectiveTo) {
+    const statement = await getLatestStatementPeriod(account.id);
+    if (statement?.from && statement?.to) {
+      effectiveFrom = statement.from;
+      effectiveTo = statement.to;
+      usingDefaultStatement = true;
+    }
+  }
+
+  const periodLabel = showAllTime
+    ? "All time"
+    : usingDefaultStatement && effectiveFrom && effectiveTo
+      ? `${effectiveFrom} → ${effectiveTo} (latest statement)`
+      : effectiveFrom || effectiveTo
+        ? `${effectiveFrom ?? "…"} → ${effectiveTo ?? "…"}`
+        : null;
+
   const filters = [eq(schema.transactions.accountId, account.id)];
-  if (sp.from) filters.push(gte(schema.transactions.txnDate, sp.from));
-  if (sp.to) filters.push(lte(schema.transactions.txnDate, sp.to));
+  if (effectiveFrom) filters.push(gte(schema.transactions.txnDate, effectiveFrom));
+  if (effectiveTo) filters.push(lte(schema.transactions.txnDate, effectiveTo));
   if (isChannel(sp.channel))
     filters.push(eq(schema.transactions.channel, sp.channel));
 
@@ -351,7 +375,35 @@ export default async function TransactionsPage({
         <AutoDetectButton />
       </div>
 
-      <FiltersBar from={sp.from} to={sp.to} channel={sp.channel} />
+      <FiltersBar
+        from={effectiveFrom}
+        to={effectiveTo}
+        channel={sp.channel}
+      />
+
+      {periodLabel && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
+          <span className="text-neutral-500">Period:</span>
+          <span className="font-mono text-neutral-800 dark:text-neutral-200">
+            {periodLabel}
+          </span>
+          {showAllTime ? (
+            <a
+              href="/transactions"
+              className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
+            >
+              Latest statement
+            </a>
+          ) : (
+            <a
+              href="/transactions?all=1"
+              className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
+            >
+              Show all time
+            </a>
+          )}
+        </div>
+      )}
 
       <section className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
         <Stat label="Debits" value={formatPaise(totalDebit)} tone="debit" />
@@ -378,16 +430,22 @@ export default async function TransactionsPage({
           No transactions match these filters.
         </p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+        <div className="relative mt-3">
+          <p className="mb-2 text-xs text-neutral-500 md:hidden">
+            Swipe horizontally for amount, tags, and actions →
+          </p>
+          <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-800">
+          <table className="min-w-[720px] w-full border-collapse text-sm">
             <thead>
               <tr className="text-left text-xs uppercase text-neutral-500">
                 <th className="py-2 pr-3">Date</th>
-                <th className="py-2 pr-3">Channel</th>
+                <th className="hidden py-2 pr-3 sm:table-cell">Channel</th>
                 <th className="py-2 pr-3">Counterparty</th>
                 <th className="py-2 pr-3 text-right">Amount</th>
                 <th className="py-2 pr-3">Tag</th>
-                <th className="py-2 pr-3 text-right">Balance</th>
+                <th className="hidden py-2 pr-3 text-right lg:table-cell">
+                  Balance
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -409,7 +467,7 @@ export default async function TransactionsPage({
                   <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
                     {formatDate(r.txnDate)}
                   </td>
-                  <td className="py-2 pr-3">
+                  <td className="hidden py-2 pr-3 sm:table-cell">
                     <ChannelPill channel={r.channel} />
                   </td>
                   <td className="py-2 pr-3">
@@ -444,7 +502,7 @@ export default async function TransactionsPage({
                   >
                     {formatPaiseSigned(r.amountPaise, r.drCr)}
                   </td>
-                  <td className="py-2 pr-3">
+                  <td className="min-w-[11rem] py-2 pr-3">
                     <RowActions
                       transactionId={r.id}
                       drCr={r.drCr}
@@ -461,7 +519,7 @@ export default async function TransactionsPage({
                       needsReview={r.needsReview}
                     />
                   </td>
-                  <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">
+                  <td className="hidden py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500 lg:table-cell">
                     {formatPaise(r.balancePaise)}
                   </td>
                 </tr>
@@ -469,6 +527,7 @@ export default async function TransactionsPage({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </main>

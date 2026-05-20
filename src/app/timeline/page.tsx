@@ -1,10 +1,15 @@
-import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppNav } from "@/components/AppNav";
+import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { dailyClosingBalance } from "@/domain/spend/net";
-import { resolvePeriod, PRESET_PERIODS } from "@/lib/period";
+import {
+  listStatementPeriods,
+  resolveTimelinePeriod,
+  type SpendSearchParams,
+} from "@/lib/spend/period";
 import {
   counterpartyLabel,
   formatDate,
@@ -15,40 +20,20 @@ import {
 
 export const dynamic = "force-dynamic";
 
-interface SP {
-  from?: string;
-  to?: string;
-  preset?: string;
-}
-
 export default async function TimelinePage({
   searchParams,
 }: {
-  searchParams: Promise<SP>;
+  searchParams: Promise<SpendSearchParams>;
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
   const account = await getOrCreateAccountForBank(user.id, "bob");
 
-  let period = resolvePeriod(sp);
-  if (!sp.preset && !sp.from && !sp.to) {
-    const [latest] = await db
-      .select({
-        periodStart: schema.imports.periodStart,
-        periodEnd: schema.imports.periodEnd,
-      })
-      .from(schema.imports)
-      .where(eq(schema.imports.accountId, account.id))
-      .orderBy(desc(schema.imports.createdAt))
-      .limit(1);
-    if (latest?.periodStart && latest?.periodEnd) {
-      period = {
-        from: latest.periodStart,
-        to: latest.periodEnd,
-        label: `${latest.periodStart} → ${latest.periodEnd}`,
-      };
-    }
-  }
+  const [resolved, statementPeriods] = await Promise.all([
+    resolveTimelinePeriod(account.id, sp),
+    listStatementPeriods(account.id),
+  ]);
+  const { period } = resolved;
 
   const balances = await dailyClosingBalance(
     account.id,
@@ -88,7 +73,12 @@ export default async function TimelinePage({
         <AppNav current="/timeline" />
       </header>
 
-      <PeriodPicker period={period} active={sp.preset} />
+      <SpendPeriodPicker
+        resolved={resolved}
+        sp={sp}
+        basePath="/timeline"
+        statementPeriods={statementPeriods}
+      />
 
       {balances.length === 0 ? (
         <p className="mt-10 text-sm text-neutral-500">
@@ -96,7 +86,7 @@ export default async function TimelinePage({
         </p>
       ) : (
         <>
-          <section className="mt-6 grid grid-cols-3 gap-3 text-sm">
+          <section className="mt-6 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
             <Stat label="Opening" value={formatPaise(opening)} />
             <Stat label="Closing" value={formatPaise(closing)} />
             <Stat
@@ -174,11 +164,10 @@ function BalanceChart({
   points: Array<{ date: string; balancePaise: number }>;
 }) {
   const W = 800;
-  const H = 240;
-  const PAD_X = 40;
-  const PAD_Y = 20;
-  const innerW = W - PAD_X * 2;
-  const innerH = H - PAD_Y * 2;
+  const H = 260;
+  const PAD_RIGHT = 12;
+  const PAD_TOP = 10;
+  const PAD_BOTTOM = 32;
 
   if (points.length < 2) {
     return (
@@ -194,29 +183,38 @@ function BalanceChart({
   const yRange = Math.max(1, maxY - minY);
   const lastIndex = points.length - 1;
 
+  const gridYs = [0, 0.25, 0.5, 0.75, 1].map((t) => minY + t * yRange);
+  const yLabels = gridYs.map((v) => formatPaisePlain(Math.round(v)));
+  const maxLabelChars = Math.max(...yLabels.map((s) => s.length));
+  const PAD_LEFT = Math.max(64, Math.ceil(maxLabelChars * 6.5) + 12);
+
+  const innerW = W - PAD_LEFT - PAD_RIGHT;
+  const innerH = H - PAD_TOP - PAD_BOTTOM;
+
   const sx = (i: number) =>
-    svgCoord(PAD_X + (i / Math.max(1, lastIndex)) * innerW);
+    svgCoord(PAD_LEFT + (i / Math.max(1, lastIndex)) * innerW);
   const sy = (v: number) =>
-    svgCoord(PAD_Y + innerH - ((v - minY) / yRange) * innerH);
+    svgCoord(PAD_TOP + innerH - ((v - minY) / yRange) * innerH);
 
   const path = points
     .map((p, i) => `${i === 0 ? "M" : "L"} ${sx(i)} ${sy(p.balancePaise)}`)
     .join(" ");
 
-  const gridYs = [0, 0.25, 0.5, 0.75, 1].map((t) => minY + t * yRange);
   const ticks = [0, Math.floor(points.length / 2), lastIndex];
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      className="h-60 w-full text-neutral-500"
-      preserveAspectRatio="none"
+      className="h-64 w-full text-neutral-500"
+      preserveAspectRatio="xMidYMid meet"
+      role="img"
+      aria-label="Daily closing balance chart"
     >
       {gridYs.map((v, gi) => (
         <line
           key={gi}
-          x1={PAD_X}
-          x2={W - PAD_X}
+          x1={PAD_LEFT}
+          x2={W - PAD_RIGHT}
           y1={sy(v)}
           y2={sy(v)}
           stroke="currentColor"
@@ -246,26 +244,24 @@ function BalanceChart({
       {gridYs.map((v, gi) => (
         <text
           key={gi}
-          x={PAD_X - 6}
+          x={PAD_LEFT - 8}
           y={sy(v)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={9}
-          fill="currentColor"
-          opacity={0.7}
+          fontSize={10}
+          className="fill-neutral-600 dark:fill-neutral-300"
         >
-          {formatPaisePlain(Math.round(v))}
+          {yLabels[gi]}
         </text>
       ))}
       {ticks.map((i) => (
         <text
           key={points[i].date}
           x={sx(i)}
-          y={H - 4}
+          y={H - 10}
           textAnchor="middle"
-          fontSize={9}
-          fill="currentColor"
-          opacity={0.7}
+          fontSize={10}
+          className="fill-neutral-600 dark:fill-neutral-300"
         >
           {points[i].date}
         </text>
@@ -293,52 +289,6 @@ function Stat({
     <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
       <div className="text-xs uppercase text-neutral-500">{label}</div>
       <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
-    </div>
-  );
-}
-
-function PeriodPicker({
-  period,
-  active,
-}: {
-  period: { label: string };
-  active?: string;
-}) {
-  const presets = Object.entries(PRESET_PERIODS).map(([key, fn]) => ({
-    key,
-    ...fn(),
-  }));
-  return (
-    <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
-      <span className="text-xs uppercase text-neutral-500">Period:</span>
-      <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300">
-        {period.label}
-      </span>
-      <div className="ml-auto flex gap-1.5">
-        <a
-          href="/timeline"
-          className={`rounded border px-2 py-1 text-xs ${
-            !active
-              ? "border-neutral-900 dark:border-neutral-100"
-              : "border-neutral-300 dark:border-neutral-700"
-          }`}
-        >
-          Statement period
-        </a>
-        {presets.map((p) => (
-          <a
-            key={p.key}
-            href={`/timeline?preset=${p.key}`}
-            className={`rounded border px-2 py-1 text-xs ${
-              active === p.key
-                ? "border-neutral-900 dark:border-neutral-100"
-                : "border-neutral-300 dark:border-neutral-700"
-            }`}
-          >
-            {p.label}
-          </a>
-        ))}
-      </div>
     </div>
   );
 }

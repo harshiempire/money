@@ -21,6 +21,7 @@ export interface SplitAwaitingItemProps {
   txnId: string;
   txnDate: string;
   txnDescription: string;
+  txnNote?: string | null;
   status: SplitSettlementStatus;
   expectedReimbursePaise: number;
   settledReimbursePaise: number;
@@ -60,6 +61,7 @@ export function SplitAwaitingItem({
   txnId,
   txnDate,
   txnDescription,
+  txnNote,
   status,
   expectedReimbursePaise,
   settledReimbursePaise,
@@ -83,6 +85,11 @@ export function SplitAwaitingItem({
             <div className="font-medium">
               {formatDate(txnDate)} · {txnDescription}
             </div>
+            {txnNote && (
+              <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
+                {txnNote}
+              </div>
+            )}
             <div
               className={`mt-0.5 text-xs ${splitStatusTone(status)}`}
             >

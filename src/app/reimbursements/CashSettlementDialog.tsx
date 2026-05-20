@@ -34,7 +34,7 @@ export function CashSettlementButton({
         onClick={open}
         className="rounded border border-neutral-300 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
       >
-        Cash...
+        Cash
       </button>
       <dialog
         ref={dialogRef}

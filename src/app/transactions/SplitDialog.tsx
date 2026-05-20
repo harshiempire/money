@@ -112,7 +112,7 @@ export function SplitButton({
       <button
         type="button"
         onClick={open}
-        className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${splitButtonClass(
+        className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${splitButtonClass(
           existing?.status ?? "none",
           existing != null,
         )}`}
@@ -120,7 +120,7 @@ export function SplitButton({
           existing ? splitButtonTitle(existing) : "Split this transaction"
         }
       >
-        {existing ? splitButtonLabel(existing) : "Split…"}
+        {existing ? splitButtonLabel(existing) : "Split"}
       </button>
       <dialog
         ref={dialogRef}

@@ -33,6 +33,11 @@ export function SpendPeriodPicker({
     !sp.statement &&
     !sp.from;
 
+  const isCustomRange =
+    mode === "custom" && Boolean(sp.from || sp.to);
+
+  const presetKeys = Object.keys(PRESET_PERIODS);
+
   return (
     <div className="mt-6 space-y-3">
       {mode === "month" && monthKey && (
@@ -76,22 +81,13 @@ export function SpendPeriodPicker({
       )}
 
       <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
-        <a
-          href={href({})}
-          className={`rounded border px-2 py-1 ${
-            isThisMonth
-              ? "border-neutral-900 dark:border-neutral-100"
-              : "border-neutral-300 dark:border-neutral-700"
-          }`}
-        >
-          This month
-        </a>
-        {Object.keys(PRESET_PERIODS).map((key) => (
+        {presetKeys.map((key) => (
           <a
             key={key}
             href={href({ preset: key })}
             className={`rounded border px-2 py-1 ${
-              sp.preset === key
+              sp.preset === key ||
+              (key === "this_month" && isThisMonth)
                 ? "border-neutral-900 dark:border-neutral-100"
                 : "border-neutral-300 dark:border-neutral-700"
             }`}
@@ -111,6 +107,51 @@ export function SpendPeriodPicker({
         </a>
       </div>
 
+      <form
+        method="get"
+        action={basePath}
+        className={`mx-auto flex max-w-md flex-wrap items-end justify-center gap-3 rounded border p-3 text-sm ${
+          isCustomRange
+            ? "border-neutral-900 dark:border-neutral-100"
+            : "border-neutral-200 dark:border-neutral-800"
+        }`}
+      >
+        <label className="flex flex-col">
+          <span className="text-xs uppercase text-neutral-500">From</span>
+          <input
+            type="date"
+            name="from"
+            defaultValue={period.from ?? sp.from ?? ""}
+            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-xs dark:border-neutral-700"
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className="text-xs uppercase text-neutral-500">To</span>
+          <input
+            type="date"
+            name="to"
+            defaultValue={period.to ?? sp.to ?? ""}
+            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-xs dark:border-neutral-700"
+          />
+        </label>
+        <div className="flex items-center gap-2">
+          <button
+            type="submit"
+            className="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+          >
+            Apply
+          </button>
+          {isCustomRange && (
+            <a
+              href={href({})}
+              className="text-xs text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
+            >
+              Clear
+            </a>
+          )}
+        </div>
+      </form>
+
       {statementPeriods.length > 1 && (
         <details className="text-xs text-neutral-500">
           <summary className="cursor-pointer text-center">
@@ -119,9 +160,7 @@ export function SpendPeriodPicker({
           <ul className="mt-2 space-y-1 text-center">
             {statementPeriods.map((s) => {
               const active =
-                mode === "statement" &&
-                period.from === s.periodStart &&
-                period.to === s.periodEnd;
+                period.from === s.periodStart && period.to === s.periodEnd;
               return (
                 <li key={`${s.periodStart}-${s.periodEnd}`}>
                   <a
