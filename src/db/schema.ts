@@ -82,9 +82,7 @@ export const accountsAuth = pgTable(
     id_token: text("id_token"),
     session_state: text("session_state"),
   },
-  (t) => ({
-    pk: primaryKey({ columns: [t.provider, t.providerAccountId] }),
-  }),
+  (t) => [primaryKey({ columns: [t.provider, t.providerAccountId] })],
 );
 
 export const sessions = pgTable("session", {
@@ -102,9 +100,7 @@ export const verificationTokens = pgTable(
     token: text("token").notNull(),
     expires: timestamp("expires", { mode: "date" }).notNull(),
   },
-  (t) => ({
-    pk: primaryKey({ columns: [t.identifier, t.token] }),
-  }),
+  (t) => [primaryKey({ columns: [t.identifier, t.token] })],
 );
 
 // ─── Domain tables ───────────────────────────────────────────────────────────
@@ -148,9 +144,7 @@ export const counterparties = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => ({
-    uniqUserKey: uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key),
-  }),
+  (t) => [uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key)],
 );
 
 export const categories = pgTable(
@@ -169,9 +163,7 @@ export const categories = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => ({
-    uniqUserName: uniqueIndex("category_user_name_uniq").on(t.userId, t.name),
-  }),
+  (t) => [uniqueIndex("category_user_name_uniq").on(t.userId, t.name)],
 );
 
 export const imports = pgTable("import", {
@@ -224,17 +216,13 @@ export const transactions = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => ({
+  (t) => [
     // Dedup across overlapping statements. dr_cr is part of the key because
     // banks reuse a UPI ref id when they reverse a payment (the original debit
     // and the reversal credit share the same ref_id but flip dr/cr).
-    uniqAccountRef: uniqueIndex("txn_account_ref_uniq").on(
-      t.accountId,
-      t.refId,
-      t.drCr,
-    ),
-    byAccountDate: index("txn_account_date_idx").on(t.accountId, t.txnDate),
-  }),
+    uniqueIndex("txn_account_ref_uniq").on(t.accountId, t.refId, t.drCr),
+    index("txn_account_date_idx").on(t.accountId, t.txnDate),
+  ],
 );
 
 export const splits = pgTable("split", {
@@ -266,12 +254,12 @@ export const persons = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => ({
-    uniqUserLowerName: uniqueIndex("person_user_lower_name_uniq").on(
+  (t) => [
+    uniqueIndex("person_user_lower_name_uniq").on(
       t.userId,
       sql`lower(${t.name})`,
     ),
-  }),
+  ],
 );
 
 export const splitParticipants = pgTable("split_participant", {
@@ -338,9 +326,7 @@ export const tags = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
   },
-  (t) => ({
-    uniqUserName: uniqueIndex("tag_user_name_uniq").on(t.userId, t.name),
-  }),
+  (t) => [uniqueIndex("tag_user_name_uniq").on(t.userId, t.name)],
 );
 
 export const transactionTags = pgTable(
@@ -353,7 +339,5 @@ export const transactionTags = pgTable(
       .notNull()
       .references(() => tags.id, { onDelete: "cascade" }),
   },
-  (t) => ({
-    pk: primaryKey({ columns: [t.transactionId, t.tagId] }),
-  }),
+  (t) => [primaryKey({ columns: [t.transactionId, t.tagId] })],
 );

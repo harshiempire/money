@@ -77,9 +77,7 @@ const extractFromDescription = (
   // Wrap artifacts (e.g. "rohanrao.b- 1@okaxis") get removed by stripping
   // internal whitespace — UPI handles never legitimately contain spaces.
   if (channel === "upi") {
-    const m = description.match(
-      /^UPI\/(\d{6,})\/[\d:]+\/(?:UPI|UDIR)\/(.+)$/i,
-    );
+    const m = description.match(/^UPI\/(\d{6,})\/[\d:]+\/(?:UPI|UDIR)\/(.+)$/i);
     if (m) {
       const tail = m[2].replace(/\s+/g, "");
       const slash = tail.indexOf("/");
@@ -237,7 +235,10 @@ export const bobAdapter: BankAdapter = {
   detect: (file, mime, ctx) =>
     Effect.gen(function* () {
       // Quick sniff: PDF with the "bob World" or BoB statement header in it.
-      if (!mime.includes("pdf") && !file.subarray(0, 4).toString().includes("PDF")) {
+      if (
+        !mime.includes("pdf") &&
+        !file.subarray(0, 4).toString().includes("PDF")
+      ) {
         return false;
       }
       const extracted = yield* Effect.either(

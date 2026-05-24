@@ -1,4 +1,5 @@
 import { formatDate, formatPaise } from "@/lib/format";
+import { transactionHref } from "@/lib/transactions/href";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 import {
   CashSettlementButton,
@@ -116,7 +117,7 @@ export function SplitAwaitingItem({
         <div className="mb-2 flex items-center justify-between gap-2 text-xs">
           <span className="text-neutral-500">Who owes what</span>
           <a
-            href={`/transactions#txn-${txnId}`}
+            href={transactionHref(txnId)}
             className="underline-offset-2 hover:underline"
           >
             View transaction →

@@ -1,4 +1,5 @@
 import { formatDate, formatPaise, counterpartyLabel } from "@/lib/format";
+import { LinkedTransactionLink } from "./LinkedTransactionLink";
 
 export type ExpenseLink = {
   expenseTransactionId: string;
@@ -95,9 +96,11 @@ export function buildReimbursementLinks(
 export function SplitSettlementLinks({
   expenseLinks,
   reimbursementLinks,
+  visibleTxnIds,
 }: {
   expenseLinks?: ExpenseLink[];
   reimbursementLinks?: ReimbursementLink[];
+  visibleTxnIds: readonly string[];
 }) {
   if (
     (!expenseLinks || expenseLinks.length === 0) &&
@@ -115,13 +118,14 @@ export function SplitSettlementLinks({
         >
           <span className="opacity-70">↳</span>{" "}
           <span className="opacity-80">Reimburses</span>{" "}
-          <a
-            href={`#txn-${link.expenseTransactionId}`}
+          <LinkedTransactionLink
+            transactionId={link.expenseTransactionId}
+            visibleTxnIds={visibleTxnIds}
             className="font-medium underline-offset-2 hover:underline"
             title={`Jump to expense on ${formatDate(link.expenseDate)}`}
           >
             {link.expenseLabel}
-          </a>
+          </LinkedTransactionLink>
           <span className="opacity-70">
             {" "}
             · {link.personName} · {formatPaise(link.amountPaise)}
@@ -137,13 +141,14 @@ export function SplitSettlementLinks({
               key={`${link.inflowTransactionId}-${link.personName}-${link.amountPaise}`}
             >
               {i > 0 && ", "}
-              <a
-                href={`#txn-${link.inflowTransactionId}`}
+              <LinkedTransactionLink
+                transactionId={link.inflowTransactionId}
+                visibleTxnIds={visibleTxnIds}
                 className="font-medium underline-offset-2 hover:underline"
                 title={`Jump to ${link.inflowLabel} on ${formatDate(link.inflowDate)}`}
               >
                 {formatPaise(link.amountPaise)}
-              </a>
+              </LinkedTransactionLink>
               <span className="opacity-70"> from {link.personName}</span>
             </span>
           ))}

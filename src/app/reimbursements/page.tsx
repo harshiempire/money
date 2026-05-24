@@ -5,6 +5,7 @@ import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppNav } from "@/components/AppNav";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
+import { transactionHref } from "@/lib/transactions/href";
 import {
   listStatementPeriods,
   resolveSpendPeriod,
@@ -351,7 +352,7 @@ export default async function ReimbursementsPage({
                   {s.totalParticipantCount === 1 ? "" : "s"}
                 </span>
                 <a
-                  href={`/transactions#txn-${s.txnId}`}
+                  href={transactionHref(s.txnId)}
                   className="underline-offset-2 hover:underline"
                 >
                   View

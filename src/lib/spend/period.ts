@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and, lte, gte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import {
   calendarMonthPeriod,
@@ -133,6 +133,35 @@ async function resolveStatementPeriod(
     mode: "month",
     monthKey: p.monthKey,
     isPartial: p.isPartial,
+  };
+}
+
+/** Statement import whose date range contains txnDate, or null. */
+export async function getStatementPeriodForDate(
+  accountId: string,
+  txnDate: string,
+): Promise<Period | null> {
+  const [row] = await db
+    .select({
+      periodStart: schema.imports.periodStart,
+      periodEnd: schema.imports.periodEnd,
+    })
+    .from(schema.imports)
+    .where(
+      and(
+        eq(schema.imports.accountId, accountId),
+        lte(schema.imports.periodStart, txnDate),
+        gte(schema.imports.periodEnd, txnDate),
+      ),
+    )
+    .orderBy(desc(schema.imports.createdAt))
+    .limit(1);
+
+  if (!row?.periodStart || !row?.periodEnd) return null;
+  return {
+    from: row.periodStart,
+    to: row.periodEnd,
+    label: `${row.periodStart} → ${row.periodEnd}`,
   };
 }
 

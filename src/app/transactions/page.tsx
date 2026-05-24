@@ -24,7 +24,11 @@ import type {
   ParticipantOption,
 } from "./SettleDialog";
 import { AutoDetectButton } from "./AutoDetectButton";
-import { getLatestStatementPeriod } from "@/lib/spend/period";
+import {
+  getLatestStatementPeriod,
+  getStatementPeriodForDate,
+} from "@/lib/spend/period";
+import { ScrollToTransaction } from "./ScrollToTransaction";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +50,7 @@ interface PageSearchParams {
   to?: string;
   channel?: string;
   all?: string;
+  txn?: string;
 }
 
 const isChannel = (s: unknown): s is Channel =>
@@ -65,11 +70,38 @@ export default async function TransactionsPage({
   await backfillCounterparties(account.id, userId);
 
   const showAllTime = sp.all === "1";
+  const highlightTxnId = sp.txn?.trim() || null;
   let effectiveFrom = sp.from;
   let effectiveTo = sp.to;
   let usingDefaultStatement = false;
+  let linkedTxnNavigation = false;
+  let linkedTxnNotFound = false;
 
-  if (!showAllTime && !effectiveFrom && !effectiveTo) {
+  if (highlightTxnId && !showAllTime) {
+    const [target] = await db
+      .select({ txnDate: schema.transactions.txnDate })
+      .from(schema.transactions)
+      .where(
+        and(
+          eq(schema.transactions.id, highlightTxnId),
+          eq(schema.transactions.accountId, account.id),
+        ),
+      )
+      .limit(1);
+
+    if (!target) {
+      linkedTxnNotFound = true;
+    } else {
+      const statement = await getStatementPeriodForDate(
+        account.id,
+        target.txnDate,
+      );
+      effectiveFrom = statement?.from ?? target.txnDate;
+      effectiveTo = statement?.to ?? target.txnDate;
+      linkedTxnNavigation = true;
+      usingDefaultStatement = Boolean(statement);
+    }
+  } else if (!showAllTime && !effectiveFrom && !effectiveTo) {
     const statement = await getLatestStatementPeriod(account.id);
     if (statement?.from && statement?.to) {
       effectiveFrom = statement.from;
@@ -80,11 +112,13 @@ export default async function TransactionsPage({
 
   const periodLabel = showAllTime
     ? "All time"
-    : usingDefaultStatement && effectiveFrom && effectiveTo
-      ? `${effectiveFrom} → ${effectiveTo} (latest statement)`
-      : effectiveFrom || effectiveTo
-        ? `${effectiveFrom ?? "…"} → ${effectiveTo ?? "…"}`
-        : null;
+    : linkedTxnNavigation && effectiveFrom && effectiveTo
+      ? `${effectiveFrom} → ${effectiveTo} (linked transaction)`
+      : usingDefaultStatement && effectiveFrom && effectiveTo
+        ? `${effectiveFrom} → ${effectiveTo} (latest statement)`
+        : effectiveFrom || effectiveTo
+          ? `${effectiveFrom ?? "…"} → ${effectiveTo ?? "…"}`
+          : null;
 
   const filters = [eq(schema.transactions.accountId, account.id)];
   if (effectiveFrom) filters.push(gte(schema.transactions.txnDate, effectiveFrom));
@@ -128,6 +162,13 @@ export default async function TransactionsPage({
       sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
     )
     .limit(1000);
+
+  const visibleTxnIds = rows.map((r) => r.id);
+
+  const highlightMissingFromList =
+    highlightTxnId != null &&
+    !linkedTxnNotFound &&
+    !rows.some((r) => r.id === highlightTxnId);
 
   // Load splits, participants, and settlements for the rows in view.
   const txnIds = rows.map((r) => r.id);
@@ -364,6 +405,7 @@ export default async function TransactionsPage({
 
   return (
     <main className="mx-auto max-w-6xl p-8">
+      <ScrollToTransaction transactionId={highlightTxnId} />
       <header className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
         <AppNav current="/transactions" />
@@ -403,6 +445,31 @@ export default async function TransactionsPage({
             </a>
           )}
         </div>
+      )}
+
+      {linkedTxnNotFound && (
+        <p className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          That transaction was not found in this account.
+        </p>
+      )}
+
+      {highlightMissingFromList && (
+        <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+          The linked transaction is outside the current filters.{" "}
+          <a
+            href={`/transactions?txn=${highlightTxnId}&all=1#txn-${highlightTxnId}`}
+            className="underline underline-offset-2"
+          >
+            Show all time
+          </a>{" "}
+          to locate it.
+        </p>
+      )}
+
+      {linkedTxnNavigation && !linkedTxnNotFound && !highlightMissingFromList && (
+        <p className="mt-4 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+          Opened the statement period containing the linked transaction.
+        </p>
       )}
 
       <section className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
@@ -462,7 +529,7 @@ export default async function TransactionsPage({
                   id={`txn-${r.id}`}
                   className={`scroll-mt-4 border-t border-neutral-200 align-top dark:border-neutral-800 ${
                     r.isTransfer ? "opacity-60" : ""
-                  } ${r.needsReview ? "border-l-2 border-l-amber-400/70 pl-1 dark:border-l-amber-500/60" : ""} ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
+                  } ${highlightTxnId === r.id ? "bg-sky-50/80 dark:bg-sky-950/30" : ""} ${r.needsReview ? "border-l-2 border-l-amber-400/70 pl-1 dark:border-l-amber-500/60" : ""} ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
                 >
                   <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
                     {formatDate(r.txnDate)}
@@ -488,6 +555,7 @@ export default async function TransactionsPage({
                     <SplitSettlementLinks
                       expenseLinks={expenseLinks}
                       reimbursementLinks={reimbursementLinks}
+                      visibleTxnIds={visibleTxnIds}
                     />
                     {existingSplit && (
                       <SplitSettlementStatusLine split={existingSplit} />

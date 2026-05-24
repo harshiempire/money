@@ -54,6 +54,8 @@ export function TransactionTable({
   knownPersonNames: string[];
   emptyMessage: string;
 }) {
+  const visibleTxnIds = rows.map((r) => r.id);
+
   if (rows.length === 0) {
     return <p className="mt-6 text-sm text-neutral-500">{emptyMessage}</p>;
   }
@@ -115,6 +117,7 @@ export function TransactionTable({
                   <SplitSettlementLinks
                     expenseLinks={expenseLinks}
                     reimbursementLinks={reimbursementLinks}
+                    visibleTxnIds={visibleTxnIds}
                   />
                   {existingSplit && (
                     <SplitSettlementStatusLine split={existingSplit} />
