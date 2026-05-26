@@ -12,6 +12,7 @@ import {
   index,
   pgEnum,
   primaryKey,
+  check,
 } from "drizzle-orm/pg-core";
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ export const ruleMatchKindEnum = pgEnum("rule_match_kind", [
 export const settlementMethodEnum = pgEnum("settlement_method", [
   "bank",
   "cash",
+  "offset",
 ]);
 
 // ─── Auth tables (Auth.js drizzle adapter expects these exact names) ─────────
@@ -278,24 +280,87 @@ export const splitParticipants = pgTable("split_participant", {
   }).notNull(),
 });
 
-export const settlements = pgTable("settlement", {
+export const owedExpenses = pgTable("owed_expense", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
-  inflowTransactionId: text("inflow_transaction_id").references(
-    () => transactions.id,
-    { onDelete: "cascade" },
-  ),
-  splitParticipantId: text("split_participant_id")
+  userId: text("user_id")
     .notNull()
-    .references(() => splitParticipants.id, { onDelete: "cascade" }),
+    .references(() => users.id, { onDelete: "cascade" }),
+  personId: text("person_id").references(() => persons.id, {
+    onDelete: "set null",
+  }),
+  personName: text("person_name").notNull(),
+  incurredDate: date("incurred_date", { mode: "string" }).notNull(),
   amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
-  method: settlementMethodEnum("method").notNull().default("bank"),
+  description: text("description").notNull(),
+  categoryId: text("category_id").references(() => categories.id),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
 });
+
+export const netEvents = pgTable("net_event", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  eventDate: date("event_date", { mode: "string" }).notNull(),
+  inflowTransactionId: text("inflow_transaction_id").references(
+    () => transactions.id,
+    { onDelete: "set null" },
+  ),
+  outflowTransactionId: text("outflow_transaction_id").references(
+    () => transactions.id,
+    { onDelete: "set null" },
+  ),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const settlements = pgTable(
+  "settlement",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inflowTransactionId: text("inflow_transaction_id").references(
+      () => transactions.id,
+      { onDelete: "cascade" },
+    ),
+    splitParticipantId: text("split_participant_id").references(
+      () => splitParticipants.id,
+      { onDelete: "cascade" },
+    ),
+    owedExpenseId: text("owed_expense_id").references(() => owedExpenses.id, {
+      onDelete: "cascade",
+    }),
+    netEventId: text("net_event_id").references(() => netEvents.id, {
+      onDelete: "cascade",
+    }),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    method: settlementMethodEnum("method").notNull().default("bank"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    check(
+      "settlement_target_xor",
+      sql`(
+        (${t.splitParticipantId} IS NOT NULL AND ${t.owedExpenseId} IS NULL)
+        OR
+        (${t.splitParticipantId} IS NULL AND ${t.owedExpenseId} IS NOT NULL)
+      )`,
+    ),
+  ],
+);
 
 export const rules = pgTable("rule", {
   id: text("id")

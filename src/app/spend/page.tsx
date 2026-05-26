@@ -134,6 +134,21 @@ export default async function SpendReportPage({
               from this period
             </a>
           )}
+          {reimbursement.outstandingPayablePaise > 0 && (
+            <a
+              className="text-sky-700 underline dark:text-sky-400"
+              href="/people"
+            >
+              {formatPaise(reimbursement.outstandingPayablePaise)} you owe others
+              (this period)
+            </a>
+          )}
+          {totals.owedSelfPaise > 0 && (
+            <span className="text-neutral-500">
+              Includes {formatPaise(totals.owedSelfPaise)} from shared expenses
+              others paid
+            </span>
+          )}
         </div>
       </section>
 

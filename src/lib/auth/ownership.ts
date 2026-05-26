@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { throwForbidden } from "./forbidden";
 
@@ -126,26 +126,67 @@ export async function assertSettlementOwned(
   const [row] = await db
     .select({ id: schema.settlements.id })
     .from(schema.settlements)
-    .innerJoin(
+    .leftJoin(
       schema.splitParticipants,
       eq(schema.settlements.splitParticipantId, schema.splitParticipants.id),
     )
-    .innerJoin(
+    .leftJoin(
       schema.splits,
       eq(schema.splitParticipants.splitId, schema.splits.id),
     )
-    .innerJoin(
+    .leftJoin(
       schema.transactions,
       eq(schema.splits.transactionId, schema.transactions.id),
     )
-    .innerJoin(
+    .leftJoin(
       schema.moneyAccounts,
       eq(schema.transactions.accountId, schema.moneyAccounts.id),
+    )
+    .leftJoin(
+      schema.owedExpenses,
+      eq(schema.settlements.owedExpenseId, schema.owedExpenses.id),
     )
     .where(
       and(
         eq(schema.settlements.id, settlementId),
-        eq(schema.moneyAccounts.userId, userId),
+        sql`(
+          ${schema.moneyAccounts.userId} = ${userId}
+          OR ${schema.owedExpenses.userId} = ${userId}
+        )`,
+      ),
+    )
+    .limit(1);
+  if (!row) throwForbidden();
+}
+
+export async function assertOwedExpenseOwned(
+  userId: string,
+  owedExpenseId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ id: schema.owedExpenses.id })
+    .from(schema.owedExpenses)
+    .where(
+      and(
+        eq(schema.owedExpenses.id, owedExpenseId),
+        eq(schema.owedExpenses.userId, userId),
+      ),
+    )
+    .limit(1);
+  if (!row) throwForbidden();
+}
+
+export async function assertNetEventOwned(
+  userId: string,
+  netEventId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ id: schema.netEvents.id })
+    .from(schema.netEvents)
+    .where(
+      and(
+        eq(schema.netEvents.id, netEventId),
+        eq(schema.netEvents.userId, userId),
       ),
     )
     .limit(1);

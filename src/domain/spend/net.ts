@@ -38,10 +38,11 @@ export interface NetSpendTotals {
   totalDebitPaise: number;
   totalCreditPaise: number;
   netSelfPaise: number;
+  owedSelfPaise: number;
   count: number;
 }
 
-const buildWhere = (
+const buildTxnWhere = (
   accountId: string,
   from: string | null,
   to: string | null,
@@ -52,26 +53,88 @@ const buildWhere = (
   return and(...filters);
 };
 
+async function owedSelfPaiseForUser(
+  userId: string,
+  from: string | null,
+  to: string | null,
+): Promise<number> {
+  const filters = [eq(schema.owedExpenses.userId, userId)];
+  if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+  if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+  const [row] = await db
+    .select({
+      total: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
+    })
+    .from(schema.owedExpenses)
+    .where(and(...filters));
+  return Number(row.total);
+}
+
+async function owedSpendByCategory(
+  userId: string,
+  from: string | null,
+  to: string | null,
+): Promise<CategoryRow[]> {
+  const filters = [eq(schema.owedExpenses.userId, userId)];
+  if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+  if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+
+  const rows = await db
+    .select({
+      categoryId: schema.owedExpenses.categoryId,
+      categoryName: schema.categories.name,
+      total: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.owedExpenses)
+    .leftJoin(
+      schema.categories,
+      eq(schema.owedExpenses.categoryId, schema.categories.id),
+    )
+    .where(and(...filters))
+    .groupBy(schema.owedExpenses.categoryId, schema.categories.name);
+
+  return rows.map((r) => ({
+    categoryId: r.categoryId,
+    categoryName: r.categoryName ?? "Uncategorized",
+    netSelfPaise: Number(r.total),
+    count: r.count,
+  }));
+}
+
 export async function netSpendTotals(
   accountId: string,
   from: string | null,
   to: string | null,
 ): Promise<NetSpendTotals> {
-  const where = buildWhere(accountId, from, to);
-  const [r] = await db
-    .select({
-      debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(schema.transactions)
-    .where(where);
+  const where = buildTxnWhere(accountId, from, to);
+  const [account] = await db
+    .select({ userId: schema.moneyAccounts.userId })
+    .from(schema.moneyAccounts)
+    .where(eq(schema.moneyAccounts.id, accountId))
+    .limit(1);
+  const userId = account?.userId;
+
+  const [r, owedSelfPaise] = await Promise.all([
+    db
+      .select({
+        debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+        credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+        netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.transactions)
+      .where(where),
+    userId ? owedSelfPaiseForUser(userId, from, to) : Promise.resolve(0),
+  ]);
+
+  const txnNetSelf = Number(r[0].netSelf);
   return {
-    totalDebitPaise: Number(r.debit),
-    totalCreditPaise: Number(r.credit),
-    netSelfPaise: Number(r.netSelf),
-    count: r.count,
+    totalDebitPaise: Number(r[0].debit),
+    totalCreditPaise: Number(r[0].credit),
+    netSelfPaise: txnNetSelf + owedSelfPaise,
+    owedSelfPaise,
+    count: r[0].count,
   };
 }
 
@@ -91,7 +154,13 @@ export async function categoryBreakdown(
   from: string | null,
   to: string | null,
 ): Promise<CategoryRow[]> {
-  const where = buildWhere(accountId, from, to);
+  const where = buildTxnWhere(accountId, from, to);
+  const [account] = await db
+    .select({ userId: schema.moneyAccounts.userId })
+    .from(schema.moneyAccounts)
+    .where(eq(schema.moneyAccounts.id, accountId))
+    .limit(1);
+
   const rows = await db
     .select({
       categoryId: schema.transactions.categoryId,
@@ -107,13 +176,32 @@ export async function categoryBreakdown(
     .where(where)
     .groupBy(schema.transactions.categoryId, schema.categories.name);
 
-  return rows
-    .map((r) => ({
-      categoryId: r.categoryId,
-      categoryName: r.categoryName ?? "Uncategorized",
-      netSelfPaise: Number(r.netSelf),
-      count: r.count,
-    }))
+  const txnRows = rows.map((r) => ({
+    categoryId: r.categoryId,
+    categoryName: r.categoryName ?? "Uncategorized",
+    netSelfPaise: Number(r.netSelf),
+    count: r.count,
+  }));
+
+  const owedRows = account?.userId
+    ? await owedSpendByCategory(account.userId, from, to)
+    : [];
+
+  const merged = new Map<string, CategoryRow>();
+  for (const row of [...txnRows, ...owedRows]) {
+    const key = row.categoryId ?? `uncat:${row.categoryName}`;
+    const existing = merged.get(key) ?? {
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      netSelfPaise: 0,
+      count: 0,
+    };
+    existing.netSelfPaise += row.netSelfPaise;
+    existing.count += row.count;
+    merged.set(key, existing);
+  }
+
+  return [...merged.values()]
     .filter((r) => r.netSelfPaise !== 0)
     .sort((a, b) => b.netSelfPaise - a.netSelfPaise);
 }
@@ -133,7 +221,7 @@ export async function dailyClosingBalance(
   from: string | null,
   to: string | null,
 ): Promise<DailyBalance[]> {
-  const where = buildWhere(accountId, from, to);
+  const where = buildTxnWhere(accountId, from, to);
   const rows = await db
     .select({
       date: schema.transactions.txnDate,
@@ -167,7 +255,7 @@ export async function topCounterparties(
   to: string | null,
   limit = 10,
 ): Promise<TopCounterparty[]> {
-  const where = buildWhere(accountId, from, to);
+  const where = buildTxnWhere(accountId, from, to);
   const rows = await db
     .select({
       counterpartyId: schema.transactions.counterpartyId,
@@ -251,7 +339,7 @@ export async function splitBridgeTotals(
   from: string | null,
   to: string | null,
 ): Promise<SplitBridgeTotals> {
-  const where = buildWhere(accountId, from, to);
+  const where = buildTxnWhere(accountId, from, to);
   const [r, splitCountRow] = await Promise.all([
     db
       .select({
@@ -301,7 +389,7 @@ export async function triageStats(
   from: string | null,
   to: string | null,
 ): Promise<TriageStats> {
-  const where = buildWhere(accountId, from, to);
+  const where = buildTxnWhere(accountId, from, to);
   const [uncat] = await db
     .select({
       netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
@@ -335,21 +423,51 @@ export async function dailyNetSpend(
   from: string | null,
   to: string | null,
 ): Promise<DailyNetSpend[]> {
-  const where = buildWhere(accountId, from, to);
-  const rows = await db
-    .select({
-      date: schema.transactions.txnDate,
-      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
-    })
-    .from(schema.transactions)
-    .where(where)
-    .groupBy(schema.transactions.txnDate)
-    .orderBy(schema.transactions.txnDate);
+  const where = buildTxnWhere(accountId, from, to);
+  const [account] = await db
+    .select({ userId: schema.moneyAccounts.userId })
+    .from(schema.moneyAccounts)
+    .where(eq(schema.moneyAccounts.id, accountId))
+    .limit(1);
+  const userId = account?.userId;
 
-  return rows.map((r) => ({
-    date: r.date,
-    netSelfPaise: Number(r.netSelf),
-  }));
+  const [txnRows, owedRows] = await Promise.all([
+    db
+      .select({
+        date: schema.transactions.txnDate,
+        netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+      })
+      .from(schema.transactions)
+      .where(where)
+      .groupBy(schema.transactions.txnDate),
+    userId
+      ? (async () => {
+          const filters = [eq(schema.owedExpenses.userId, userId)];
+          if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+          if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+          return db
+            .select({
+              date: schema.owedExpenses.incurredDate,
+              netSelf: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
+            })
+            .from(schema.owedExpenses)
+            .where(and(...filters))
+            .groupBy(schema.owedExpenses.incurredDate);
+        })()
+      : Promise.resolve([] as Array<{ date: string; netSelf: number }>),
+  ]);
+
+  const merged = new Map<string, number>();
+  for (const r of txnRows) {
+    merged.set(r.date, (merged.get(r.date) ?? 0) + Number(r.netSelf));
+  }
+  for (const r of owedRows) {
+    merged.set(r.date, (merged.get(r.date) ?? 0) + Number(r.netSelf));
+  }
+
+  return [...merged.entries()]
+    .map(([date, netSelfPaise]) => ({ date, netSelfPaise }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 export interface TopDebit {
@@ -366,31 +484,78 @@ export async function topDebits(
   to: string | null,
   limit = 5,
 ): Promise<TopDebit[]> {
-  const where = buildWhere(accountId, from, to);
-  const rows = await db
-    .select({
-      id: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-      netSelf: yourShareDebitExpr,
-    })
-    .from(schema.transactions)
-    .where(
-      and(
-        where,
-        eq(schema.transactions.drCr, "debit"),
-        eq(schema.transactions.isTransfer, false),
-      ),
-    )
-    .orderBy(desc(yourShareDebitExpr))
-    .limit(limit);
+  const where = buildTxnWhere(accountId, from, to);
+  const [account] = await db
+    .select({ userId: schema.moneyAccounts.userId })
+    .from(schema.moneyAccounts)
+    .where(eq(schema.moneyAccounts.id, accountId))
+    .limit(1);
+  const userId = account?.userId;
 
-  return rows
-    .map((r) => ({
+  const [txnRows, owedRows] = await Promise.all([
+    db
+      .select({
+        id: schema.transactions.id,
+        txnDate: schema.transactions.txnDate,
+        rawDescription: schema.transactions.rawDescription,
+        netSelf: yourShareDebitExpr,
+      })
+      .from(schema.transactions)
+      .where(
+        and(
+          where,
+          eq(schema.transactions.drCr, "debit"),
+          eq(schema.transactions.isTransfer, false),
+        ),
+      )
+      .orderBy(desc(yourShareDebitExpr))
+      .limit(limit),
+    userId
+      ? (async () => {
+          const filters = [eq(schema.owedExpenses.userId, userId)];
+          if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+          if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+          return db
+            .select({
+              id: schema.owedExpenses.id,
+              txnDate: schema.owedExpenses.incurredDate,
+              rawDescription: schema.owedExpenses.description,
+              netSelf: schema.owedExpenses.amountPaise,
+            })
+            .from(schema.owedExpenses)
+            .where(and(...filters))
+            .orderBy(desc(schema.owedExpenses.amountPaise))
+            .limit(limit);
+        })()
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            txnDate: string;
+            rawDescription: string;
+            netSelf: number;
+          }>,
+        ),
+  ]);
+
+  // TODO: downstream UI links to /transactions#txn-${id}; owed_expense ids
+  // won't resolve there. Revisit once we have a unified "expense" detail route.
+  const combined: TopDebit[] = [
+    ...txnRows.map((r) => ({
       id: r.id,
       txnDate: r.txnDate,
       rawDescription: r.rawDescription,
       netSelfPaise: Number(r.netSelf),
-    }))
-    .filter((r) => r.netSelfPaise > 0);
+    })),
+    ...owedRows.map((r) => ({
+      id: r.id,
+      txnDate: r.txnDate,
+      rawDescription: r.rawDescription,
+      netSelfPaise: Number(r.netSelf),
+    })),
+  ];
+
+  return combined
+    .filter((r) => r.netSelfPaise > 0)
+    .sort((a, b) => b.netSelfPaise - a.netSelfPaise)
+    .slice(0, limit);
 }

@@ -373,6 +373,7 @@ export async function getLinkedTransactionPreview(input: {
 
     const settledByParticipant = new Map<string, number>();
     for (const s of settlements) {
+      if (!s.splitParticipantId) continue;
       settledByParticipant.set(
         s.splitParticipantId,
         (settledByParticipant.get(s.splitParticipantId) ?? 0) +

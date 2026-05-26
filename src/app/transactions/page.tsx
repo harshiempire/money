@@ -29,6 +29,12 @@ import {
   getStatementPeriodForDate,
 } from "@/lib/spend/period";
 import { ScrollToTransaction } from "./ScrollToTransaction";
+import {
+  loadNetEventsByTransactionIds,
+  loadOpenPayablesForUser,
+  loadOpenReceivablesForAccount,
+} from "@/lib/net-events/load-net-settle-data";
+import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
 
 export const dynamic = "force-dynamic";
 
@@ -276,7 +282,7 @@ export default async function TransactionsPage({
 
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
   for (const st of settlementsForRows) {
-    if (!st.inflowTransactionId) continue;
+    if (!st.inflowTransactionId || !st.splitParticipantId) continue;
     const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
     arr.push({
       splitParticipantId: st.splitParticipantId,
@@ -327,6 +333,7 @@ export default async function TransactionsPage({
     : [];
   const settledByParticipant = new Map<string, number>();
   for (const s of allSettlements) {
+    if (!s.splitParticipantId) continue;
     settledByParticipant.set(
       s.splitParticipantId,
       (settledByParticipant.get(s.splitParticipantId) ?? 0) +
@@ -402,6 +409,14 @@ export default async function TransactionsPage({
     .where(eq(schema.persons.userId, userId))
     .orderBy(asc(schema.persons.name));
   const knownPersonNames = personRows.map((p) => p.name);
+
+  const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
+    await Promise.all([
+      loadOpenReceivablesForAccount(account.id),
+      loadOpenPayablesForUser(userId),
+      loadNetEventsByTransactionIds(rows.map((r) => r.id)),
+      loadCounterpartyPersonHints(account.id),
+    ]);
 
   return (
     <main className="mx-auto max-w-6xl p-8">
@@ -578,6 +593,9 @@ export default async function TransactionsPage({
                       categoryId={r.categoryId}
                       isTransfer={r.isTransfer}
                       counterpartyId={r.counterpartyId}
+                      counterpartyDisplayName={r.counterpartyDisplayName}
+                      rawDescription={r.rawDescription}
+                      counterpartyPersonHints={counterpartyPersonHints}
                       categories={categoryOptions}
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
@@ -585,6 +603,19 @@ export default async function TransactionsPage({
                       knownPersonNames={knownPersonNames}
                       note={r.note}
                       needsReview={r.needsReview}
+                      receivables={openReceivables}
+                      payables={openPayables}
+                      netEventId={netEventsByTxn.get(r.id)?.netEventId}
+                      netEventLegs={netEventsByTxn.get(r.id)?.legs.map((l) => ({
+                        kind: l.kind,
+                        targetId: l.targetId,
+                        amountPaise: l.amountPaise,
+                        method:
+                          l.method === "bank"
+                            ? ("bank" as const)
+                            : ("offset" as const),
+                      }))}
+                      txnDate={r.txnDate}
                     />
                   </td>
                   <td className="hidden py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500 lg:table-cell">

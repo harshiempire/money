@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
@@ -21,6 +21,11 @@ import {
   type CashSettlement,
 } from "./CashSettlementDialog";
 import { SplitAwaitingItem } from "./SplitAwaitingItem";
+import { PureOffsetNetSettleButton } from "./PureOffsetNetSettleButton";
+import {
+  loadOpenPayablesForUser,
+  loadOpenReceivablesForAccount,
+} from "@/lib/net-events/load-net-settle-data";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +83,29 @@ export default async function ReimbursementsPage({
   ]);
   const { period } = resolved;
 
+  const [openReceivables, openPayables, categories, personRows] =
+    await Promise.all([
+    loadOpenReceivablesForAccount(account.id),
+    loadOpenPayablesForUser(user.id),
+    db
+      .select({
+        id: schema.categories.id,
+        name: schema.categories.name,
+        kind: schema.categories.kind,
+      })
+      .from(schema.categories)
+      .where(eq(schema.categories.userId, user.id))
+      .orderBy(asc(schema.categories.kind), asc(schema.categories.name)),
+    db
+      .select({ name: schema.persons.name })
+      .from(schema.persons)
+      .where(eq(schema.persons.userId, user.id))
+      .orderBy(asc(schema.persons.name)),
+  ]);
+
+  const categoryOptions = categories;
+  const knownPersonNames = personRows.map((p) => p.name);
+
   const txnFilters = [eq(schema.transactions.accountId, account.id)];
   if (period.from) txnFilters.push(gte(schema.transactions.txnDate, period.from));
   if (period.to) txnFilters.push(lte(schema.transactions.txnDate, period.to));
@@ -128,6 +156,7 @@ export default async function ReimbursementsPage({
         ),
       );
     for (const s of sets) {
+      if (!s.splitParticipantId) continue;
       settlementsByParticipant.set(
         s.splitParticipantId,
         (settlementsByParticipant.get(s.splitParticipantId) ?? 0) +
@@ -267,11 +296,24 @@ export default async function ReimbursementsPage({
         <a className="underline" href="/transactions">
           Transactions
         </a>
-        , or record cash directly here.{" "}
+        , record cash directly here, or use net settle for GPay-style offsets.{" "}
+        <a className="underline" href="/people">
+          People
+        </a>{" "}
+        shows all-time balances.{" "}
         <a className="underline" href={spendPeriodHref(sp)}>
           Spend report
         </a>
       </p>
+
+      <div className="mt-3">
+        <PureOffsetNetSettleButton
+          receivables={openReceivables}
+          payables={openPayables}
+          categories={categoryOptions}
+          knownPersonNames={knownPersonNames}
+        />
+      </div>
 
       <SpendPeriodPicker
         resolved={resolved}
@@ -380,7 +422,18 @@ export default async function ReimbursementsPage({
                   key={p.groupKey}
                   className="border-t border-neutral-200 dark:border-neutral-800"
                 >
-                  <td className="py-2 pr-3 font-medium">{p.displayName}</td>
+                  <td className="py-2 pr-3 font-medium">
+                    {p.groupKey.startsWith("person:") ? (
+                      <a
+                        href={`/people/${encodeURIComponent(p.groupKey.replace("person:", ""))}`}
+                        className="hover:underline"
+                      >
+                        {p.displayName}
+                      </a>
+                    ) : (
+                      p.displayName
+                    )}
+                  </td>
                   <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
                     {formatPaise(p.outstandingPaise)}
                   </td>

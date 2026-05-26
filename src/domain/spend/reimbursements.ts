@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
+import { settledAmountByOwedExpenseIds } from "@/lib/splits/outstanding";
 
 const inflowTxn = alias(schema.transactions, "inflow_txn");
 
@@ -9,6 +10,7 @@ export interface ReimbursementBridgeTotals {
   expectedReimbursePaise: number;
   settledReimbursePaise: number;
   outstandingReimbursePaise: number;
+  outstandingPayablePaise: number;
   receivedInPeriodPaise: number;
   splitCount: number;
   openSplitCount: number;
@@ -40,11 +42,44 @@ export async function reimbursementBridgeTotals(
     to,
   );
 
+  const [account] = await db
+    .select({ userId: schema.moneyAccounts.userId })
+    .from(schema.moneyAccounts)
+    .where(eq(schema.moneyAccounts.id, accountId))
+    .limit(1);
+
+  let outstandingPayablePaise = 0;
+  if (account?.userId) {
+    const owedFilters = [eq(schema.owedExpenses.userId, account.userId)];
+    if (from) owedFilters.push(gte(schema.owedExpenses.incurredDate, from));
+    if (to) owedFilters.push(lte(schema.owedExpenses.incurredDate, to));
+
+    const owedInPeriod = await db
+      .select({
+        id: schema.owedExpenses.id,
+        amountPaise: schema.owedExpenses.amountPaise,
+      })
+      .from(schema.owedExpenses)
+      .where(and(...owedFilters));
+
+    if (owedInPeriod.length > 0) {
+      const settled = await settledAmountByOwedExpenseIds(
+        owedInPeriod.map((o) => o.id),
+      );
+      for (const o of owedInPeriod) {
+        const expected = Number(o.amountPaise);
+        const paid = settled.get(o.id) ?? 0;
+        outstandingPayablePaise += Math.max(0, expected - paid);
+      }
+    }
+  }
+
   if (splitIds.length === 0) {
     return {
       expectedReimbursePaise: 0,
       settledReimbursePaise: 0,
       outstandingReimbursePaise: 0,
+      outstandingPayablePaise,
       receivedInPeriodPaise,
       splitCount: 0,
       openSplitCount: 0,
@@ -76,6 +111,7 @@ export async function reimbursementBridgeTotals(
       .from(schema.settlements)
       .where(inArray(schema.settlements.splitParticipantId, participantIds));
     for (const s of sets) {
+      if (!s.splitParticipantId) continue;
       settledByParticipant.set(
         s.splitParticipantId,
         (settledByParticipant.get(s.splitParticipantId) ?? 0) +
@@ -101,6 +137,7 @@ export async function reimbursementBridgeTotals(
       0,
       expectedReimbursePaise - settledReimbursePaise,
     ),
+    outstandingPayablePaise,
     receivedInPeriodPaise,
     splitCount: splitIds.length,
     openSplitCount: openSplitIds.size,

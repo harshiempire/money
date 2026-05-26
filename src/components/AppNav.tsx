@@ -12,6 +12,7 @@ const defaultLinks: NavLink[] = [
   { href: "/review", label: "Review" },
   { href: "/timeline", label: "Timeline" },
   { href: "/reimbursements", label: "Reimbursements" },
+  { href: "/people", label: "People" },
   { href: "/import", label: "Import" },
 ];
 

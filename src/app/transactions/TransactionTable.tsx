@@ -11,6 +11,11 @@ import type { TransactionListRow } from "./load-table-context";
 import type { ExistingSplit } from "./SplitDialog";
 import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
 import type { ExpenseLink, ReimbursementLink } from "./SplitSettlementLinks";
+import type {
+  PayableOption,
+  ReceivableOption,
+  NetEventByTransaction,
+} from "@/lib/net-events/load-net-settle-data";
 
 function ChannelPill({ channel }: { channel: string }) {
   const palette: Record<string, string> = {
@@ -42,6 +47,10 @@ export function TransactionTable({
   participantOptions,
   categoryOptions,
   knownPersonNames,
+  counterpartyPersonHints,
+  openReceivables,
+  openPayables,
+  netEventsByTxn,
   emptyMessage,
 }: {
   rows: TransactionListRow[];
@@ -52,6 +61,10 @@ export function TransactionTable({
   participantOptions: ParticipantOption[];
   categoryOptions: CategoryOption[];
   knownPersonNames: string[];
+  counterpartyPersonHints: Record<string, string>;
+  openReceivables: ReceivableOption[];
+  openPayables: PayableOption[];
+  netEventsByTxn: Map<string, NetEventByTransaction>;
   emptyMessage: string;
 }) {
   const visibleTxnIds = rows.map((r) => r.id);
@@ -140,6 +153,9 @@ export function TransactionTable({
                     categoryId={r.categoryId}
                     isTransfer={r.isTransfer}
                     counterpartyId={r.counterpartyId}
+                    counterpartyDisplayName={r.counterpartyDisplayName}
+                    rawDescription={r.rawDescription}
+                    counterpartyPersonHints={counterpartyPersonHints}
                     categories={categoryOptions}
                     existingSplit={splitByTxn.get(r.id) ?? null}
                     existingSettlement={settlementsByInflow.get(r.id) ?? []}
@@ -147,6 +163,19 @@ export function TransactionTable({
                     knownPersonNames={knownPersonNames}
                     note={r.note}
                     needsReview={r.needsReview}
+                    receivables={openReceivables}
+                    payables={openPayables}
+                    netEventId={netEventsByTxn.get(r.id)?.netEventId}
+                    netEventLegs={netEventsByTxn.get(r.id)?.legs.map((l) => ({
+                      kind: l.kind,
+                      targetId: l.targetId,
+                      amountPaise: l.amountPaise,
+                      method:
+                        l.method === "bank"
+                          ? ("bank" as const)
+                          : ("offset" as const),
+                    }))}
+                    txnDate={r.txnDate}
                   />
                 </td>
                 <td className="py-2 pr-3 text-right font-mono text-xs whitespace-nowrap text-neutral-500">

@@ -18,6 +18,12 @@ import {
 } from "./SplitSettlementLinks";
 import type { CategoryOption } from "./RowActions";
 import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
+import {
+  loadNetEventsByTransactionIds,
+  loadOpenPayablesForUser,
+  loadOpenReceivablesForAccount,
+} from "@/lib/net-events/load-net-settle-data";
+import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
 
 export type TransactionListRow = {
   id: string;
@@ -179,7 +185,7 @@ export async function loadTransactionTableContext(
 
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
   for (const st of settlementsForRows) {
-    if (!st.inflowTransactionId) continue;
+    if (!st.inflowTransactionId || !st.splitParticipantId) continue;
     const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
     arr.push({
       splitParticipantId: st.splitParticipantId,
@@ -231,6 +237,7 @@ export async function loadTransactionTableContext(
 
   const settledByParticipant = new Map<string, number>();
   for (const s of allSettlements) {
+    if (!s.splitParticipantId) continue;
     settledByParticipant.set(
       s.splitParticipantId,
       (settledByParticipant.get(s.splitParticipantId) ?? 0) +
@@ -276,6 +283,14 @@ export async function loadTransactionTableContext(
     .where(eq(schema.persons.userId, userId))
     .orderBy(asc(schema.persons.name));
 
+  const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
+    await Promise.all([
+      loadOpenReceivablesForAccount(accountId),
+      loadOpenPayablesForUser(userId),
+      loadNetEventsByTransactionIds(rows.map((r) => r.id)),
+      loadCounterpartyPersonHints(accountId),
+    ]);
+
   return {
     rows,
     splitByTxn,
@@ -285,5 +300,9 @@ export async function loadTransactionTableContext(
     participantOptions,
     categoryOptions,
     knownPersonNames: personRows.map((p) => p.name),
+    counterpartyPersonHints,
+    openReceivables,
+    openPayables,
+    netEventsByTxn,
   };
 }

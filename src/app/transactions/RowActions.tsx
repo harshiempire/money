@@ -12,8 +12,17 @@ import {
   type ExistingAllocation,
   type ParticipantOption,
 } from "./SettleDialog";
+import {
+  NetSettleButton,
+  type NetSettleExistingLeg,
+} from "./NetSettleDialog";
+import type {
+  PayableOption,
+  ReceivableOption,
+} from "@/lib/net-events/load-net-settle-data";
 import { NoteButton } from "./NoteDialog";
 import { ReviewLaterButton } from "./ReviewLaterButton";
+import { resolveDefaultPersonFilter } from "@/lib/people/match-counterparty";
 
 export interface CategoryOption {
   id: string;
@@ -28,6 +37,9 @@ export function RowActions({
   categoryId,
   isTransfer,
   counterpartyId,
+  counterpartyDisplayName,
+  rawDescription,
+  counterpartyPersonHints,
   categories,
   existingSplit,
   existingSettlement,
@@ -35,6 +47,11 @@ export function RowActions({
   knownPersonNames,
   note,
   needsReview,
+  receivables,
+  payables,
+  netEventId,
+  netEventLegs,
+  txnDate,
 }: {
   transactionId: string;
   drCr: "debit" | "credit";
@@ -42,6 +59,9 @@ export function RowActions({
   categoryId: string | null;
   isTransfer: boolean;
   counterpartyId: string | null;
+  counterpartyDisplayName: string | null;
+  rawDescription: string;
+  counterpartyPersonHints: Record<string, string>;
   categories: CategoryOption[];
   existingSplit: ExistingSplit | null;
   existingSettlement: ExistingAllocation[];
@@ -49,8 +69,21 @@ export function RowActions({
   knownPersonNames: string[];
   note: string | null;
   needsReview: boolean;
+  receivables: ReceivableOption[];
+  payables: PayableOption[];
+  netEventId?: string;
+  netEventLegs?: NetSettleExistingLeg[];
+  txnDate: string;
 }) {
   const [pending, startTransition] = useTransition();
+
+  const defaultPersonFilter = resolveDefaultPersonFilter({
+    counterpartyId,
+    counterpartyDisplayName,
+    rawDescription,
+    knownPersonNames,
+    counterpartyPersonHints,
+  });
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -119,11 +152,39 @@ export function RowActions({
         />
       )}
       {drCr === "credit" && (
-        <SettleButton
-          inflowTransactionId={transactionId}
-          amountPaise={amountPaise}
-          participants={participants}
-          existing={existingSettlement}
+        <>
+          <SettleButton
+            inflowTransactionId={transactionId}
+            amountPaise={amountPaise}
+            participants={participants}
+            existing={existingSettlement}
+          />
+          <NetSettleButton
+            eventDate={txnDate}
+            inflowTransactionId={transactionId}
+            inflowAmountPaise={amountPaise}
+            receivables={receivables}
+            payables={payables}
+            categories={categories}
+            existingNetEventId={netEventId}
+            existingLegs={netEventLegs}
+            knownPersonNames={knownPersonNames}
+            defaultPersonFilter={defaultPersonFilter}
+          />
+        </>
+      )}
+      {drCr === "debit" && (
+        <NetSettleButton
+          eventDate={txnDate}
+          outflowTransactionId={transactionId}
+          outflowAmountPaise={amountPaise}
+          receivables={receivables}
+          payables={payables}
+          categories={categories}
+          existingNetEventId={netEventId}
+          existingLegs={netEventLegs}
+          knownPersonNames={knownPersonNames}
+          defaultPersonFilter={defaultPersonFilter}
         />
       )}
 
