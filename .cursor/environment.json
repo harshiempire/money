@@ -1,0 +1,4 @@
+{
+  "install": "bash .cursor/scripts/install-deps.sh",
+  "start": "export PATH=\"$HOME/.bun/bin:$PATH\" && export AUTH_URL=\"${AUTH_URL:-http://localhost:3000}\" && bun run dev"
+}

@@ -237,3 +237,49 @@ bun run db:studio
 - Auth added: JWT Credentials, open registration, in-place bootstrap on `SEED_USER_ID` to preserve finance FKs, ownership checks on 13 server actions, tenant-scoped pages.
 
 When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server action**, **scope every query by the current user's account**.
+
+---
+
+## Cursor Cloud specific instructions
+
+This repo uses **Bun** for install, CLI scripts, and tests. The default Cursor VM image has Node (via NVM) but **not Bun** — cloud install/update must install Bun first (see [`.cursor/scripts/install-deps.sh`](.cursor/scripts/install-deps.sh)).
+
+### Secrets (Cursor dashboard)
+
+Required for full E2E: `DATABASE_URL`, `AUTH_SECRET`, `BOOTSTRAP_EMAIL`, `BOOTSTRAP_PASSWORD`. Optional: `UPSTASH_*`, `AUTH_URL` (defaults to `http://localhost:3000` in dev).
+
+Cloud agents inject these as environment variables; you do **not** need a committed `.env.local` if secrets are configured.
+
+### One-time DB setup per session (if needed)
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun run db:migrate
+bun run bootstrap-owner   # uses BOOTSTRAP_* env vars
+```
+
+If `db:migrate` fails because tables already exist from an old `db:push`, run `bun run baseline-migrations` first (see troubleshooting above).
+
+### Running the app
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+export AUTH_URL="${AUTH_URL:-http://localhost:3000}"
+bun run dev
+```
+
+Dev server: http://localhost:3000 — sign in at `/login` with `BOOTSTRAP_EMAIL` / `BOOTSTRAP_PASSWORD`.
+
+### Verify
+
+| Command | Notes |
+|---------|--------|
+| `bun run db:ping` | Neon connectivity |
+| `bun test` | Unit tests (Bun test runner) |
+| `bun run typecheck` | `tsc --noEmit` |
+| `bun run build` | Production build |
+| `bun run lint` | Known issue: `next lint` may fail with ESLint 10 (`Invalid project directory .../lint`); typecheck + build are the reliable checks |
+
+### PATH gotcha
+
+Non-interactive shells may not load `~/.bashrc`. Always prefix Bun commands with `export PATH="$HOME/.bun/bin:$PATH"` or use the install script in `.cursor/environment.json`.
