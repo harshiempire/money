@@ -254,6 +254,8 @@ When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server act
 
 Production and most dev setups use a **Neon** `DATABASE_URL`. The app uses `@neondatabase/serverless` (not plain `postgres`).
 
+**When a `DATABASE_URL` secret is configured** (Cursor secrets / env), copy it into `.env.local` — no Docker stack needed. Verify with `bun run db:ping`, then `bun run db:migrate` and `bun run bootstrap-owner` if first run on that DB.
+
 For Cloud Agent VMs **without** a Neon URL, use the committed `docker-compose.local.yml` (Postgres 17 + [local-neon-http-proxy](https://neon.com/guides/local-development-with-neon)):
 
 ```bash
