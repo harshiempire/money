@@ -221,11 +221,289 @@ const buildCanonical = (
 const PERIOD_RE =
   /Account Statement from (\d{2}-\d{2}-\d{4}) to (\d{2}-\d{2}-\d{4})/;
 
-const extractPeriod = (firstPageText: string) => {
-  const m = firstPageText.match(PERIOD_RE);
-  if (!m) return { periodStart: null, periodEnd: null };
-  return { periodStart: toIsoDate(m[1]), periodEnd: toIsoDate(m[2]) };
+const ESTATEMENT_PERIOD_RE =
+  /(?:Statement Period from|for the period)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+(?:to|-)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})/;
+
+const MONTH_TO_NUM: Record<string, string> = {
+  January: "01",
+  February: "02",
+  March: "03",
+  April: "04",
+  May: "05",
+  June: "06",
+  July: "07",
+  August: "08",
+  September: "09",
+  October: "10",
+  November: "11",
+  December: "12",
 };
+
+const monthDayYearToIso = (month: string, day: string, year: string): string => {
+  const m = MONTH_TO_NUM[month];
+  if (!m) return `${year}-00-00`;
+  return `${year}-${m}-${day.padStart(2, "0")}`;
+};
+
+const extractPeriod = (pages: string[]) => {
+  const blob = pages.join("\n");
+  const bobWorld = blob.match(PERIOD_RE);
+  if (bobWorld) {
+    return { periodStart: toIsoDate(bobWorld[1]), periodEnd: toIsoDate(bobWorld[2]) };
+  }
+  const eStatement = blob.match(ESTATEMENT_PERIOD_RE);
+  if (eStatement) {
+    return {
+      periodStart: monthDayYearToIso(eStatement[1], eStatement[2], eStatement[3]),
+      periodEnd: monthDayYearToIso(eStatement[4], eStatement[5], eStatement[6]),
+    };
+  }
+  return { periodStart: null, periodEnd: null };
+};
+
+// ─── bob World (mobile app) layout ───────────────────────────────────────────
+
+type BobStatementFormat = "bobWorld" | "eStatement";
+
+const detectBobFormat = (pages: string[]): BobStatementFormat => {
+  const blob = pages.join("\n");
+  if (ANCHOR.test(blob)) return "bobWorld";
+  if (
+    /DATE\s+NARRATION/i.test(blob) ||
+    /Statement of transactions in Savings Account/i.test(blob) ||
+    /\d{2}-\d{2}-\d{4}\s+Opening Balance\s+\d+\.\d{2}\s+Cr/.test(blob)
+  ) {
+    return "eStatement";
+  }
+  return "bobWorld";
+};
+
+// ─── e-Statement (direct bank PDF) layout ────────────────────────────────────
+//
+//   <txn_date> <narration...>[\n<cont>]* <amount> <balance> Cr
+//   <txn_date> Opening Balance <balance> Cr
+//
+const ESTATEMENT_MONEY = String.raw`\d+\.\d{2}`;
+const ESTATEMENT_DATE_ANCHOR = /^(\d{2}-\d{2}-\d{4})\s+(.*)$/;
+
+const ESTATEMENT_SKIP = [
+  /^Page \d+ \| \d+/,
+  /^https?:\/\//,
+  /^Customer Care/i,
+  /^Statement of transactions/i,
+  /^DATE NARRATION/i,
+  /^SAVINGS ACCOUNT - \d+/i,
+  /^Relationship Type/i,
+  /^TOTAL \(INR\)/i,
+  /^Your Account Statement/i,
+  /^CUSTOMER ID/i,
+  /^\(CKYC/i,
+  /^MR\./i,
+  /^S\/O /i,
+  /^HYDERABAD/i,
+  /^TELANGANA/i,
+  /^IMPORTANT MESSAGES/i,
+  /^Cyber Crime/i,
+  /^1800 /,
+  /^BASE BRANCH/i,
+  /^NOMINEE DETAILS/i,
+  /^SR\.NO\./i,
+  /^Please call/i,
+  /^Bank has revised/i,
+  /^Cheques received/i,
+  /^Bank never ask/i,
+  /^As an enhanced/i,
+  /^The new PPF/i,
+  /^SI - /,
+  /^OBC - /,
+  /^ECS - /,
+  /^INT - /,
+  /^CBI - /,
+  /^Retd - /,
+  /^DAUE - /,
+  /^INCHGS - /,
+  /^ISLIXN - /,
+  /^Account Related Other Information/i,
+  /^A summary of your relationship/i,
+  /^BARB0/,
+  /^D NO /,
+  /^ABBREVIATIONS/i,
+  /^SP - /,
+  /^EC - /,
+  /^MB - /,
+  /^Retd - /,
+  /^INT - /,
+  /^CBI - /,
+  /^DAUE - /,
+  /^INCHGS - /,
+  /^ISLIXN - /,
+  /^1 SAVINGS ACCOUNT \d+/,
+];
+
+const isEStatementSkip = (line: string) =>
+  ESTATEMENT_SKIP.some((re) => re.test(line));
+
+interface EStatementRawRow {
+  txnDate: string;
+  bodyLines: string[];
+}
+
+const isEStatementRowContinuation = (body: string): boolean => {
+  const trimmed = body.trim();
+  // Wrapped value-date / amount tail: "30-04-2026 309.00 55955.47 Cr"
+  if (/^\d{2}-\d{2}-\d{4}\s/.test(trimmed)) return true;
+  // Amount+balance only on the continuation line: "309.00 55955.47 Cr"
+  return new RegExp(`^${ESTATEMENT_MONEY}\\s+${ESTATEMENT_MONEY}\\s+Cr$`).test(
+    trimmed,
+  );
+};
+
+const collectEStatementRows = (lines: string[]): EStatementRawRow[] => {
+  const rows: EStatementRawRow[] = [];
+  let current: EStatementRawRow | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || isEStatementSkip(line)) continue;
+
+    const m = line.match(ESTATEMENT_DATE_ANCHOR);
+    if (m) {
+      if (current && isEStatementRowContinuation(m[2])) {
+        current.bodyLines.push(line);
+        continue;
+      }
+      if (current) rows.push(current);
+      current = { txnDate: m[1], bodyLines: [m[2]] };
+      if (/^Closing Balance/i.test(m[2])) {
+        current = null;
+      }
+      continue;
+    }
+
+    if (current) current.bodyLines.push(line);
+  }
+  if (current) rows.push(current);
+  return rows;
+};
+
+const splitEStatementRow = (
+  row: EStatementRawRow,
+): {
+  description: string;
+  amountText: string | null;
+  balanceText: string;
+  isOpening: boolean;
+} | null => {
+  const text = row.bodyLines
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join(" ")
+    .replace(/\s+/g, " ");
+
+  const opening = text.match(
+    new RegExp(`^Opening Balance\\s+(${ESTATEMENT_MONEY})\\s+Cr`, "i"),
+  );
+  if (opening) {
+    return {
+      description: "Opening Balance",
+      amountText: null,
+      balanceText: opening[1],
+      isOpening: true,
+    };
+  }
+
+  const amountBalance = [
+    ...text.matchAll(
+      new RegExp(`(${ESTATEMENT_MONEY})\\s+(${ESTATEMENT_MONEY})\\s+Cr`, "g"),
+    ),
+  ].at(-1);
+  if (!amountBalance || amountBalance.index === undefined) return null;
+
+  const description = text.slice(0, amountBalance.index).trim();
+  return {
+    description,
+    amountText: amountBalance[1],
+    balanceText: amountBalance[2],
+    isOpening: false,
+  };
+};
+
+const buildEStatementCanonical = (
+  row: EStatementRawRow,
+  split: ReturnType<typeof splitEStatementRow> & object,
+  prevBalancePaise: number | null,
+  serial: number,
+): CanonicalTxn => {
+  const balancePaise = toPaise(split.balanceText);
+  const channel = detectChannel(split.description);
+
+  let drCr: "debit" | "credit";
+  let amountPaise: number;
+  if (split.isOpening) {
+    drCr = "credit";
+    amountPaise = 0;
+  } else if (prevBalancePaise === null) {
+    drCr = "debit";
+    amountPaise = toPaise(split.amountText!);
+  } else if (balancePaise > prevBalancePaise) {
+    drCr = "credit";
+    amountPaise = toPaise(split.amountText!);
+  } else {
+    drCr = "debit";
+    amountPaise = toPaise(split.amountText!);
+  }
+
+  const extracted = extractFromDescription(split.description, channel);
+
+  return {
+    txnDate: toIsoDate(row.txnDate),
+    valueDate: null,
+    amountPaise,
+    drCr,
+    channel,
+    refId: extracted.refId,
+    rawDescription: split.description,
+    parsedPurpose: extracted.parsedPurpose,
+    counterpartyKey: extracted.counterpartyKey,
+    balancePaise,
+    rawPayload: { serial, balanceText: split.balanceText, format: "eStatement" },
+  };
+};
+
+const parseEStatementPages = (
+  pages: string[],
+): Effect.Effect<CanonicalTxn[], ParseError> =>
+  Effect.gen(function* () {
+    const rows: CanonicalTxn[] = [];
+    let prevBalancePaise: number | null = null;
+    let serial = 0;
+
+    for (const page of pages) {
+      for (const raw of collectEStatementRows(page.split("\n"))) {
+        const split = splitEStatementRow(raw);
+        if (!split) {
+          return yield* Effect.fail(
+            new ParseError({
+              bank: "bob",
+              stage: "splitAmounts",
+              detail: `eStatement row on ${raw.txnDate}: could not find amount/balance in ${JSON.stringify(raw.bodyLines)}`,
+            }),
+          );
+        }
+        serial += 1;
+        const canonical = buildEStatementCanonical(
+          raw,
+          split,
+          prevBalancePaise,
+          serial,
+        );
+        rows.push(canonical);
+        prevBalancePaise = canonical.balancePaise ?? prevBalancePaise;
+      }
+    }
+
+    return rows;
+  });
 
 // ─── Adapter ─────────────────────────────────────────────────────────────────
 
@@ -302,31 +580,36 @@ export const bobAdapter: BankAdapter = {
         );
       }
 
-      const period = extractPeriod(pages[0]);
+      const format = detectBobFormat(pages);
+      const period = extractPeriod(pages);
 
-      const rows: CanonicalTxn[] = [];
-      for (const page of pages) {
-        const lines = page.split("\n");
-        for (const raw of collectRows(lines)) {
-          const split = splitDescriptionAndAmounts(raw);
-          if (!split) {
-            // A row whose trailing dr/cr pair we couldn't find is a parser
-            // bug or a pathological row; surface it loudly.
-            return yield* Effect.fail(
-              new ParseError({
-                bank: "bob",
-                stage: "splitAmounts",
-                detail: `Sr.No ${raw.serial}: could not find debit/credit pair in ${JSON.stringify(
-                  raw.descriptionLines,
-                )}`,
-              }),
-            );
-          }
-          rows.push(
-            buildCanonical(raw, split.description, split.debit, split.credit),
-          );
-        }
-      }
+      const rows: CanonicalTxn[] =
+        format === "eStatement"
+          ? yield* parseEStatementPages(pages)
+          : yield* Effect.gen(function* () {
+              const bobWorldRows: CanonicalTxn[] = [];
+              for (const page of pages) {
+                const lines = page.split("\n");
+                for (const raw of collectRows(lines)) {
+                  const split = splitDescriptionAndAmounts(raw);
+                  if (!split) {
+                    return yield* Effect.fail(
+                      new ParseError({
+                        bank: "bob",
+                        stage: "splitAmounts",
+                        detail: `Sr.No ${raw.serial}: could not find debit/credit pair in ${JSON.stringify(
+                          raw.descriptionLines,
+                        )}`,
+                      }),
+                    );
+                  }
+                  bobWorldRows.push(
+                    buildCanonical(raw, split.description, split.debit, split.credit),
+                  );
+                }
+              }
+              return bobWorldRows;
+            });
 
       const result: ParsedStatement = {
         meta: {
@@ -336,6 +619,7 @@ export const bobAdapter: BankAdapter = {
         },
         rows,
       };
+
       return result;
     }),
 };

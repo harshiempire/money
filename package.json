@@ -22,7 +22,8 @@
     "backfill-persons": "bun run scripts/backfill-persons.ts",
     "baseline-migrations": "bun run scripts/baseline-migrations.ts",
     "db:ping": "bun run scripts/db-ping.ts",
-    "ingest:bob": "bun run scripts/test-bob-parser.ts"
+    "ingest:bob": "bun run scripts/test-bob-parser.ts",
+    "compare:bob": "bun run scripts/compare-bob-pdfs.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",
