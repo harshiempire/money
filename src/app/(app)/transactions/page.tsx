@@ -2,7 +2,13 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Stat, StatGrid } from "@/components/ui/Stat";
+import { ChannelPill } from "@/components/ui/ChannelPill";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Card } from "@/components/ui/Card";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
@@ -419,18 +425,17 @@ export default async function TransactionsPage({
     ]);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
+    <>
       <ScrollToTransaction transactionId={highlightTxnId} />
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Transactions</h1>
-        <AppNav current="/transactions" />
-      </header>
-      <div className="mt-1 flex items-center justify-between gap-3">
-        <p className="text-xs text-neutral-500">
-          Account: <strong>{account.name}</strong> ({account.bank})
-        </p>
-        <AutoDetectButton />
-      </div>
+      <PageHeader
+        title="Transactions"
+        description="Categorize, split, settle, and annotate your bank transactions"
+      >
+        <div className="flex items-center gap-2">
+          <Badge tone="neutral">{account.name} · {account.bank}</Badge>
+          <AutoDetectButton />
+        </div>
+      </PageHeader>
 
       <FiltersBar
         from={effectiveFrom}
@@ -439,9 +444,9 @@ export default async function TransactionsPage({
       />
 
       {periodLabel && (
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
-          <span className="text-neutral-500">Period:</span>
-          <span className="font-mono text-neutral-800 dark:text-neutral-200">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2.5 text-xs">
+          <span className="font-medium text-[var(--color-text-muted)]">Period</span>
+          <span className="font-mono text-[var(--color-text)]">
             {periodLabel}
           </span>
           {showAllTime ? (
@@ -463,31 +468,31 @@ export default async function TransactionsPage({
       )}
 
       {linkedTxnNotFound && (
-        <p className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        <Alert variant="error" title="Transaction not found" className="mt-4">
           That transaction was not found in this account.
-        </p>
+        </Alert>
       )}
 
       {highlightMissingFromList && (
-        <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <Alert variant="warning" title="Outside current filters" className="mt-4">
           The linked transaction is outside the current filters.{" "}
           <a
             href={`/transactions?txn=${highlightTxnId}&all=1#txn-${highlightTxnId}`}
-            className="underline underline-offset-2"
+            className="font-medium underline underline-offset-2"
           >
             Show all time
           </a>{" "}
           to locate it.
-        </p>
+        </Alert>
       )}
 
       {linkedTxnNavigation && !linkedTxnNotFound && !highlightMissingFromList && (
-        <p className="mt-4 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+        <Alert variant="info" title="Linked transaction" className="mt-4">
           Opened the statement period containing the linked transaction.
-        </p>
+        </Alert>
       )}
 
-      <section className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+      <StatGrid className="mt-4">
         <Stat label="Debits" value={formatPaise(totalDebit)} tone="debit" />
         <Stat label="Credits" value={formatPaise(totalCredit)} tone="credit" />
         <Stat
@@ -498,11 +503,11 @@ export default async function TransactionsPage({
           label="Net personal spend"
           value={formatPaise(netSpend)}
           tone="debit"
-          hint="excludes transfers, splits use your share, settlements neutralized"
+          hint="Excludes transfers; splits use your share"
         />
-      </section>
+      </StatGrid>
 
-      <p className="mt-3 text-xs text-neutral-500">
+      <p className="mt-3 text-xs text-[var(--color-text-muted)]">
         Showing {rows.length} of {totals.count} transaction
         {totals.count === 1 ? "" : "s"}.
       </p>
@@ -516,15 +521,15 @@ export default async function TransactionsPage({
           <p className="mb-2 text-xs text-neutral-500 md:hidden">
             Swipe horizontally for amount, tags, and actions →
           </p>
-          <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-800">
+          <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
           <table className="min-w-[720px] w-full border-collapse text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase text-neutral-500">
+              <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-left text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
                 <th className="py-2 pr-3">Date</th>
                 <th className="hidden py-2 pr-3 sm:table-cell">Channel</th>
                 <th className="py-2 pr-3">Counterparty</th>
                 <th className="py-2 pr-3 text-right">Amount</th>
-                <th className="py-2 pr-3">Tag</th>
+                <th className="py-2 pr-3">Category & actions</th>
                 <th className="hidden py-2 pr-3 text-right lg:table-cell">
                   Balance
                 </th>
@@ -542,7 +547,7 @@ export default async function TransactionsPage({
                 <tr
                   key={r.id}
                   id={`txn-${r.id}`}
-                  className={`scroll-mt-4 border-t border-neutral-200 align-top dark:border-neutral-800 ${
+                  className={`scroll-mt-4 border-t border-[var(--color-border)] align-top transition-colors hover:bg-[var(--color-surface-overlay)]/30 ${
                     r.isTransfer ? "opacity-60" : ""
                   } ${highlightTxnId === r.id ? "bg-sky-50/80 dark:bg-sky-950/30" : ""} ${r.needsReview ? "border-l-2 border-l-amber-400/70 pl-1 dark:border-l-amber-500/60" : ""} ${isLinked ? "border-l-2 border-l-violet-400/60 pl-1 dark:border-l-violet-600/50" : ""}`}
                 >
@@ -629,54 +634,7 @@ export default async function TransactionsPage({
           </div>
         </div>
       )}
-    </main>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-  hint,
-}: {
-  label: string;
-  value: string;
-  tone?: "debit" | "credit";
-  hint?: string;
-}) {
-  const toneClass =
-    tone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "";
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
-      {hint && <div className="mt-0.5 text-[10px] text-neutral-500">{hint}</div>}
-    </div>
-  );
-}
-
-function ChannelPill({ channel }: { channel: string }) {
-  const palette: Record<string, string> = {
-    upi: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
-    imps: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    neft: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-    rtgs: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-    opening:
-      "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
-  };
-  const cls =
-    palette[channel] ??
-    "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
-  return (
-    <span
-      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
-    >
-      {channel}
-    </span>
+    </>
   );
 }
 
@@ -690,57 +648,54 @@ function FiltersBar({
   channel?: string;
 }) {
   return (
-    <form
-      method="get"
-      className="mt-5 flex flex-wrap items-end gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
-    >
-      <label className="flex flex-col">
-        <span className="text-xs uppercase text-neutral-500">From</span>
-        <input
-          type="date"
-          name="from"
-          defaultValue={from ?? ""}
-          className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-        />
-      </label>
-      <label className="flex flex-col">
-        <span className="text-xs uppercase text-neutral-500">To</span>
-        <input
-          type="date"
-          name="to"
-          defaultValue={to ?? ""}
-          className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-        />
-      </label>
-      <label className="flex flex-col">
-        <span className="text-xs uppercase text-neutral-500">Channel</span>
-        <select
-          name="channel"
-          defaultValue={channel ?? ""}
-          className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-        >
-          <option value="">All</option>
-          {CHANNELS.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="flex items-center gap-2">
-        <button
-          type="submit"
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
-        >
-          Apply
-        </button>
-        <a
-          href="/transactions"
-          className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
-        >
-          Reset
-        </a>
-      </div>
-    </form>
+    <Card className="mt-4">
+      <form
+        method="get"
+        className="flex flex-wrap items-end gap-4 text-sm"
+      >
+        <label className="flex flex-col">
+          <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">From</span>
+          <input
+            type="date"
+            name="from"
+            defaultValue={from ?? ""}
+            className="mt-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2.5 py-1.5 focus-ring"
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">To</span>
+          <input
+            type="date"
+            name="to"
+            defaultValue={to ?? ""}
+            className="mt-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2.5 py-1.5 focus-ring"
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">Channel</span>
+          <select
+            name="channel"
+            defaultValue={channel ?? ""}
+            className="mt-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2.5 py-1.5 focus-ring"
+          >
+            <option value="">All</option>
+            {CHANNELS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2">
+          <Button type="submit" size="sm">Apply</Button>
+          <a
+            href="/transactions"
+            className="text-sm text-[var(--color-text-secondary)] underline-offset-4 hover:text-[var(--color-text)] hover:underline"
+          >
+            Reset
+          </a>
+        </div>
+      </form>
+    </Card>
   );
 }

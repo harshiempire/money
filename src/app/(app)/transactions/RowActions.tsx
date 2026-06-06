@@ -99,7 +99,7 @@ export function RowActions({
             });
           });
         }}
-        className="rounded border border-neutral-300 bg-transparent px-1.5 py-0.5 text-xs dark:border-neutral-700"
+        className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2 py-1 text-xs focus-ring"
       >
         <option value="">—</option>
         {categories.map((c) => (
@@ -119,13 +119,13 @@ export function RowActions({
               await applyCategoryToCounterparty({ transactionId });
             });
           }}
-          className="rounded border border-neutral-300 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-overlay)] disabled:opacity-50"
         >
           Apply to all
         </button>
       )}
 
-      <label className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-neutral-500">
+      <label className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
         <input
           type="checkbox"
           checked={isTransfer}

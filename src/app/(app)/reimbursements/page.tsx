@@ -2,7 +2,10 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import Link from "next/link";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Card } from "@/components/ui/Card";
+import { Money } from "@/components/ui/Money";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
@@ -285,26 +288,17 @@ export default async function ReimbursementsPage({
   const settledSplits = splitSummaries.filter((s) => s.status === "settled");
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Reimbursements</h1>
-        <AppNav current="/reimbursements" />
-      </header>
-
-      <p className="mt-1 text-xs text-neutral-500">
-        Reimbursements for splits in the selected period. Settle inflows from{" "}
-        <a className="underline" href="/transactions">
-          Transactions
-        </a>
-        , record cash directly here, or use net settle for GPay-style offsets.{" "}
-        <a className="underline" href="/people">
-          People
-        </a>{" "}
-        shows all-time balances.{" "}
-        <a className="underline" href={spendPeriodHref(sp)}>
-          Spend report
-        </a>
-      </p>
+    <>
+      <PageHeader
+        title="Reimbursements"
+        description={
+          <>
+            Track who owes you for split expenses. Settle inflows from{" "}
+            <Link href="/transactions" className="text-[var(--color-accent)] underline underline-offset-2">Transactions</Link>
+            , record cash here, or use net settle for GPay-style offsets.
+          </>
+        }
+      />
 
       <div className="mt-3">
         <PureOffsetNetSettleButton
@@ -579,6 +573,6 @@ export default async function ReimbursementsPage({
           </ul>
         </section>
       )}
-    </main>
+    </>
   );
 }

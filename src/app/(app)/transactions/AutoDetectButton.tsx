@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { autoDetectTransfers } from "./actions";
+import { Button } from "@/components/ui/Button";
 
 export function AutoDetectButton() {
   const [pending, startTransition] = useTransition();
@@ -9,8 +10,10 @@ export function AutoDetectButton() {
 
   return (
     <div className="flex items-center gap-2">
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         disabled={pending}
         onClick={() => {
           setResult(null);
@@ -23,13 +26,12 @@ export function AutoDetectButton() {
             );
           });
         }}
-        className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
         title="Find unmarked debit/credit pairs of the same amount within 3 days and mark both as transfer"
       >
         {pending ? "Scanning…" : "Auto-detect transfers"}
-      </button>
+      </Button>
       {result && (
-        <span className="text-xs text-neutral-500">{result}</span>
+        <span className="text-xs text-[var(--color-text-muted)]">{result}</span>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { summarizeSplitSettlement } from "./settlement-status";
-import type { ExistingSplit } from "@/app/transactions/SplitDialog";
+import type { ExistingSplit } from "@/app/(app)/transactions/SplitDialog";
 
 type SplitRow = {
   id: string;
