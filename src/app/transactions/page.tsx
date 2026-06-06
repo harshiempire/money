@@ -2,7 +2,10 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import { Alert } from "@/components/ui/Alert";
+import { Card } from "@/components/ui/Card";
+import { Stat } from "@/components/ui/Stat";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
@@ -419,18 +422,18 @@ export default async function TransactionsPage({
     ]);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
+    <PageShell
+      title="Transactions"
+      width="6xl"
+      description={
+        <>
+          Account: <strong className="font-medium">{account.name}</strong> (
+          {account.bank})
+        </>
+      }
+      actions={<AutoDetectButton />}
+    >
       <ScrollToTransaction transactionId={highlightTxnId} />
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Transactions</h1>
-        <AppNav current="/transactions" />
-      </header>
-      <div className="mt-1 flex items-center justify-between gap-3">
-        <p className="text-xs text-neutral-500">
-          Account: <strong>{account.name}</strong> ({account.bank})
-        </p>
-        <AutoDetectButton />
-      </div>
 
       <FiltersBar
         from={effectiveFrom}
@@ -439,7 +442,10 @@ export default async function TransactionsPage({
       />
 
       {periodLabel && (
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
+        <Card
+          padding="sm"
+          className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+        >
           <span className="text-neutral-500">Period:</span>
           <span className="font-mono text-neutral-800 dark:text-neutral-200">
             {periodLabel}
@@ -459,17 +465,17 @@ export default async function TransactionsPage({
               Show all time
             </a>
           )}
-        </div>
+        </Card>
       )}
 
       {linkedTxnNotFound && (
-        <p className="mt-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        <Alert variant="error" className="mt-4">
           That transaction was not found in this account.
-        </p>
+        </Alert>
       )}
 
       {highlightMissingFromList && (
-        <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <Alert variant="warning" className="mt-4">
           The linked transaction is outside the current filters.{" "}
           <a
             href={`/transactions?txn=${highlightTxnId}&all=1#txn-${highlightTxnId}`}
@@ -478,13 +484,13 @@ export default async function TransactionsPage({
             Show all time
           </a>{" "}
           to locate it.
-        </p>
+        </Alert>
       )}
 
       {linkedTxnNavigation && !linkedTxnNotFound && !highlightMissingFromList && (
-        <p className="mt-4 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+        <Alert variant="info" className="mt-4">
           Opened the statement period containing the linked transaction.
-        </p>
+        </Alert>
       )}
 
       <section className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
@@ -629,33 +635,7 @@ export default async function TransactionsPage({
           </div>
         </div>
       )}
-    </main>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-  hint,
-}: {
-  label: string;
-  value: string;
-  tone?: "debit" | "credit";
-  hint?: string;
-}) {
-  const toneClass =
-    tone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "";
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
-      {hint && <div className="mt-0.5 text-[10px] text-neutral-500">{hint}</div>}
-    </div>
+    </PageShell>
   );
 }
 
@@ -692,7 +672,7 @@ function FiltersBar({
   return (
     <form
       method="get"
-      className="mt-5 flex flex-wrap items-end gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
+      className="mt-5 flex flex-wrap items-end gap-3 rounded-lg border border-border-subtle bg-surface-raised p-4 text-sm shadow-[var(--shadow-card)]"
     >
       <label className="flex flex-col">
         <span className="text-xs uppercase text-neutral-500">From</span>

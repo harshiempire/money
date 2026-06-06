@@ -2,8 +2,18 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
+import { Card } from "@/components/ui/Card";
+import { Section } from "@/components/ui/Section";
+import { Stat } from "@/components/ui/Stat";
+import {
+  DataTable,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableRow,
+} from "@/components/ui/DataTable";
 import { dailyClosingBalance } from "@/domain/spend/net";
 import {
   listStatementPeriods,
@@ -67,12 +77,10 @@ export default async function TimelinePage({
     opening != null && closing != null ? closing - opening : null;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Timeline</h1>
-        <AppNav current="/timeline" />
-      </header>
-
+    <PageShell
+      title="Timeline"
+      description="Daily closing balance and largest transactions in the selected period."
+    >
       <SpendPeriodPicker
         resolved={resolved}
         sp={sp}
@@ -100,58 +108,55 @@ export default async function TimelinePage({
             />
           </section>
 
-          <section className="mt-6 rounded border border-neutral-200 p-4 dark:border-neutral-800">
+          <Card className="mt-6">
             <BalanceChart points={balances} />
-          </section>
+          </Card>
 
-          <section className="mt-8">
-            <h2 className="text-lg font-semibold">Biggest movers</h2>
-            <p className="mt-1 text-xs text-neutral-500">
-              Top 15 transactions by amount in this period.
-            </p>
-            <table className="mt-3 w-full border-collapse text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase text-neutral-500">
-                  <th className="py-2 pr-3">Date</th>
-                  <th className="py-2 pr-3">Counterparty</th>
-                  <th className="py-2 pr-3 text-right">Amount</th>
-                  <th className="py-2 pr-3">Tag</th>
+          <Section
+            title="Biggest movers"
+            description="Top 15 transactions by amount in this period."
+            className="mt-8"
+          >
+            <DataTable>
+              <DataTableHead>
+                <tr>
+                  <DataTableHeaderCell>Date</DataTableHeaderCell>
+                  <DataTableHeaderCell>Counterparty</DataTableHeaderCell>
+                  <DataTableHeaderCell align="right">Amount</DataTableHeaderCell>
+                  <DataTableHeaderCell>Tag</DataTableHeaderCell>
                 </tr>
-              </thead>
+              </DataTableHead>
               <tbody>
                 {movers.map((r) => (
-                  <tr
+                  <DataTableRow
                     key={r.id}
-                    className={`border-t border-neutral-200 dark:border-neutral-800 ${
-                      r.isTransfer ? "opacity-60" : ""
-                    }`}
+                    className={r.isTransfer ? "opacity-60" : undefined}
                   >
-                    <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
+                    <DataTableCell className="font-mono text-xs whitespace-nowrap">
                       {formatDate(r.txnDate)}
-                    </td>
-                    <td className="py-2 pr-3">
+                    </DataTableCell>
+                    <DataTableCell>
                       {counterpartyLabel(r.rawDescription)}
-                    </td>
-                    <td
-                      className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
-                        r.drCr === "debit"
-                          ? "text-red-700 dark:text-red-400"
-                          : "text-emerald-700 dark:text-emerald-400"
+                    </DataTableCell>
+                    <DataTableCell
+                      align="right"
+                      className={`font-mono whitespace-nowrap ${
+                        r.drCr === "debit" ? "text-debit" : "text-credit"
                       }`}
                     >
                       {formatPaiseSigned(r.amountPaise, r.drCr)}
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-neutral-500">
+                    </DataTableCell>
+                    <DataTableCell className="text-xs text-neutral-500">
                       {r.isTransfer ? "transfer" : ""}
-                    </td>
-                  </tr>
+                    </DataTableCell>
+                  </DataTableRow>
                 ))}
               </tbody>
-            </table>
-          </section>
+            </DataTable>
+          </Section>
         </>
       )}
-    </main>
+    </PageShell>
   );
 }
 
@@ -270,25 +275,3 @@ function BalanceChart({
   );
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "debit" | "credit";
-}) {
-  const toneClass =
-    tone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "";
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
-    </div>
-  );
-}

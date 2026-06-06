@@ -2,7 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import { Card } from "@/components/ui/Card";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { loadTransactionTableContext } from "@/app/transactions/load-table-context";
@@ -25,35 +26,37 @@ export default async function ReviewPage() {
   const ctx = await loadTransactionTableContext(account.id, user.id, where);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Review later</h1>
-        <AppNav current="/review" />
-      </header>
-
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-        Transactions you flagged to sort out later. Use{" "}
-        <strong className="font-normal">Review ✓</strong> on a row to remove it
-        from this list when done.
-      </p>
-      <p className="mt-1 text-xs text-neutral-500">
-        Account: <strong>{account.name}</strong> ({account.bank}) ·{" "}
-        {ctx.rows.length} item{ctx.rows.length === 1 ? "" : "s"}
-      </p>
-
-      <p className="mt-4">
+    <PageShell
+      title="Review later"
+      width="6xl"
+      description={
+        <>
+          Transactions you flagged to sort out later. Use{" "}
+          <strong className="font-medium">Review ✓</strong> on a row to remove
+          it from this list when done.
+        </>
+      }
+      actions={
         <a
           href="/transactions"
           className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
         >
           ← All transactions
         </a>
-      </p>
+      }
+    >
+      <Card padding="sm" className="mt-4 text-xs text-neutral-500">
+        Account: <strong className="font-medium">{account.name}</strong> (
+        {account.bank}) · {ctx.rows.length} item
+        {ctx.rows.length === 1 ? "" : "s"}
+      </Card>
 
-      <TransactionTable
-        {...ctx}
-        emptyMessage="Nothing marked for review. On Transactions, click Review on any row to add it here."
-      />
-    </main>
+      <div className="mt-6">
+        <TransactionTable
+          {...ctx}
+          emptyMessage="Nothing marked for review. On Transactions, click Review on any row to add it here."
+        />
+      </div>
+    </PageShell>
   );
 }

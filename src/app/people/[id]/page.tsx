@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import { Section } from "@/components/ui/Section";
+import { Stat } from "@/components/ui/Stat";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { getPersonDetail } from "@/lib/people/ledger";
 
@@ -17,17 +19,17 @@ export default async function PersonDetailPage({
   if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{detail.personName}</h1>
-        <AppNav current="/people" />
-      </header>
-
-      <p className="mt-1 text-xs text-neutral-500">
-        <a href="/people" className="underline">
+    <PageShell
+      title={detail.personName}
+      actions={
+        <a
+          href="/people"
+          className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
+        >
           ← All people
         </a>
-      </p>
+      }
+    >
 
       <section className="mt-6 grid gap-3 sm:grid-cols-3">
         <Stat
@@ -45,35 +47,33 @@ export default async function PersonDetailPage({
       </section>
 
       {detail.receivables.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Open receivables</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Section title="Open receivables" className="mt-8">
+          <ul className="space-y-2 text-sm">
             {detail.receivables.map((r) => (
               <li
                 key={r.participantId}
-                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-border-subtle bg-surface-muted/50 p-3"
               >
                 <span>
                   {formatDate(r.txnDate)} ·{" "}
                   {counterpartyLabel(r.txnDescription)}
                 </span>
-                <span className="font-mono text-xs text-amber-700 dark:text-amber-400">
+                <span className="font-mono text-xs text-receivable">
                   {formatPaise(r.outstandingPaise)} outstanding
                 </span>
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {detail.payables.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Open payables</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Section title="Open payables" className="mt-8">
+          <ul className="space-y-2 text-sm">
             {detail.payables.map((p) => (
               <li
                 key={p.owedExpenseId}
-                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-border-subtle bg-surface-muted/50 p-3"
               >
                 <span>
                   {formatDate(p.incurredDate)} · {p.description}
@@ -83,23 +83,22 @@ export default async function PersonDetailPage({
                     </span>
                   )}
                 </span>
-                <span className="font-mono text-xs text-sky-700 dark:text-sky-400">
+                <span className="font-mono text-xs text-payable">
                   {formatPaise(p.outstandingPaise)} outstanding
                 </span>
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {detail.netEvents.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Net settle history</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Section title="Net settle history" className="mt-8">
+          <ul className="space-y-2 text-sm">
             {detail.netEvents.map((e) => (
               <li
                 key={e.netEventId}
-                className="rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="rounded-md border border-border-subtle bg-surface-muted/50 p-3"
               >
                 <div className="font-medium">
                   {formatDate(e.eventDate)} · Net settled
@@ -118,17 +117,8 @@ export default async function PersonDetailPage({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
-    </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className="mt-1 font-mono text-lg">{value}</div>
-    </div>
+    </PageShell>
   );
 }

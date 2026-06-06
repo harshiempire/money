@@ -3,8 +3,14 @@ import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import { PeriodDelta } from "@/components/PeriodDelta";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
+import { Alert } from "@/components/ui/Alert";
+import { buttonLinkClass } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { MetricHero } from "@/components/ui/MetricHero";
+import { Section } from "@/components/ui/Section";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import {
   categoryBreakdown,
@@ -110,57 +116,41 @@ export default async function DashboardPage({
     bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Money</h1>
-        <AppNav current="/" />
-      </header>
-
+    <PageShell
+      title="Dashboard"
+      description="Net personal spend and category breakdown for the selected period."
+    >
       <PeriodPicker period={period} active={sp.preset} />
 
-      <section className="mt-8">
-        <div className="text-xs uppercase tracking-wide text-neutral-500">
-          Net personal spend · {period.label}
-        </div>
-        <div
-          className={`mt-1 font-mono text-5xl ${
-            totals.netSelfPaise >= 0
-              ? "text-red-700 dark:text-red-400"
-              : "text-emerald-700 dark:text-emerald-400"
-          }`}
-        >
-          {formatPaise(Math.abs(totals.netSelfPaise))}
-          {totals.netSelfPaise < 0 && (
-            <span className="ml-2 text-base text-emerald-700 dark:text-emerald-400">
-              (net inflow)
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && (
-            <PeriodDelta
-              delta={periodDelta}
-              previousLabel={prevComparison?.label}
-            />
-          )}
-          {burnPerDay != null && (
+      <MetricHero
+        label={`Net personal spend · ${period.label}`}
+        value={formatPaise(Math.abs(totals.netSelfPaise))}
+        tone={totals.netSelfPaise >= 0 ? "debit" : "credit"}
+        suffix={totals.netSelfPaise < 0 ? "(net inflow)" : undefined}
+        meta={
+          <>
+            {periodDelta != null && (
+              <PeriodDelta
+                delta={periodDelta}
+                previousLabel={prevComparison?.label}
+              />
+            )}
+            {burnPerDay != null && (
+              <span>
+                ~{formatPaise(burnPerDay)}/day over {dayCount} day
+                {dayCount === 1 ? "" : "s"}
+              </span>
+            )}
             <span>
-              ~{formatPaise(burnPerDay)}/day over {dayCount} day
-              {dayCount === 1 ? "" : "s"}
+              {totals.count} transaction{totals.count === 1 ? "" : "s"}
             </span>
-          )}
-          <span>
-            {totals.count} transaction{totals.count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </section>
+          </>
+        }
+      />
 
       {showTriage && (
-        <section className="mt-6 rounded border border-amber-200 bg-amber-50/60 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-950/20">
-          <h2 className="font-medium text-amber-900 dark:text-amber-200">
-            Needs attention
-          </h2>
-          <ul className="mt-2 space-y-1 text-amber-800 dark:text-amber-300/90">
+        <Alert variant="warning" title="Needs attention" className="mt-6">
+          <ul className="space-y-1">
             {triage.uncategorizedCount > 0 && (
               <li>
                 <a className="underline" href="/transactions">
@@ -183,34 +173,36 @@ export default async function DashboardPage({
               </li>
             )}
           </ul>
-        </section>
+        </Alert>
       )}
 
       {showBreakdown && (
-        <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold">Spend breakdown</h2>
+        <Section
+          title="Spend breakdown"
+          className="mt-8"
+          action={
             <a
               href={spendLink}
               className="text-xs text-neutral-500 underline-offset-2 hover:underline"
             >
               Full report →
             </a>
-          </div>
-          <div className="mt-3">
+          }
+        >
+          <Card>
             <SpendBreakdown
               bridge={bridge}
               netSelfPaise={totals.netSelfPaise}
               reimbursement={reimbursement}
               compact
             />
-          </div>
-        </section>
+          </Card>
+        </Section>
       )}
 
-      <section className="mt-10 grid gap-8 md:grid-cols-2">
-        <div>
-          <h2 className="text-lg font-semibold">By category</h2>
+      <section className="mt-10 grid gap-6 md:grid-cols-2">
+        <Card>
+          <h2 className="text-base font-semibold">By category</h2>
           {totalSpendPaise > 0 && (
             <p className="mt-0.5 text-xs text-neutral-500">
               % of net personal spend in this period
@@ -277,10 +269,10 @@ export default async function DashboardPage({
               </ul>
             </>
           )}
-        </div>
+        </Card>
 
-        <div>
-          <h2 className="text-lg font-semibold">Top counterparties</h2>
+        <Card>
+          <h2 className="text-base font-semibold">Top counterparties</h2>
           {tops.length === 0 ? (
             <p className="mt-2 text-sm text-neutral-500">
               No counterparty spend in this period.
@@ -301,9 +293,9 @@ export default async function DashboardPage({
               ))}
             </ul>
           )}
-        </div>
+        </Card>
       </section>
-    </main>
+    </PageShell>
   );
 }
 
@@ -354,37 +346,6 @@ async function loadPreviousPeriodComparison(
   return { totals, label };
 }
 
-function PeriodDelta({
-  delta,
-  previousLabel,
-}: {
-  delta: number;
-  previousLabel?: string;
-}) {
-  if (delta === 0) {
-    return (
-      <span>
-        Same as previous period
-        {previousLabel ? ` (${previousLabel})` : ""}
-      </span>
-    );
-  }
-  const up = delta > 0;
-  return (
-    <span
-      className={
-        up
-          ? "text-red-700 dark:text-red-400"
-          : "text-emerald-700 dark:text-emerald-400"
-      }
-    >
-      {up ? "+" : "−"}
-      {formatPaise(Math.abs(delta))} vs previous
-      {previousLabel ? ` (${previousLabel})` : " period"}
-    </span>
-  );
-}
-
 function PeriodPicker({
   period,
   active,
@@ -397,42 +358,30 @@ function PeriodPicker({
     ...fn(),
   }));
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
-      <span className="text-xs uppercase text-neutral-500">Period:</span>
+    <Card className="mt-6 flex flex-wrap items-center gap-3 text-sm" padding="sm">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+        Period
+      </span>
       <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300">
         {period.label}
       </span>
-      <div className="ml-auto flex gap-1.5">
-        <a
-          href="/"
-          className={`rounded border px-2 py-1 text-xs ${
-            !active
-              ? "border-neutral-900 dark:border-neutral-100"
-              : "border-neutral-300 dark:border-neutral-700"
-          }`}
-        >
+      <div className="ml-auto flex flex-wrap gap-1.5">
+        <a href="/" className={buttonLinkClass(!active)}>
           Statement period
         </a>
         {presets.map((p) => (
           <a
             key={p.key}
             href={`/?preset=${p.key}`}
-            className={`rounded border px-2 py-1 text-xs ${
-              active === p.key
-                ? "border-neutral-900 dark:border-neutral-100"
-                : "border-neutral-300 dark:border-neutral-700"
-            }`}
+            className={buttonLinkClass(active === p.key)}
           >
             {p.label}
           </a>
         ))}
-        <a
-          href="/spend"
-          className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
-        >
+        <a href="/spend" className={buttonLinkClass()}>
           Spend report
         </a>
       </div>
-    </div>
+    </Card>
   );
 }

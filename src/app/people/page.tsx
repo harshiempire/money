@@ -1,5 +1,12 @@
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import {
+  DataTable,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableRow,
+} from "@/components/ui/DataTable";
 import { formatPaise } from "@/lib/format";
 import { listPersonBalances } from "@/lib/people/ledger";
 
@@ -10,38 +17,28 @@ export default async function PeoplePage() {
   const balances = await listPersonBalances(user.id);
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">People</h1>
-        <AppNav current="/people" />
-      </header>
-
-      <p className="mt-1 text-xs text-neutral-500">
-        All-time balances across receivables and payables. Not limited to a
-        statement period.
-      </p>
-
+    <PageShell
+      title="People"
+      description="All-time balances across receivables and payables. Not limited to a statement period."
+    >
       {balances.length === 0 ? (
         <p className="mt-6 text-sm text-neutral-500">
           No open balances with anyone yet.
         </p>
       ) : (
-        <table className="mt-6 w-full border-collapse text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase text-neutral-500">
-              <th className="py-2 pr-3">Person</th>
-              <th className="py-2 pr-3 text-right">They owe me</th>
-              <th className="py-2 pr-3 text-right">I owe them</th>
-              <th className="py-2 pr-3 text-right">Net</th>
+        <DataTable className="mt-6">
+          <DataTableHead>
+            <tr>
+              <DataTableHeaderCell>Person</DataTableHeaderCell>
+              <DataTableHeaderCell align="right">They owe me</DataTableHeaderCell>
+              <DataTableHeaderCell align="right">I owe them</DataTableHeaderCell>
+              <DataTableHeaderCell align="right">Net</DataTableHeaderCell>
             </tr>
-          </thead>
+          </DataTableHead>
           <tbody>
             {balances.map((p) => (
-              <tr
-                key={p.personId}
-                className="border-t border-neutral-200 dark:border-neutral-800"
-              >
-                <td className="py-2 pr-3">
+              <DataTableRow key={p.personId}>
+                <DataTableCell>
                   <a
                     href={`/people/${encodeURIComponent(p.personId)}`}
                     className="font-medium hover:underline"
@@ -54,28 +51,33 @@ export default async function PeoplePage() {
                     {p.openPayableCount} payable
                     {p.openPayableCount === 1 ? "" : "s"}
                   </div>
-                </td>
-                <td className="py-2 pr-3 text-right font-mono text-xs text-amber-700 dark:text-amber-400">
+                </DataTableCell>
+                <DataTableCell
+                  align="right"
+                  className="font-mono text-xs text-receivable"
+                >
                   {formatPaise(p.receivableOutstandingPaise)}
-                </td>
-                <td className="py-2 pr-3 text-right font-mono text-xs text-sky-700 dark:text-sky-400">
+                </DataTableCell>
+                <DataTableCell
+                  align="right"
+                  className="font-mono text-xs text-payable"
+                >
                   {formatPaise(p.payableOutstandingPaise)}
-                </td>
-                <td
-                  className={`py-2 pr-3 text-right font-mono text-sm ${
-                    p.netPaise >= 0
-                      ? "text-amber-700 dark:text-amber-400"
-                      : "text-sky-700 dark:text-sky-400"
+                </DataTableCell>
+                <DataTableCell
+                  align="right"
+                  className={`font-mono text-sm ${
+                    p.netPaise >= 0 ? "text-receivable" : "text-payable"
                   }`}
                 >
                   {formatPaise(Math.abs(p.netPaise))}
                   {p.netPaise < 0 ? " (you owe)" : ""}
-                </td>
-              </tr>
+                </DataTableCell>
+              </DataTableRow>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}
-    </main>
+    </PageShell>
   );
 }

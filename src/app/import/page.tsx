@@ -1,7 +1,16 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
+import {
+  DataTable,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableRow,
+} from "@/components/ui/DataTable";
+import { Card } from "@/components/ui/Card";
+import { Section } from "@/components/ui/Section";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { UploadForm } from "./UploadForm";
 
@@ -18,59 +27,54 @@ export default async function ImportPage() {
     .limit(10);
 
   return (
-    <main className="mx-auto max-w-2xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Import statement</h1>
-        <AppNav current="/import" />
-      </header>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Upload a Bank of Baroda PDF. Re-uploading the same period inserts zero
-        new rows.
-      </p>
-      <p className="mt-1 text-xs text-neutral-500">
-        Account: <strong>{account.name}</strong> ({account.bank})
-      </p>
+    <PageShell
+      title="Import statement"
+      width="2xl"
+      description="Upload a Bank of Baroda PDF. Re-uploading the same period inserts zero new rows."
+    >
+      <Card padding="sm" className="mt-4 text-xs text-neutral-500">
+        Account: <strong className="font-medium">{account.name}</strong> (
+        {account.bank})
+      </Card>
 
-      <div className="mt-6">
+      <Card className="mt-6 border-dashed">
         <UploadForm />
-      </div>
+      </Card>
 
-      <h2 className="mt-10 text-lg font-semibold">Recent imports</h2>
-      {recent.length === 0 ? (
-        <p className="mt-2 text-sm text-neutral-500">
-          No imports yet.
-        </p>
-      ) : (
-        <table className="mt-3 w-full border-collapse text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase text-neutral-500">
-              <th className="py-2 pr-3">Filename</th>
-              <th className="py-2 pr-3">Period</th>
-              <th className="py-2 pr-3 text-right">Seen</th>
-              <th className="py-2 pr-3 text-right">New</th>
-              <th className="py-2">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recent.map((r) => (
-              <tr
-                key={r.id}
-                className="border-t border-neutral-200 dark:border-neutral-800"
-              >
-                <td className="py-2 pr-3 font-mono text-xs">{r.filename}</td>
-                <td className="py-2 pr-3 text-xs">
-                  {r.periodStart} → {r.periodEnd}
-                </td>
-                <td className="py-2 pr-3 text-right">{r.rowsSeen}</td>
-                <td className="py-2 pr-3 text-right">{r.rowsNew}</td>
-                <td className="py-2 text-xs text-neutral-500">
-                  {new Date(r.createdAt).toLocaleString()}
-                </td>
+      <Section title="Recent imports" className="mt-10">
+        {recent.length === 0 ? (
+          <p className="text-sm text-neutral-500">No imports yet.</p>
+        ) : (
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <DataTableHeaderCell>Filename</DataTableHeaderCell>
+                <DataTableHeaderCell>Period</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Seen</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">New</DataTableHeaderCell>
+                <DataTableHeaderCell>When</DataTableHeaderCell>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </main>
+            </DataTableHead>
+            <tbody>
+              {recent.map((r) => (
+                <DataTableRow key={r.id}>
+                  <DataTableCell className="font-mono text-xs">
+                    {r.filename}
+                  </DataTableCell>
+                  <DataTableCell className="text-xs">
+                    {r.periodStart} → {r.periodEnd}
+                  </DataTableCell>
+                  <DataTableCell align="right">{r.rowsSeen}</DataTableCell>
+                  <DataTableCell align="right">{r.rowsNew}</DataTableCell>
+                  <DataTableCell className="text-xs text-neutral-500">
+                    {new Date(r.createdAt).toLocaleString()}
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+            </tbody>
+          </DataTable>
+        )}
+      </Section>
+    </PageShell>
   );
 }
