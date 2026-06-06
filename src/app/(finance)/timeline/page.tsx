@@ -1,7 +1,6 @@
 import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { getBobAccount, getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppNav } from "@/components/AppNav";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { dailyClosingBalance } from "@/domain/spend/net";
@@ -26,8 +25,8 @@ export default async function TimelinePage({
   searchParams: Promise<SpendSearchParams>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  await getCurrentUser();
+  const account = await getBobAccount();
 
   const [resolved, statementPeriods] = await Promise.all([
     resolveTimelinePeriod(account.id, sp),

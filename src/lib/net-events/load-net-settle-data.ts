@@ -1,10 +1,11 @@
 import "server-only";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { settledAmountByOwedExpenseIds } from "@/lib/splits/outstanding";
 import {
-  settledAmountByOwedExpenseIds,
-  settledAmountByParticipantIds,
-} from "@/lib/splits/outstanding";
+  buildOpenReceivablesFromLedger,
+  getAccountSplitLedger,
+} from "@/lib/splits/account-split-ledger";
 
 export interface ReceivableOption {
   id: string;
@@ -30,53 +31,8 @@ export interface PayableOption {
 export async function loadOpenReceivablesForAccount(
   accountId: string,
 ): Promise<ReceivableOption[]> {
-  const splitsRaw = await db
-    .select({
-      splitId: schema.splits.id,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, accountId));
-
-  if (splitsRaw.length === 0) return [];
-
-  const participants = await db
-    .select()
-    .from(schema.splitParticipants)
-    .where(
-      inArray(
-        schema.splitParticipants.splitId,
-        splitsRaw.map((s) => s.splitId),
-      ),
-    );
-
-  const settled = await settledAmountByParticipantIds(
-    participants.map((p) => p.id),
-  );
-  const splitMeta = new Map(splitsRaw.map((s) => [s.splitId, s]));
-
-  return participants
-    .map((p) => {
-      const meta = splitMeta.get(p.splitId)!;
-      const expected = Number(p.expectedAmountPaise);
-      const paid = settled.get(p.id) ?? 0;
-      const outstandingPaise = Math.max(0, expected - paid);
-      return {
-        id: p.id,
-        personName: p.personName,
-        personId: p.personId,
-        expectedAmountPaise: expected,
-        outstandingPaise,
-        splitTransactionDate: meta.txnDate,
-        splitTransactionDescription: meta.rawDescription,
-      };
-    })
-    .filter((r) => r.outstandingPaise > 0);
+  const ledger = await getAccountSplitLedger(accountId);
+  return buildOpenReceivablesFromLedger(ledger);
 }
 
 export async function loadOpenPayablesForUser(

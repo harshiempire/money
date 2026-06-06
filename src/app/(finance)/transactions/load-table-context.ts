@@ -10,7 +10,6 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { counterpartyLabel, formatDate } from "@/lib/format";
 import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
 import {
   buildExpenseLinks,
@@ -21,8 +20,12 @@ import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
 import {
   loadNetEventsByTransactionIds,
   loadOpenPayablesForUser,
-  loadOpenReceivablesForAccount,
 } from "@/lib/net-events/load-net-settle-data";
+import {
+  buildOpenReceivablesFromLedger,
+  buildParticipantOptions,
+  getAccountSplitLedger,
+} from "@/lib/splits/account-split-ledger";
 import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
 
 export type TransactionListRow = {
@@ -194,76 +197,16 @@ export async function loadTransactionTableContext(
     settlementsByInflow.set(st.inflowTransactionId, arr);
   }
 
-  const allSplitsForAccount = await db
-    .select({
-      id: schema.splits.id,
-      transactionId: schema.splits.transactionId,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, accountId));
-
-  const allParticipants = allSplitsForAccount.length
-    ? await db
-        .select()
-        .from(schema.splitParticipants)
-        .where(
-          inArray(
-            schema.splitParticipants.splitId,
-            allSplitsForAccount.map((s) => s.id),
-          ),
-        )
-    : [];
-
-  const allSettlements = allSplitsForAccount.length
-    ? await db
-        .select({
-          splitParticipantId: schema.settlements.splitParticipantId,
-          amountPaise: schema.settlements.amountPaise,
-        })
-        .from(schema.settlements)
-        .where(
-          inArray(
-            schema.settlements.splitParticipantId,
-            allParticipants.map((p) => p.id),
-          ),
-        )
-    : [];
-
-  const settledByParticipant = new Map<string, number>();
-  for (const s of allSettlements) {
-    if (!s.splitParticipantId) continue;
-    settledByParticipant.set(
-      s.splitParticipantId,
-      (settledByParticipant.get(s.splitParticipantId) ?? 0) +
-        Number(s.amountPaise),
-    );
-  }
+  const ledger = await getAccountSplitLedger(accountId);
 
   const splitByTxn = buildSplitByTxn(
     splits,
     participantsAll,
-    settledByParticipant,
+    ledger.settledByParticipant,
   );
 
-  const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
-  const participantOptions: ParticipantOption[] = allParticipants.map((p) => {
-    const meta = splitMetaById.get(p.splitId)!;
-    return {
-      id: p.id,
-      personName: p.personName,
-      expectedAmountPaise: Number(p.expectedAmountPaise),
-      splitTransactionDate: formatDate(meta.txnDate),
-      splitTransactionDescription:
-        counterpartyLabel(meta.rawDescription) ?? meta.rawDescription,
-      alreadySettledPaise: settledByParticipant.get(p.id) ?? 0,
-    };
-  });
+  const participantOptions: ParticipantOption[] =
+    buildParticipantOptions(ledger);
 
   const categories = await db
     .select({
@@ -283,9 +226,10 @@ export async function loadTransactionTableContext(
     .where(eq(schema.persons.userId, userId))
     .orderBy(asc(schema.persons.name));
 
-  const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
+  const openReceivables = buildOpenReceivablesFromLedger(ledger);
+
+  const [openPayables, netEventsByTxn, counterpartyPersonHints] =
     await Promise.all([
-      loadOpenReceivablesForAccount(accountId),
       loadOpenPayablesForUser(userId),
       loadNetEventsByTransactionIds(rows.map((r) => r.id)),
       loadCounterpartyPersonHints(accountId),

@@ -1,17 +1,18 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { ensureDefaultCategories } from "@/db/seed-categories";
-import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { AppNav } from "@/components/AppNav";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import {
+  getBobAccount,
+  getCurrentUser,
+  ensureTenantDefaults,
+  runCounterpartyBackfill,
+} from "@/lib/auth/request-tenant";
 import {
   categoryBreakdown,
+  loadPeriodTxnMetrics,
   netSpendTotals,
-  splitBridgeTotals,
   topCounterparties,
-  triageStats,
 } from "@/domain/spend/net";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
 import {
@@ -37,11 +38,11 @@ export default async function DashboardPage({
   searchParams: Promise<SP>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
   const userId = user.id;
-  await ensureDefaultCategories(userId);
-  await backfillCounterparties(account.id, userId);
+  await ensureTenantDefaults();
+  await runCounterpartyBackfill();
 
   const isStatementMode = !sp.preset && !sp.from && !sp.to;
 
@@ -73,16 +74,44 @@ export default async function DashboardPage({
         : {},
   );
 
-  const [totals, bridge, reimbursement, triage, cats, tops, prevComparison] =
+  const [metrics, reimbursement, cats, tops, prevComparison] =
     await Promise.all([
-      netSpendTotals(account.id, period.from, period.to),
-      splitBridgeTotals(account.id, period.from, period.to),
-      reimbursementBridgeTotals(account.id, period.from, period.to),
-      triageStats(account.id, period.from, period.to),
-      categoryBreakdown(account.id, period.from, period.to),
+      loadPeriodTxnMetrics(account.id, period.from, period.to, userId),
+      reimbursementBridgeTotals(
+        account.id,
+        period.from,
+        period.to,
+        userId,
+      ),
+      categoryBreakdown(account.id, period.from, period.to, userId),
       topCounterparties(account.id, period.from, period.to, 8),
-      loadPreviousPeriodComparison(account.id, period, isStatementMode),
+      loadPreviousPeriodComparison(
+        account.id,
+        period,
+        isStatementMode,
+        userId,
+      ),
     ]);
+
+  const totals = {
+    totalDebitPaise: metrics.totalDebitPaise,
+    totalCreditPaise: metrics.totalCreditPaise,
+    netSelfPaise: metrics.txnNetSelfPaise + metrics.owedSelfPaise,
+    owedSelfPaise: metrics.owedSelfPaise,
+    count: metrics.count,
+  };
+  const bridge = {
+    personalDebitGrossPaise: metrics.personalDebitGrossPaise,
+    yourShareDebitPaise: metrics.yourShareDebitPaise,
+    othersSharePaise: metrics.othersSharePaise,
+    netCreditPaise: metrics.netCreditPaise,
+    splitTxnCount: metrics.splitTxnCount,
+  };
+  const triage = {
+    uncategorizedNetSelfPaise: metrics.uncategorizedNetSelfPaise,
+    uncategorizedCount: metrics.uncategorizedCount,
+    needsReviewCount: metrics.needsReviewCount,
+  };
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const refundCats = cats.filter((c) => c.netSelfPaise < 0);
@@ -311,6 +340,7 @@ async function loadPreviousPeriodComparison(
   accountId: string,
   period: { from: string | null; to: string | null },
   isStatementMode: boolean,
+  userId?: string | null,
 ) {
   if (!period.from || !period.to) return null;
 
@@ -326,13 +356,13 @@ async function loadPreviousPeriodComparison(
       })
       .from(schema.imports)
       .where(eq(schema.imports.accountId, accountId))
-      .orderBy(desc(schema.imports.createdAt));
+      .orderBy(desc(schema.imports.createdAt))
+      .limit(2);
 
     const idx = imports.findIndex(
       (i) => i.periodStart === period.from && i.periodEnd === period.to,
     );
-    const prev =
-      idx >= 0 ? imports[idx + 1] : imports.length > 1 ? imports[1] : null;
+    const prev = idx === 0 ? imports[1] : imports.length > 1 ? imports[1] : null;
     if (prev?.periodStart && prev?.periodEnd) {
       prevFrom = prev.periodStart;
       prevTo = prev.periodEnd;
@@ -350,7 +380,7 @@ async function loadPreviousPeriodComparison(
     label = shifted.label;
   }
 
-  const totals = await netSpendTotals(accountId, prevFrom, prevTo);
+  const totals = await netSpendTotals(accountId, prevFrom, prevTo, userId);
   return { totals, label };
 }
 

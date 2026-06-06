@@ -34,6 +34,43 @@ const netSelfExpr = sql<number>`
   end
 `;
 
+const yourShareDebitExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit'
+      then coalesce(
+        (select ${schema.splits.yourSharePaise} from ${schema.splits}
+         where ${schema.splits.transactionId} = ${schema.transactions.id}),
+        ${schema.transactions.amountPaise}
+      )
+    else 0
+  end
+`;
+
+const personalDebitGrossExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit'
+      then ${schema.transactions.amountPaise}
+    else 0
+  end
+`;
+
+const netCreditExpr = sql<number>`
+  case
+    when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'credit'
+      and exists (
+        select 1 from ${schema.settlements}
+        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      )
+      then 0
+    when ${schema.transactions.drCr} = 'credit'
+      then ${schema.transactions.amountPaise}
+    else 0
+  end
+`;
+
 export interface NetSpendTotals {
   totalDebitPaise: number;
   totalCreditPaise: number;
@@ -102,39 +139,109 @@ async function owedSpendByCategory(
   }));
 }
 
-export async function netSpendTotals(
+export interface PeriodTxnMetrics {
+  totalDebitPaise: number;
+  totalCreditPaise: number;
+  txnNetSelfPaise: number;
+  count: number;
+  personalDebitGrossPaise: number;
+  yourShareDebitPaise: number;
+  othersSharePaise: number;
+  netCreditPaise: number;
+  splitTxnCount: number;
+  uncategorizedNetSelfPaise: number;
+  uncategorizedCount: number;
+  needsReviewCount: number;
+  owedSelfPaise: number;
+}
+
+/** Single-pass period transaction metrics (net, bridge, triage). */
+export async function loadPeriodTxnMetrics(
   accountId: string,
   from: string | null,
   to: string | null,
-): Promise<NetSpendTotals> {
+  userId?: string | null,
+): Promise<PeriodTxnMetrics> {
   const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
-  const userId = account?.userId;
+  const resolvedUserId =
+    userId ??
+    (
+      await db
+        .select({ userId: schema.moneyAccounts.userId })
+        .from(schema.moneyAccounts)
+        .where(eq(schema.moneyAccounts.id, accountId))
+        .limit(1)
+    )[0]?.userId;
 
-  const [r, owedSelfPaise] = await Promise.all([
+  const [r, splitCountRow, owedSelfPaise] = await Promise.all([
     db
       .select({
         debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
         credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
         netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
         count: sql<number>`count(*)::int`,
+        personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
+        yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
+        netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
+        uncatNet: sql<number>`coalesce(sum(${netSelfExpr}) filter (where ${schema.transactions.categoryId} is null), 0)::bigint`,
+        uncatCount: sql<number>`count(*) filter (where ${schema.transactions.categoryId} is null)::int`,
+        reviewCount: sql<number>`count(*) filter (where ${schema.transactions.needsReview})::int`,
       })
       .from(schema.transactions)
       .where(where),
-    userId ? owedSelfPaiseForUser(userId, from, to) : Promise.resolve(0),
+    db
+      .select({
+        count: sql<number>`count(distinct ${schema.splits.transactionId})::int`,
+      })
+      .from(schema.splits)
+      .innerJoin(
+        schema.transactions,
+        eq(schema.splits.transactionId, schema.transactions.id),
+      )
+      .where(
+        and(
+          where,
+          eq(schema.transactions.drCr, "debit"),
+          eq(schema.transactions.isTransfer, false),
+        ),
+      ),
+    resolvedUserId
+      ? owedSelfPaiseForUser(resolvedUserId, from, to)
+      : Promise.resolve(0),
   ]);
 
-  const txnNetSelf = Number(r[0].netSelf);
+  const personalDebitGrossPaise = Number(r[0].personalDebitGross);
+  const yourShareDebitPaise = Number(r[0].yourShareDebit);
   return {
     totalDebitPaise: Number(r[0].debit),
     totalCreditPaise: Number(r[0].credit),
-    netSelfPaise: txnNetSelf + owedSelfPaise,
-    owedSelfPaise,
+    txnNetSelfPaise: Number(r[0].netSelf),
     count: r[0].count,
+    personalDebitGrossPaise,
+    yourShareDebitPaise,
+    othersSharePaise: personalDebitGrossPaise - yourShareDebitPaise,
+    netCreditPaise: Number(r[0].netCredit),
+    splitTxnCount: splitCountRow[0]?.count ?? 0,
+    uncategorizedNetSelfPaise: Number(r[0].uncatNet),
+    uncategorizedCount: r[0].uncatCount,
+    needsReviewCount: r[0].reviewCount,
+    owedSelfPaise,
+  };
+}
+
+export async function netSpendTotals(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+  userId?: string | null,
+): Promise<NetSpendTotals> {
+  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
+  return {
+    totalDebitPaise: m.totalDebitPaise,
+    totalCreditPaise: m.totalCreditPaise,
+    netSelfPaise: m.txnNetSelfPaise + m.owedSelfPaise,
+    owedSelfPaise: m.owedSelfPaise,
+    count: m.count,
   };
 }
 
@@ -153,13 +260,18 @@ export async function categoryBreakdown(
   accountId: string,
   from: string | null,
   to: string | null,
+  userId?: string | null,
 ): Promise<CategoryRow[]> {
   const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
+  const resolvedUserId =
+    userId ??
+    (
+      await db
+        .select({ userId: schema.moneyAccounts.userId })
+        .from(schema.moneyAccounts)
+        .where(eq(schema.moneyAccounts.id, accountId))
+        .limit(1)
+    )[0]?.userId;
 
   const rows = await db
     .select({
@@ -183,8 +295,8 @@ export async function categoryBreakdown(
     count: r.count,
   }));
 
-  const owedRows = account?.userId
-    ? await owedSpendByCategory(account.userId, from, to)
+  const owedRows = resolvedUserId
+    ? await owedSpendByCategory(resolvedUserId, from, to)
     : [];
 
   const merged = new Map<string, CategoryRow>();
@@ -288,43 +400,6 @@ export async function topCounterparties(
     .slice(0, limit);
 }
 
-const yourShareDebitExpr = sql<number>`
-  case
-    when ${schema.transactions.isTransfer} = true then 0
-    when ${schema.transactions.drCr} = 'debit'
-      then coalesce(
-        (select ${schema.splits.yourSharePaise} from ${schema.splits}
-         where ${schema.splits.transactionId} = ${schema.transactions.id}),
-        ${schema.transactions.amountPaise}
-      )
-    else 0
-  end
-`;
-
-const personalDebitGrossExpr = sql<number>`
-  case
-    when ${schema.transactions.isTransfer} = true then 0
-    when ${schema.transactions.drCr} = 'debit'
-      then ${schema.transactions.amountPaise}
-    else 0
-  end
-`;
-
-const netCreditExpr = sql<number>`
-  case
-    when ${schema.transactions.isTransfer} = true then 0
-    when ${schema.transactions.drCr} = 'credit'
-      and exists (
-        select 1 from ${schema.settlements}
-        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
-      )
-      then 0
-    when ${schema.transactions.drCr} = 'credit'
-      then ${schema.transactions.amountPaise}
-    else 0
-  end
-`;
-
 export interface SplitBridgeTotals {
   personalDebitGrossPaise: number;
   yourShareDebitPaise: number;
@@ -338,43 +413,15 @@ export async function splitBridgeTotals(
   accountId: string,
   from: string | null,
   to: string | null,
+  userId?: string | null,
 ): Promise<SplitBridgeTotals> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [r, splitCountRow] = await Promise.all([
-    db
-      .select({
-        personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
-        yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
-        netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
-      })
-      .from(schema.transactions)
-      .where(where),
-    db
-      .select({
-        count: sql<number>`count(distinct ${schema.splits.transactionId})::int`,
-      })
-      .from(schema.splits)
-      .innerJoin(
-        schema.transactions,
-        eq(schema.splits.transactionId, schema.transactions.id),
-      )
-      .where(
-        and(
-          where,
-          eq(schema.transactions.drCr, "debit"),
-          eq(schema.transactions.isTransfer, false),
-        ),
-      ),
-  ]);
-
-  const personalDebitGrossPaise = Number(r[0].personalDebitGross);
-  const yourShareDebitPaise = Number(r[0].yourShareDebit);
+  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
   return {
-    personalDebitGrossPaise,
-    yourShareDebitPaise,
-    othersSharePaise: personalDebitGrossPaise - yourShareDebitPaise,
-    netCreditPaise: Number(r[0].netCredit),
-    splitTxnCount: splitCountRow[0]?.count ?? 0,
+    personalDebitGrossPaise: m.personalDebitGrossPaise,
+    yourShareDebitPaise: m.yourShareDebitPaise,
+    othersSharePaise: m.othersSharePaise,
+    netCreditPaise: m.netCreditPaise,
+    splitTxnCount: m.splitTxnCount,
   };
 }
 
@@ -388,27 +435,13 @@ export async function triageStats(
   accountId: string,
   from: string | null,
   to: string | null,
+  userId?: string | null,
 ): Promise<TriageStats> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [uncat] = await db
-    .select({
-      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(schema.transactions)
-    .where(and(where, isNull(schema.transactions.categoryId)));
-
-  const [review] = await db
-    .select({
-      count: sql<number>`count(*)::int`,
-    })
-    .from(schema.transactions)
-    .where(and(where, eq(schema.transactions.needsReview, true)));
-
+  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
   return {
-    uncategorizedNetSelfPaise: Number(uncat.netSelf),
-    uncategorizedCount: uncat.count,
-    needsReviewCount: review.count,
+    uncategorizedNetSelfPaise: m.uncategorizedNetSelfPaise,
+    uncategorizedCount: m.uncategorizedCount,
+    needsReviewCount: m.needsReviewCount,
   };
 }
 
