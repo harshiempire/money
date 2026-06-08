@@ -2,8 +2,19 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageShell } from "@/components/PageShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
+import { Alert } from "@/components/ui/Alert";
+import { MetricHero } from "@/components/ui/MetricHero";
+import { Section } from "@/components/ui/Section";
+import { Stat } from "@/components/ui/Stat";
+import {
+  DataTable,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeaderCell,
+  DataTableRow,
+} from "@/components/ui/DataTable";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import {
@@ -285,35 +296,49 @@ export default async function ReimbursementsPage({
   const settledSplits = splitSummaries.filter((s) => s.status === "settled");
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Reimbursements</h1>
-        <AppNav current="/reimbursements" />
-      </header>
-
-      <p className="mt-1 text-xs text-neutral-500">
-        Reimbursements for splits in the selected period. Settle inflows from{" "}
-        <a className="underline" href="/transactions">
-          Transactions
-        </a>
-        , record cash directly here, or use net settle for GPay-style offsets.{" "}
-        <a className="underline" href="/people">
-          People
-        </a>{" "}
-        shows all-time balances.{" "}
-        <a className="underline" href={spendPeriodHref(sp)}>
-          Spend report
-        </a>
-      </p>
-
-      <div className="mt-3">
+    <PageShell
+      title="Reimbursements"
+      description={
+        <>
+          Splits in the selected period. For all-time balances see{" "}
+          <a className="underline" href="/people">
+            People
+          </a>
+          .{" "}
+          <a className="underline" href={spendPeriodHref(sp)}>
+            Spend report
+          </a>
+        </>
+      }
+      actions={
         <PureOffsetNetSettleButton
           receivables={openReceivables}
           payables={openPayables}
           categories={categoryOptions}
           knownPersonNames={knownPersonNames}
         />
-      </div>
+      }
+    >
+      <Alert variant="info" className="mt-4" title="How settlement works">
+        <ol className="list-decimal space-y-1 pl-4">
+          <li>
+            <strong className="font-medium">Bank inflow</strong> — link the
+            payment to a split on{" "}
+            <a className="underline" href="/transactions">
+              Transactions
+            </a>
+            .
+          </li>
+          <li>
+            <strong className="font-medium">Cash payback</strong> — record it
+            here on an open split or in the table below.
+          </li>
+          <li>
+            <strong className="font-medium">Net settle</strong> — offset what
+            someone owes you against what you owe them (GPay-style).
+          </li>
+        </ol>
+      </Alert>
 
       <SpendPeriodPicker
         resolved={resolved}
@@ -322,27 +347,88 @@ export default async function ReimbursementsPage({
         statementPeriods={statements}
       />
 
-      <section className="mt-6">
-        <div className="text-xs uppercase tracking-wide text-neutral-500">
-          Outstanding · {period.label}
-        </div>
-        <div className="mt-1 font-mono text-3xl">
-          {formatPaise(totalOutstanding)}
-        </div>
-        <p className="mt-1 text-xs text-neutral-500">
-          {outstanding.length} participant
-          {outstanding.length === 1 ? "" : "s"} across {splitsRaw.length} split
-          {splitsRaw.length === 1 ? "" : "s"}.
-        </p>
-      </section>
+      <MetricHero
+        label={`Outstanding · ${period.label}`}
+        value={formatPaise(totalOutstanding)}
+        tone={totalOutstanding > 0 ? "debit" : "neutral"}
+        meta={
+          <span>
+            {outstanding.length} participant
+            {outstanding.length === 1 ? "" : "s"} across {splitsRaw.length}{" "}
+            split{splitsRaw.length === 1 ? "" : "s"}
+          </span>
+        }
+      />
+
+      {buckets.size > 0 && (
+        <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {["0–7 days", "8–30 days", "31–60 days", "60+ days"].map((label) => {
+            const b = buckets.get(label);
+            return (
+              <Stat
+                key={label}
+                label={label}
+                value={b ? formatPaise(b.total) : "—"}
+                sub={b ? `${b.count} pending` : "none"}
+                tone={b && b.total > 0 ? "receivable" : "default"}
+              />
+            );
+          })}
+        </section>
+      )}
+
+      {byPerson.length > 0 && (
+        <Section
+          title="By person"
+          description="Who owes you the most in this period."
+          className="mt-8"
+        >
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <DataTableHeaderCell>Person</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Outstanding</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Open splits</DataTableHeaderCell>
+              </tr>
+            </DataTableHead>
+            <tbody>
+              {byPerson.map((p) => (
+                <DataTableRow key={p.groupKey}>
+                  <DataTableCell className="font-medium">
+                    {p.groupKey.startsWith("person:") ? (
+                      <a
+                        href={`/people/${encodeURIComponent(p.groupKey.replace("person:", ""))}`}
+                        className="hover:underline"
+                      >
+                        {p.displayName}
+                      </a>
+                    ) : (
+                      p.displayName
+                    )}
+                  </DataTableCell>
+                  <DataTableCell
+                    align="right"
+                    className="font-mono text-sm text-receivable"
+                  >
+                    {formatPaise(p.outstandingPaise)}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="text-xs text-neutral-500">
+                    {p.openCount}
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+            </tbody>
+          </DataTable>
+        </Section>
+      )}
 
       {openSplits.length > 0 && (
-        <section className="mt-6">
-          <h2 className="text-sm font-semibold">Splits awaiting reimbursement</h2>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            Expand a split to see who still owes you and record cash paybacks.
-          </p>
-          <ul className="mt-3 space-y-2">
+        <Section
+          title="Splits awaiting reimbursement"
+          description="Expand a split to see who still owes you and record cash paybacks."
+          className="mt-8"
+        >
+          <ul className="space-y-2">
             {openSplits.map((s) => (
               <li key={s.splitId}>
                 <SplitAwaitingItem
@@ -373,14 +459,14 @@ export default async function ReimbursementsPage({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {settledSplits.length > 0 && (
-        <section className="mt-6">
-          <h2 className="text-sm font-semibold text-neutral-500">
-            Fully settled splits ({settledSplits.length})
-          </h2>
+        <Section
+          title={`Fully settled splits (${settledSplits.length})`}
+          className="mt-8"
+        >
           <ul className="mt-2 space-y-1 text-xs text-neutral-500">
             {settledSplits.map((s) => (
               <li key={s.splitId} className="flex flex-wrap items-center gap-2">
@@ -402,112 +488,53 @@ export default async function ReimbursementsPage({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
-      {byPerson.length > 0 && (
-        <section className="mt-6">
-          <h2 className="text-sm font-semibold">By person</h2>
-          <table className="mt-3 w-full border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-neutral-500">
-                <th className="py-2 pr-3">Person</th>
-                <th className="py-2 pr-3 text-right">Outstanding</th>
-                <th className="py-2 pr-3 text-right">Open splits</th>
-              </tr>
-            </thead>
-            <tbody>
-              {byPerson.map((p) => (
-                <tr
-                  key={p.groupKey}
-                  className="border-t border-neutral-200 dark:border-neutral-800"
-                >
-                  <td className="py-2 pr-3 font-medium">
-                    {p.groupKey.startsWith("person:") ? (
-                      <a
-                        href={`/people/${encodeURIComponent(p.groupKey.replace("person:", ""))}`}
-                        className="hover:underline"
-                      >
-                        {p.displayName}
-                      </a>
-                    ) : (
-                      p.displayName
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
-                    {formatPaise(p.outstandingPaise)}
-                  </td>
-                  <td className="py-2 pr-3 text-right text-xs text-neutral-500">
-                    {p.openCount}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      {buckets.size > 0 && (
-        <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          {["0–7 days", "8–30 days", "31–60 days", "60+ days"].map((label) => {
-            const b = buckets.get(label);
-            return (
-              <div
-                key={label}
-                className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-              >
-                <div className="text-xs uppercase text-neutral-500">{label}</div>
-                <div className="mt-1 font-mono text-base">
-                  {b ? formatPaise(b.total) : "—"}
-                </div>
-                <div className="text-[10px] text-neutral-500">
-                  {b ? `${b.count} pending` : "none"}
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      )}
-
-      <section className="mt-8">
-        <h2 className="text-lg font-semibold">Outstanding</h2>
+      <Section
+        title="All outstanding participants"
+        description="Full list sorted by age. Use Record cash for offline paybacks."
+        className="mt-8"
+      >
         {outstanding.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-500">
+          <p className="text-sm text-neutral-500">
             Nothing pending. {rows.length === 0 && "No splits recorded yet."}
           </p>
         ) : (
-          <table className="mt-3 w-full border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-neutral-500">
-                <th className="py-2 pr-3">Person</th>
-                <th className="py-2 pr-3">Split</th>
-                <th className="py-2 pr-3 text-right">Expected</th>
-                <th className="py-2 pr-3 text-right">Settled</th>
-                <th className="py-2 pr-3 text-right">Outstanding</th>
-                <th className="py-2 pr-3 text-right">Age</th>
-                <th className="py-2 pr-3 text-right">Action</th>
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <DataTableHeaderCell>Person</DataTableHeaderCell>
+                <DataTableHeaderCell>Split</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Expected</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Settled</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Outstanding</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Age</DataTableHeaderCell>
+                <DataTableHeaderCell align="right">Action</DataTableHeaderCell>
               </tr>
-            </thead>
+            </DataTableHead>
             <tbody>
               {outstanding
                 .slice()
                 .sort((a, b) => b.ageDays - a.ageDays)
                 .map((r) => (
-                  <tr
-                    key={r.participantId}
-                    className="border-t border-neutral-200 dark:border-neutral-800"
-                  >
-                    <td className="py-2 pr-3 font-medium">{r.personName}</td>
-                    <td className="py-2 pr-3 text-xs text-neutral-500">
+                  <DataTableRow key={r.participantId}>
+                    <DataTableCell className="font-medium">
+                      {r.personName}
+                    </DataTableCell>
+                    <DataTableCell className="text-xs text-neutral-500">
                       {formatDate(r.txnDate)} · {r.txnDescription}
-                    </td>
-                    <td className="py-2 pr-3 text-right font-mono text-xs">
+                    </DataTableCell>
+                    <DataTableCell align="right" className="font-mono text-xs">
                       {formatPaise(r.expectedPaise)}
-                    </td>
-                    <td className="py-2 pr-3 text-right font-mono text-xs text-neutral-500">
+                    </DataTableCell>
+                    <DataTableCell
+                      align="right"
+                      className="font-mono text-xs text-neutral-500"
+                    >
                       <div>{formatPaise(r.settledPaise)}</div>
                       {(r.bankSettledPaise > 0 || r.cashSettledPaise > 0) && (
-                        <div className="mt-0.5 font-sans text-[10px] text-neutral-500">
+                        <div className="mt-0.5 font-sans text-[10px]">
                           {r.bankSettledPaise > 0 &&
                             `${formatPaise(r.bankSettledPaise)} bank`}
                           {r.bankSettledPaise > 0 &&
@@ -517,33 +544,33 @@ export default async function ReimbursementsPage({
                             `${formatPaise(r.cashSettledPaise)} cash`}
                         </div>
                       )}
-                    </td>
-                    <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
+                    </DataTableCell>
+                    <DataTableCell
+                      align="right"
+                      className="font-mono text-sm text-receivable"
+                    >
                       {formatPaise(r.outstandingPaise)}
-                    </td>
-                    <td className="py-2 pr-3 text-right text-xs text-neutral-500">
+                    </DataTableCell>
+                    <DataTableCell align="right" className="text-xs text-neutral-500">
                       {r.ageDays}d
-                    </td>
-                    <td className="py-2 pr-3 text-right">
+                    </DataTableCell>
+                    <DataTableCell align="right">
                       <CashSettlementButton
                         splitParticipantId={r.participantId}
                         personName={r.personName}
                         outstandingPaise={r.outstandingPaise}
                         cashSettlements={r.cashSettlements}
                       />
-                    </td>
-                  </tr>
+                    </DataTableCell>
+                  </DataTableRow>
                 ))}
             </tbody>
-          </table>
+          </DataTable>
         )}
-      </section>
+      </Section>
 
       {settled.length > 0 && (
-        <section className="mt-10">
-          <h2 className="text-sm font-semibold text-neutral-500">
-            Settled ({settled.length})
-          </h2>
+        <Section title={`Settled (${settled.length})`} className="mt-10">
           <ul className="mt-2 space-y-1 text-xs text-neutral-500">
             {settled.map((r) => (
               <li
@@ -577,8 +604,8 @@ export default async function ReimbursementsPage({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
-    </main>
+    </PageShell>
   );
 }

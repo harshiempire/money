@@ -1,6 +1,8 @@
+import { ChevronDown } from "lucide-react";
 import { formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
+import { cn } from "@/lib/cn";
 import {
   CashSettlementButton,
   type CashSettlement,
@@ -48,11 +50,10 @@ function splitStatusLabel(status: SplitSettlementStatus): string {
 function splitStatusTone(status: SplitSettlementStatus): string {
   switch (status) {
     case "settled":
-      return "text-emerald-700 dark:text-emerald-400";
+      return "text-credit";
     case "partial":
-      return "text-amber-800 dark:text-amber-400";
     case "open":
-      return "text-amber-800 dark:text-amber-400";
+      return "text-receivable";
     default:
       return "text-neutral-500";
   }
@@ -79,46 +80,53 @@ export function SplitAwaitingItem({
   });
 
   return (
-    <details className="group rounded border border-neutral-200 dark:border-neutral-800">
-      <summary className="cursor-pointer list-none px-3 py-2 [&::-webkit-details-marker]:hidden">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-          <div className="min-w-0 flex-1">
-            <div className="font-medium">
-              {formatDate(txnDate)} · {txnDescription}
-            </div>
-            {txnNote && (
-              <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
-                {txnNote}
+    <details className="group overflow-hidden rounded-lg border border-border-subtle bg-surface-raised shadow-[var(--shadow-card)]">
+      <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <div className="flex items-start gap-3">
+          <ChevronDown
+            size={16}
+            className="mt-0.5 shrink-0 text-neutral-400 transition-transform group-open:rotate-180"
+          />
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-2 text-sm">
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">
+                {formatDate(txnDate)} · {txnDescription}
               </div>
-            )}
-            <div
-              className={`mt-0.5 text-xs ${splitStatusTone(status)}`}
-            >
-              {splitStatusLabel(status)} · {settledParticipantCount}/
-              {totalParticipantCount} paid ·{" "}
-              <span className="text-neutral-500 group-open:hidden">
-                Tap for who owes what
-              </span>
+              {txnNote && (
+                <div className="mt-0.5 text-xs italic text-receivable">
+                  {txnNote}
+                </div>
+              )}
+              <div className={cn("mt-0.5 text-xs", splitStatusTone(status))}>
+                {splitStatusLabel(status)} · {settledParticipantCount}/
+                {totalParticipantCount} paid
+                <span className="text-neutral-500 group-open:hidden">
+                  {" "}
+                  · expand for details
+                </span>
+              </div>
             </div>
-          </div>
-          <div className="text-right font-mono text-sm">
-            <div className="text-amber-700 dark:text-amber-400">
-              {formatPaise(outstandingReimbursePaise)} pending
-            </div>
-            <div className="text-[10px] font-sans text-neutral-500">
-              {formatPaise(settledReimbursePaise)} of{" "}
-              {formatPaise(expectedReimbursePaise)} received
+            <div className="text-right font-mono text-sm">
+              <div className="text-receivable">
+                {formatPaise(outstandingReimbursePaise)} pending
+              </div>
+              <div className="text-[10px] font-sans text-neutral-500">
+                {formatPaise(settledReimbursePaise)} of{" "}
+                {formatPaise(expectedReimbursePaise)} received
+              </div>
             </div>
           </div>
         </div>
       </summary>
 
-      <div className="border-t border-neutral-200 px-3 py-2 dark:border-neutral-800">
+      <div className="border-t border-border-subtle bg-surface-muted/40 px-4 py-3">
         <div className="mb-2 flex items-center justify-between gap-2 text-xs">
-          <span className="text-neutral-500">Who owes what</span>
+          <span className="font-medium text-neutral-600 dark:text-neutral-400">
+            Who owes what
+          </span>
           <a
             href={transactionHref(txnId)}
-            className="underline-offset-2 hover:underline"
+            className="text-neutral-500 underline-offset-2 hover:underline"
           >
             View transaction →
           </a>
@@ -129,7 +137,7 @@ export function SplitAwaitingItem({
             return (
               <li
                 key={p.participantId}
-                className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 rounded bg-neutral-50 px-2 py-1.5 text-sm dark:bg-neutral-900/50"
+                className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-sm"
               >
                 <div className="min-w-0">
                   <div className="font-medium">{p.personName}</div>
@@ -154,12 +162,10 @@ export function SplitAwaitingItem({
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {paid ? (
-                    <span className="text-xs text-emerald-700 dark:text-emerald-400">
-                      Paid
-                    </span>
+                    <span className="text-xs text-credit">Paid</span>
                   ) : (
                     <>
-                      <span className="font-mono text-xs text-amber-700 dark:text-amber-400">
+                      <span className="font-mono text-xs text-receivable">
                         {formatPaise(p.outstandingPaise)} owed
                       </span>
                       <CashSettlementButton

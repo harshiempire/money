@@ -1,4 +1,7 @@
 import { PRESET_PERIODS } from "@/lib/period";
+import { buttonLinkClass } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { cn } from "@/lib/cn";
 import {
   adjacentMonthHref,
   spendPeriodHref,
@@ -45,7 +48,7 @@ export function SpendPeriodPicker({
           {prevHref ? (
             <a
               href={prevHref}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
+              className={buttonLinkClass()}
             >
               ←
             </a>
@@ -61,7 +64,7 @@ export function SpendPeriodPicker({
           {nextHref ? (
             <a
               href={nextHref}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
+              className={buttonLinkClass()}
             >
               →
             </a>
@@ -85,37 +88,29 @@ export function SpendPeriodPicker({
           <a
             key={key}
             href={href({ preset: key })}
-            className={`rounded border px-2 py-1 ${
-              sp.preset === key ||
-              (key === "this_month" && isThisMonth)
-                ? "border-neutral-900 dark:border-neutral-100"
-                : "border-neutral-300 dark:border-neutral-700"
-            }`}
+            className={buttonLinkClass(
+              sp.preset === key || (key === "this_month" && isThisMonth),
+            )}
           >
             {PRESET_PERIODS[key]().label}
           </a>
         ))}
         <a
           href={href({ statement: "1" })}
-          className={`rounded border px-2 py-1 ${
-            mode === "statement"
-              ? "border-neutral-900 dark:border-neutral-100"
-              : "border-neutral-300 dark:border-neutral-700"
-          }`}
+          className={buttonLinkClass(mode === "statement")}
         >
           Statement
         </a>
       </div>
 
-      <form
-        method="get"
-        action={basePath}
-        className={`mx-auto flex max-w-md flex-wrap items-end justify-center gap-3 rounded border p-3 text-sm ${
-          isCustomRange
-            ? "border-neutral-900 dark:border-neutral-100"
-            : "border-neutral-200 dark:border-neutral-800"
-        }`}
-      >
+      <form method="get" action={basePath} className="mx-auto max-w-md">
+        <Card
+          padding="sm"
+          className={cn(
+            "flex flex-wrap items-end justify-center gap-3 text-sm",
+            isCustomRange && "ring-1 ring-accent/30",
+          )}
+        >
         <label className="flex flex-col">
           <span className="text-xs uppercase text-neutral-500">From</span>
           <input
@@ -137,7 +132,7 @@ export function SpendPeriodPicker({
         <div className="flex items-center gap-2">
           <button
             type="submit"
-            className="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
           >
             Apply
           </button>
@@ -150,6 +145,7 @@ export function SpendPeriodPicker({
             </a>
           )}
         </div>
+        </Card>
       </form>
 
       {statementPeriods.length > 1 && (

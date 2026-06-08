@@ -19,7 +19,7 @@ export function RegisterForm() {
           name="name"
           type="text"
           autoComplete="name"
-          className="mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="mt-1 w-full rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm"
         />
       </div>
       <div>
@@ -32,7 +32,7 @@ export function RegisterForm() {
           type="email"
           autoComplete="email"
           required
-          className="mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="mt-1 w-full rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm"
         />
       </div>
       <div>
@@ -46,7 +46,7 @@ export function RegisterForm() {
           autoComplete="new-password"
           required
           minLength={12}
-          className="mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="mt-1 w-full rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm"
         />
         <p className="mt-1 text-xs text-neutral-500">At least 12 characters</p>
       </div>
@@ -61,7 +61,7 @@ export function RegisterForm() {
           autoComplete="new-password"
           required
           minLength={12}
-          className="mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="mt-1 w-full rounded-md border border-border-default bg-surface-raised px-3 py-2 text-sm"
         />
       </div>
       {state.error && (
@@ -72,7 +72,7 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+        className="w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
       >
         {pending ? "Creating account…" : "Create account"}
       </button>
