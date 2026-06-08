@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PRESET_PERIODS } from "@/lib/period";
 import {
   adjacentMonthHref,
@@ -5,6 +6,8 @@ import {
   type ResolvedSpendPeriod,
   type SpendSearchParams,
 } from "@/lib/spend/period";
+import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/Button";
 
 export function SpendPeriodPicker({
   resolved,
@@ -39,32 +42,26 @@ export function SpendPeriodPicker({
   const presetKeys = Object.keys(PRESET_PERIODS);
 
   return (
-    <div className="mt-6 space-y-3">
+    <div className="space-y-4">
       {mode === "month" && monthKey && (
         <div className="flex items-center justify-center gap-4">
           {prevHref ? (
-            <a
-              href={prevHref}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
-            >
-              ←
-            </a>
+            <Link href={prevHref}>
+              <Button variant="outline" size="sm">←</Button>
+            </Link>
           ) : (
             <span className="w-10" />
           )}
           <div className="text-center">
-            <div className="font-medium">{period.label}</div>
+            <div className="font-semibold text-[var(--color-text)]">{period.label}</div>
             {isPartial && (
-              <div className="text-xs text-neutral-500">Month in progress</div>
+              <div className="text-xs text-[var(--color-text-muted)]">Month in progress</div>
             )}
           </div>
           {nextHref ? (
-            <a
-              href={nextHref}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
-            >
-              →
-            </a>
+            <Link href={nextHref}>
+              <Button variant="outline" size="sm">→</Button>
+            </Link>
           ) : (
             <span className="w-10" />
           )}
@@ -72,89 +69,74 @@ export function SpendPeriodPicker({
       )}
 
       {mode !== "month" && (
-        <div className="text-center font-mono text-sm text-neutral-700 dark:text-neutral-300">
+        <div className="text-center font-mono text-sm text-[var(--color-text-secondary)]">
           {period.label}
           {isPartial && (
-            <span className="ml-2 text-xs text-neutral-500">(in progress)</span>
+            <span className="ml-2 text-xs text-[var(--color-text-muted)]">(in progress)</span>
           )}
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
         {presetKeys.map((key) => (
-          <a
+          <PeriodChip
             key={key}
             href={href({ preset: key })}
-            className={`rounded border px-2 py-1 ${
-              sp.preset === key ||
-              (key === "this_month" && isThisMonth)
-                ? "border-neutral-900 dark:border-neutral-100"
-                : "border-neutral-300 dark:border-neutral-700"
-            }`}
-          >
-            {PRESET_PERIODS[key]().label}
-          </a>
+            active={sp.preset === key || (key === "this_month" && isThisMonth)}
+            label={PRESET_PERIODS[key]().label}
+          />
         ))}
-        <a
+        <PeriodChip
           href={href({ statement: "1" })}
-          className={`rounded border px-2 py-1 ${
-            mode === "statement"
-              ? "border-neutral-900 dark:border-neutral-100"
-              : "border-neutral-300 dark:border-neutral-700"
-          }`}
-        >
-          Statement
-        </a>
+          active={mode === "statement"}
+          label="Statement"
+        />
       </div>
 
       <form
         method="get"
         action={basePath}
-        className={`mx-auto flex max-w-md flex-wrap items-end justify-center gap-3 rounded border p-3 text-sm ${
+        className={cn(
+          "mx-auto flex max-w-md flex-wrap items-end justify-center gap-3 rounded-[var(--radius-lg)] border p-4 text-sm",
           isCustomRange
-            ? "border-neutral-900 dark:border-neutral-100"
-            : "border-neutral-200 dark:border-neutral-800"
-        }`}
+            ? "border-[var(--color-accent)] bg-[var(--color-accent-muted)]/20"
+            : "border-[var(--color-border)] bg-[var(--color-surface-raised)]",
+        )}
       >
         <label className="flex flex-col">
-          <span className="text-xs uppercase text-neutral-500">From</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">From</span>
           <input
             type="date"
             name="from"
             defaultValue={period.from ?? sp.from ?? ""}
-            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-xs dark:border-neutral-700"
+            className="mt-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2.5 py-1.5 text-xs focus-ring"
           />
         </label>
         <label className="flex flex-col">
-          <span className="text-xs uppercase text-neutral-500">To</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">To</span>
           <input
             type="date"
             name="to"
             defaultValue={period.to ?? sp.to ?? ""}
-            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-xs dark:border-neutral-700"
+            className="mt-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-2.5 py-1.5 text-xs focus-ring"
           />
         </label>
         <div className="flex items-center gap-2">
-          <button
-            type="submit"
-            className="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
-          >
-            Apply
-          </button>
+          <Button type="submit" size="sm">Apply</Button>
           {isCustomRange && (
-            <a
+            <Link
               href={href({})}
-              className="text-xs text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
+              className="text-xs text-[var(--color-text-secondary)] underline-offset-2 hover:underline"
             >
               Clear
-            </a>
+            </Link>
           )}
         </div>
       </form>
 
       {statementPeriods.length > 1 && (
-        <details className="text-xs text-neutral-500">
-          <summary className="cursor-pointer text-center">
+        <details className="text-xs text-[var(--color-text-muted)]">
+          <summary className="cursor-pointer text-center font-medium hover:text-[var(--color-text)]">
             Past statement periods
           </summary>
           <ul className="mt-2 space-y-1 text-center">
@@ -163,15 +145,19 @@ export function SpendPeriodPicker({
                 period.from === s.periodStart && period.to === s.periodEnd;
               return (
                 <li key={`${s.periodStart}-${s.periodEnd}`}>
-                  <a
+                  <Link
                     href={href({
                       from: s.periodStart,
                       to: s.periodEnd,
                     })}
-                    className={active ? "font-medium text-neutral-900 dark:text-neutral-100" : "underline"}
+                    className={cn(
+                      active
+                        ? "font-semibold text-[var(--color-accent)]"
+                        : "text-[var(--color-text-secondary)] underline underline-offset-2 hover:text-[var(--color-text)]",
+                    )}
                   >
                     {s.periodStart} → {s.periodEnd}
-                  </a>
+                  </Link>
                 </li>
               );
             })}
@@ -179,5 +165,29 @@ export function SpendPeriodPicker({
         </details>
       )}
     </div>
+  );
+}
+
+function PeriodChip({
+  href,
+  active,
+  label,
+}: {
+  href: string;
+  active: boolean;
+  label: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+        active
+          ? "bg-[var(--color-accent)] text-white"
+          : "bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+      )}
+    >
+      {label}
+    </Link>
   );
 }

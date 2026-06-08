@@ -1,8 +1,13 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { getPersonDetail } from "@/lib/people/ledger";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Stat, StatGrid } from "@/components/ui/Stat";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Money } from "@/components/ui/Money";
 
 export const dynamic = "force-dynamic";
 
@@ -17,118 +22,102 @@ export default async function PersonDetailPage({
   if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{detail.personName}</h1>
-        <AppNav current="/people" />
-      </header>
+    <>
+      <PageHeader title={detail.personName}>
+        <Link href="/people">
+          <Button variant="outline" size="sm">← All people</Button>
+        </Link>
+      </PageHeader>
 
-      <p className="mt-1 text-xs text-neutral-500">
-        <a href="/people" className="underline">
-          ← All people
-        </a>
-      </p>
-
-      <section className="mt-6 grid gap-3 sm:grid-cols-3">
+      <StatGrid>
         <Stat
           label="They owe me"
           value={formatPaise(detail.receivableOutstandingPaise)}
+          tone="warning"
         />
         <Stat
           label="I owe them"
           value={formatPaise(detail.payableOutstandingPaise)}
+          tone="neutral"
         />
         <Stat
           label="Net"
           value={`${formatPaise(Math.abs(detail.netPaise))}${detail.netPaise < 0 ? " (you owe)" : ""}`}
+          tone={detail.netPaise >= 0 ? "warning" : "neutral"}
         />
-      </section>
+      </StatGrid>
 
       {detail.receivables.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Open receivables</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Card className="mt-6">
+          <CardHeader title="Open receivables" />
+          <ul className="mt-4 space-y-2 text-sm">
             {detail.receivables.map((r) => (
               <li
                 key={r.participantId}
-                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="flex flex-wrap items-baseline justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-overlay)]/30 p-3"
               >
                 <span>
-                  {formatDate(r.txnDate)} ·{" "}
-                  {counterpartyLabel(r.txnDescription)}
+                  {formatDate(r.txnDate)} · {counterpartyLabel(r.txnDescription)}
                 </span>
-                <span className="font-mono text-xs text-amber-700 dark:text-amber-400">
-                  {formatPaise(r.outstandingPaise)} outstanding
-                </span>
+                <Money paise={r.outstandingPaise} size="sm" className="text-[var(--color-warning)]" />
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
 
       {detail.payables.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Open payables</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Card className="mt-6">
+          <CardHeader title="Open payables" />
+          <ul className="mt-4 space-y-2 text-sm">
             {detail.payables.map((p) => (
               <li
                 key={p.owedExpenseId}
-                className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="flex flex-wrap items-baseline justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-overlay)]/30 p-3"
               >
                 <span>
                   {formatDate(p.incurredDate)} · {p.description}
                   {p.categoryName && (
-                    <span className="ml-1 text-xs text-neutral-500">
+                    <span className="ml-1 text-xs text-[var(--color-text-muted)]">
                       ({p.categoryName})
                     </span>
                   )}
                 </span>
-                <span className="font-mono text-xs text-sky-700 dark:text-sky-400">
-                  {formatPaise(p.outstandingPaise)} outstanding
-                </span>
+                <Money paise={p.outstandingPaise} size="sm" className="text-[var(--color-info)]" />
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
 
       {detail.netEvents.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-semibold">Net settle history</h2>
-          <ul className="mt-3 space-y-2 text-sm">
+        <Card className="mt-6">
+          <CardHeader title="Net settle history" />
+          <ul className="mt-4 space-y-2 text-sm">
             {detail.netEvents.map((e) => (
               <li
                 key={e.netEventId}
-                className="rounded border border-neutral-200 p-2 dark:border-neutral-800"
+                className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
               >
                 <div className="font-medium">
                   {formatDate(e.eventDate)} · Net settled
                 </div>
-                <div className="mt-1 text-xs text-neutral-500">
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
                   Receivable {formatPaise(e.receivablePaise)} · Payable{" "}
                   {formatPaise(e.payablePaise)}
                   {e.bankDeltaPaise !== 0 &&
                     ` · Bank delta ${formatPaise(Math.abs(e.bankDeltaPaise))}`}
                 </div>
                 {e.note && (
-                  <div className="mt-1 text-xs italic text-neutral-500">
+                  <div className="mt-1 text-xs italic text-[var(--color-text-muted)]">
                     {e.note}
                   </div>
                 )}
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
-    </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className="mt-1 font-mono text-lg">{value}</div>
-    </div>
+    </>
   );
 }

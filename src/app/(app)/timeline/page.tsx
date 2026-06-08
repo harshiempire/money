@@ -2,7 +2,9 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Stat, StatGrid } from "@/components/ui/Stat";
+import { Card, CardHeader } from "@/components/ui/Card";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { dailyClosingBalance } from "@/domain/spend/net";
 import {
@@ -67,11 +69,11 @@ export default async function TimelinePage({
     opening != null && closing != null ? closing - opening : null;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Timeline</h1>
-        <AppNav current="/timeline" />
-      </header>
+    <>
+      <PageHeader
+        title="Timeline"
+        description="Account balance over time and largest transactions in the period"
+      />
 
       <SpendPeriodPicker
         resolved={resolved}
@@ -86,9 +88,9 @@ export default async function TimelinePage({
         </p>
       ) : (
         <>
-          <section className="mt-6 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-            <Stat label="Opening" value={formatPaise(opening)} />
-            <Stat label="Closing" value={formatPaise(closing)} />
+          <StatGrid className="mt-6">
+            <Stat label="Opening" value={formatPaise(opening ?? 0)} />
+            <Stat label="Closing" value={formatPaise(closing ?? 0)} />
             <Stat
               label="Delta"
               value={
@@ -98,20 +100,20 @@ export default async function TimelinePage({
               }
               tone={delta == null ? undefined : delta >= 0 ? "credit" : "debit"}
             />
-          </section>
+          </StatGrid>
 
-          <section className="mt-6 rounded border border-neutral-200 p-4 dark:border-neutral-800">
+          <Card className="mt-6">
             <BalanceChart points={balances} />
-          </section>
+          </Card>
 
-          <section className="mt-8">
-            <h2 className="text-lg font-semibold">Biggest movers</h2>
-            <p className="mt-1 text-xs text-neutral-500">
-              Top 15 transactions by amount in this period.
-            </p>
-            <table className="mt-3 w-full border-collapse text-sm">
+          <Card className="mt-6">
+            <CardHeader
+              title="Biggest movers"
+              description="Top 15 transactions by amount in this period"
+            />
+            <table className="mt-4 w-full border-collapse text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase text-neutral-500">
+                <tr className="border-b border-[var(--color-border)] text-left text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
                   <th className="py-2 pr-3">Date</th>
                   <th className="py-2 pr-3">Counterparty</th>
                   <th className="py-2 pr-3 text-right">Amount</th>
@@ -122,7 +124,7 @@ export default async function TimelinePage({
                 {movers.map((r) => (
                   <tr
                     key={r.id}
-                    className={`border-t border-neutral-200 dark:border-neutral-800 ${
+                    className={`border-t border-[var(--color-border)] transition-colors hover:bg-[var(--color-surface-overlay)]/30 ${
                       r.isTransfer ? "opacity-60" : ""
                     }`}
                   >
@@ -148,10 +150,10 @@ export default async function TimelinePage({
                 ))}
               </tbody>
             </table>
-          </section>
+          </Card>
         </>
       )}
-    </main>
+    </>
   );
 }
 
@@ -270,25 +272,3 @@ function BalanceChart({
   );
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "debit" | "credit";
-}) {
-  const toneClass =
-    tone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
-        : "";
-  return (
-    <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={`mt-1 font-mono text-base ${toneClass}`}>{value}</div>
-    </div>
-  );
-}

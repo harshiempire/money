@@ -4,6 +4,8 @@ import {
   formatPaise,
   formatPaiseSigned,
 } from "@/lib/format";
+import { ChannelPill } from "@/components/ui/ChannelPill";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { RowActions, type CategoryOption } from "./RowActions";
 import { SplitSettlementStatusLine } from "./SplitDialog";
 import { SplitSettlementLinks } from "./SplitSettlementLinks";
@@ -16,27 +18,6 @@ import type {
   ReceivableOption,
   NetEventByTransaction,
 } from "@/lib/net-events/load-net-settle-data";
-
-function ChannelPill({ channel }: { channel: string }) {
-  const palette: Record<string, string> = {
-    upi: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
-    imps: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    neft: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-    rtgs: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-    opening:
-      "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
-  };
-  const cls =
-    palette[channel] ??
-    "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
-  return (
-    <span
-      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
-    >
-      {channel}
-    </span>
-  );
-}
 
 export function TransactionTable({
   rows,
@@ -70,14 +51,14 @@ export function TransactionTable({
   const visibleTxnIds = rows.map((r) => r.id);
 
   if (rows.length === 0) {
-    return <p className="mt-6 text-sm text-neutral-500">{emptyMessage}</p>;
+    return <EmptyState className="mt-6" title={emptyMessage} />;
   }
 
   return (
-    <div className="mt-3 overflow-x-auto">
+    <div className="mt-4 overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)]">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="text-left text-xs uppercase text-neutral-500">
+          <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-left text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
             <th className="py-2 pr-3">Date</th>
             <th className="py-2 pr-3">Channel</th>
             <th className="py-2 pr-3">Counterparty</th>
@@ -98,7 +79,7 @@ export function TransactionTable({
               <tr
                 key={r.id}
                 id={`txn-${r.id}`}
-                className={`scroll-mt-4 border-t border-neutral-200 align-top dark:border-neutral-800 ${
+                className={`scroll-mt-4 border-t border-[var(--color-border)] align-top transition-colors hover:bg-[var(--color-surface-overlay)]/30 ${
                   r.isTransfer ? "opacity-60" : ""
                 } ${r.needsReview ? "border-l-2 border-l-amber-400/70 pl-1 dark:border-l-amber-500/60" : ""} ${
                   isLinked

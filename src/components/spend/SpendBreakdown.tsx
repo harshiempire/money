@@ -169,7 +169,7 @@ function ReimbursementSection({
         <dl className="mt-2 space-y-1 border-l-2 border-neutral-200 pl-3 dark:border-neutral-700">
           {settledReimbursePaise > 0 && (
             <div className="flex items-baseline justify-between gap-3 font-mono text-sm">
-              <dt className="font-sans text-neutral-600 dark:text-neutral-400">
+              <dt className="font-sans text-[var(--color-text-secondary)]">
                 Paid back so far
               </dt>
               <dd className="text-emerald-700 dark:text-emerald-400">
@@ -232,14 +232,14 @@ function BridgeRow({
   const resolvedTone = tone ?? (value >= 0 ? "debit" : "credit");
   const toneClass =
     resolvedTone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : "text-emerald-700 dark:text-emerald-400";
+      ? "text-[var(--color-debit)]"
+      : "text-[var(--color-credit)]";
   const prefix = value < 0 ? "−" : "";
   return (
     <div
       className={`flex items-baseline justify-between gap-3 ${bold ? "font-semibold" : ""}`}
     >
-      <dt className="font-sans text-neutral-600 dark:text-neutral-400">
+      <dt className="font-sans text-[var(--color-text-secondary)]">
         {label}
         {hint && (
           <span className="ml-1 font-normal text-neutral-400">({hint})</span>
