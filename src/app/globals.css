@@ -47,8 +47,22 @@
   }
 }
 
+/*
+ * The app has no explicit background/text colors — the page canvas comes from
+ * the UA via color-scheme. Bind it to the manual theme too, or an explicit
+ * dark/light choice would flip the dark: utilities while the canvas keeps
+ * following the OS (half-dark, unreadable).
+ */
 :root {
   color-scheme: light dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {

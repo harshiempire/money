@@ -287,12 +287,9 @@ export function SpendWaterfall({
           className="stroke-owed-to-me/80"
           strokeWidth={1.5}
         >
-          <title>
-            If everyone pays you back ·{" "}
-            {formatPaisePlain(
-              netSelfPaise - reimbursement!.outstandingReimbursePaise,
-            )}
-          </title>
+          <title>{`If everyone pays you back · ${formatPaisePlain(
+            netSelfPaise - reimbursement!.outstandingReimbursePaise,
+          )}`}</title>
         </line>
       )}
     </svg>
