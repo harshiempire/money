@@ -237,3 +237,57 @@ bun run db:studio
 - Auth added: JWT Credentials, open registration, in-place bootstrap on `SEED_USER_ID` to preserve finance FKs, ownership checks on 13 server actions, tenant-scoped pages.
 
 When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server action**, **scope every query by the current user's account**.
+
+---
+
+## Cursor Cloud specific instructions
+
+### Services
+
+| Service | Command | Notes |
+|---------|---------|-------|
+| Next.js dev | `bun run dev` | Port **3000**; loads `.env.local` |
+| Local Postgres + Neon proxy | `sudo docker compose -f docker-compose.local.yml up -d` | Required when `DATABASE_URL` uses `db.localtest.me` (see below) |
+| Drizzle Studio (optional) | `bun run db:studio` | DB browser |
+
+### Database: Neon cloud vs local proxy
+
+Production and most dev setups use a **Neon** `DATABASE_URL`. The app uses `@neondatabase/serverless` (not plain `postgres`).
+
+**When Cursor secrets are configured** (`DATABASE_URL`, `AUTH_SECRET`, `BOOTSTRAP_EMAIL`, `BOOTSTRAP_PASSWORD`), copy them into `.env.local` — no Docker stack needed. Verify with `bun run db:ping`, then `bun run db:migrate` and `bun run bootstrap-owner` (updates the seed owner password on `SEED_USER_ID`). Restart `bun run dev` after changing `AUTH_SECRET`.
+
+For Cloud Agent VMs **without** a Neon URL, use the committed `docker-compose.local.yml` (Postgres 17 + [local-neon-http-proxy](https://neon.com/guides/local-development-with-neon)):
+
+```bash
+sudo docker compose -f docker-compose.local.yml up -d
+cp .env.example .env.local   # then set DATABASE_URL below + AUTH_SECRET + BOOTSTRAP_*
+```
+
+`.env.local` for local proxy:
+
+```
+DATABASE_URL=postgres://postgres:postgres@db.localtest.me:5432/main
+AUTH_SECRET=<openssl rand -base64 32>
+BOOTSTRAP_EMAIL=owner@local.dev
+BOOTSTRAP_PASSWORD=<≥12 chars>
+SKIP_AUTH_BOOTSTRAP_CHECK=1
+```
+
+`src/db/index.ts` and `scripts/lib/db.ts` auto-configure the Neon driver when the hostname is `db.localtest.me`. **Drizzle CLI** (`bun run db:migrate`) connects to Postgres on port 5432 directly; the proxy on **4444** is for the serverless driver only.
+
+First-time DB setup:
+
+```bash
+bun run db:migrate
+bun run bootstrap-owner
+```
+
+### Lint caveat
+
+`bun run lint` (`next lint`) may fail on Next.js 16 without an `eslint.config.*` file. Use `bun run typecheck` and `bun test` for CI-style checks until ESLint flat config is added.
+
+### Hello-world smoke test
+
+1. `bun run dev` → open `http://localhost:3000/login`
+2. Sign in with `BOOTSTRAP_EMAIL` / `BOOTSTRAP_PASSWORD`
+3. Dashboard should show the **Money** heading; `/transactions` loads (empty tenant is OK for new users)
