@@ -1,15 +1,14 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
 import { AppShell } from "@/components/AppShell";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { getBobAccount, getCurrentUser } from "@/lib/auth/request-tenant";
 import { UploadForm } from "./UploadForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function ImportPage() {
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
   const recent = await db
     .select()
     .from(schema.imports)

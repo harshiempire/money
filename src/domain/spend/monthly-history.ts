@@ -26,20 +26,26 @@ export interface MonthlySpendRow {
 export async function monthlySpendHistory(
   accountId: string,
   monthCount = 12,
+  userId?: string | null,
 ): Promise<MonthlySpendRow[]> {
   const now = new Date();
-  const rows: MonthlySpendRow[] = [];
+  const periods: (Period & { monthKey: string; isPartial: boolean })[] = [];
 
   for (let i = 0; i < monthCount; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const period = calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1);
-    const [totals, bridge, reimb] = await Promise.all([
-      netSpendTotals(accountId, period.from, period.to),
-      splitBridgeTotals(accountId, period.from, period.to),
-      reimbursementBridgeTotals(accountId, period.from, period.to),
-    ]);
-    rows.push(buildMonthlyRow(period, totals, bridge, reimb));
+    periods.push(calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1));
   }
+
+  const rows = await Promise.all(
+    periods.map(async (period) => {
+      const [totals, bridge, reimb] = await Promise.all([
+        netSpendTotals(accountId, period.from, period.to, userId),
+        splitBridgeTotals(accountId, period.from, period.to, userId),
+        reimbursementBridgeTotals(accountId, period.from, period.to, userId),
+      ]);
+      return buildMonthlyRow(period, totals, bridge, reimb);
+    }),
+  );
 
   return rows;
 }

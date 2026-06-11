@@ -1,40 +1,28 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import {
+  getBobAccount,
+  getCurrentUser,
+  ensureTenantDefaults,
+  runCounterpartyBackfill,
+} from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
-import { ensureDefaultCategories } from "@/db/seed-categories";
-import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
   counterpartyLabel,
   formatDate,
   formatPaise,
   formatPaiseSigned,
 } from "@/lib/format";
-import { RowActions, type CategoryOption } from "./RowActions";
-import {
-  SplitSettlementLinks,
-  buildExpenseLinks,
-  buildReimbursementLinks,
-} from "./SplitSettlementLinks";
+import { RowActions } from "./RowActions";
+import { SplitSettlementLinks } from "./SplitSettlementLinks";
 import { SplitSettlementStatusLine } from "./SplitDialog";
-import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
-import type {
-  ExistingAllocation,
-  ParticipantOption,
-} from "./SettleDialog";
 import { AutoDetectButton } from "./AutoDetectButton";
 import {
   getLatestStatementPeriod,
   getStatementPeriodForDate,
 } from "@/lib/spend/period";
 import { ScrollToTransaction } from "./ScrollToTransaction";
-import {
-  loadNetEventsByTransactionIds,
-  loadOpenPayablesForUser,
-  loadOpenReceivablesForAccount,
-} from "@/lib/net-events/load-net-settle-data";
-import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
+import { loadTransactionTableContext } from "./load-table-context";
 
 export const dynamic = "force-dynamic";
 
@@ -68,12 +56,12 @@ export default async function TransactionsPage({
   searchParams: Promise<PageSearchParams>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
   const userId = user.id;
 
-  await ensureDefaultCategories(userId);
-  await backfillCounterparties(account.id, userId);
+  await ensureTenantDefaults();
+  await runCounterpartyBackfill();
 
   const showAllTime = sp.all === "1";
   const highlightTxnId = sp.txn?.trim() || null;
@@ -134,40 +122,49 @@ export default async function TransactionsPage({
 
   const where = and(...filters);
 
-  const rows = await db
-    .select({
-      id: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      amountPaise: schema.transactions.amountPaise,
-      drCr: schema.transactions.drCr,
-      channel: schema.transactions.channel,
-      rawDescription: schema.transactions.rawDescription,
-      parsedPurpose: schema.transactions.parsedPurpose,
-      balancePaise: schema.transactions.balancePaise,
-      counterpartyId: schema.transactions.counterpartyId,
-      counterpartyDisplayName: schema.counterparties.displayName,
-      categoryId: schema.transactions.categoryId,
-      isTransfer: schema.transactions.isTransfer,
-      needsReview: schema.transactions.needsReview,
-      note: schema.transactions.note,
-    })
-    .from(schema.transactions)
-    .leftJoin(
-      schema.counterparties,
-      eq(schema.transactions.counterpartyId, schema.counterparties.id),
-    )
-    .where(where)
-    .orderBy(
-      // Within a date, group rows by their source import (Postgres now() is
-      // per-transaction so all rows from one import share createdAt), newest
-      // import first. Within an import, the bank's Sr.No is the only correct
-      // intraday order. Sr.No is per-statement and would collide across
-      // imports without the createdAt grouping.
-      desc(schema.transactions.txnDate),
-      desc(schema.transactions.createdAt),
-      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
-    )
-    .limit(1000);
+  const [ctx, [totals]] = await Promise.all([
+    loadTransactionTableContext(account.id, userId, where),
+    // Footer stats respect the full filter set (incl. channel), so this stays
+    // a bespoke aggregate rather than netSpendTotals(accountId, from, to).
+    db
+      .select({
+        debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+        credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+        netSelf: sql<number>`
+          coalesce(sum(
+            case
+              when ${schema.transactions.isTransfer} = true then 0
+              when ${schema.transactions.drCr} = 'debit'
+                then coalesce((select ${schema.splits.yourSharePaise} from ${schema.splits} where ${schema.splits.transactionId} = ${schema.transactions.id}), ${schema.transactions.amountPaise})
+              when ${schema.transactions.drCr} = 'credit'
+                and exists (select 1 from ${schema.settlements} where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id})
+                then 0
+              when ${schema.transactions.drCr} = 'credit'
+                then -1 * ${schema.transactions.amountPaise}
+              else 0
+            end
+          ), 0)::bigint
+        `,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.transactions)
+      .where(where),
+  ]);
+
+  const {
+    rows,
+    splitByTxn,
+    settlementsByInflow,
+    expenseLinksByInflow,
+    reimbursementsByExpense,
+    participantOptions,
+    categoryOptions,
+    knownPersonNames,
+    counterpartyPersonHints,
+    openReceivables,
+    openPayables,
+    netEventsByTxn,
+  } = ctx;
 
   const visibleTxnIds = rows.map((r) => r.id);
 
@@ -176,247 +173,9 @@ export default async function TransactionsPage({
     !linkedTxnNotFound &&
     !rows.some((r) => r.id === highlightTxnId);
 
-  // Load splits, participants, and settlements for the rows in view.
-  const txnIds = rows.map((r) => r.id);
-  const splits = txnIds.length
-    ? await db
-        .select()
-        .from(schema.splits)
-        .where(inArray(schema.splits.transactionId, txnIds))
-    : [];
-  const splitIds = splits.map((s) => s.id);
-  const participantsAll = splitIds.length
-    ? await db
-        .select()
-        .from(schema.splitParticipants)
-        .where(inArray(schema.splitParticipants.splitId, splitIds))
-    : [];
-  const settlementsForRows = txnIds.length
-    ? await db
-        .select()
-        .from(schema.settlements)
-        .where(inArray(schema.settlements.inflowTransactionId, txnIds))
-    : [];
-
-  const expenseTxn = schema.transactions;
-  const expenseCp = schema.counterparties;
-  const inflowTxn = schema.transactions;
-
-  const settlementExpenseRows =
-    settlementsForRows.length > 0
-      ? await db
-          .select({
-            inflowTransactionId: schema.settlements.inflowTransactionId,
-            amountPaise: schema.settlements.amountPaise,
-            personName: schema.splitParticipants.personName,
-            expenseTransactionId: schema.splits.transactionId,
-            expenseTxnDate: expenseTxn.txnDate,
-            expenseRawDescription: expenseTxn.rawDescription,
-            expenseParsedPurpose: expenseTxn.parsedPurpose,
-            expenseCounterpartyDisplayName: expenseCp.displayName,
-          })
-          .from(schema.settlements)
-          .innerJoin(
-            schema.splitParticipants,
-            eq(
-              schema.settlements.splitParticipantId,
-              schema.splitParticipants.id,
-            ),
-          )
-          .innerJoin(
-            schema.splits,
-            eq(schema.splitParticipants.splitId, schema.splits.id),
-          )
-          .innerJoin(expenseTxn, eq(schema.splits.transactionId, expenseTxn.id))
-          .leftJoin(expenseCp, eq(expenseTxn.counterpartyId, expenseCp.id))
-          .where(
-            inArray(
-              schema.settlements.inflowTransactionId,
-              settlementsForRows
-                .map((s) => s.inflowTransactionId)
-                .filter((id): id is string => id != null),
-            ),
-          )
-      : [];
-
-  const participantIds = participantsAll.map((p) => p.id);
-  const reimbursementRows =
-    participantIds.length > 0
-      ? await db
-          .select({
-            splitTransactionId: schema.splits.transactionId,
-            inflowTransactionId: schema.settlements.inflowTransactionId,
-            amountPaise: schema.settlements.amountPaise,
-            personName: schema.splitParticipants.personName,
-            inflowTxnDate: inflowTxn.txnDate,
-            inflowRawDescription: inflowTxn.rawDescription,
-            inflowCounterpartyDisplayName: schema.counterparties.displayName,
-          })
-          .from(schema.settlements)
-          .innerJoin(
-            schema.splitParticipants,
-            eq(
-              schema.settlements.splitParticipantId,
-              schema.splitParticipants.id,
-            ),
-          )
-          .innerJoin(
-            schema.splits,
-            eq(schema.splitParticipants.splitId, schema.splits.id),
-          )
-          .innerJoin(
-            inflowTxn,
-            eq(schema.settlements.inflowTransactionId, inflowTxn.id),
-          )
-          .leftJoin(
-            schema.counterparties,
-            eq(inflowTxn.counterpartyId, schema.counterparties.id),
-          )
-          .where(
-            inArray(schema.settlements.splitParticipantId, participantIds),
-          )
-      : [];
-
-  const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
-  const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
-
-  const settlementsByInflow = new Map<string, ExistingAllocation[]>();
-  for (const st of settlementsForRows) {
-    if (!st.inflowTransactionId || !st.splitParticipantId) continue;
-    const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
-    arr.push({
-      splitParticipantId: st.splitParticipantId,
-      amountPaise: Number(st.amountPaise),
-    });
-    settlementsByInflow.set(st.inflowTransactionId, arr);
-  }
-
-  // For the SettleDialog: list every participant across all splits in the
-  // account, with how much has already been settled across all inflows.
-  const allSplitsForAccount = await db
-    .select({
-      id: schema.splits.id,
-      transactionId: schema.splits.transactionId,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, account.id));
-  const allParticipants = allSplitsForAccount.length
-    ? await db
-        .select()
-        .from(schema.splitParticipants)
-        .where(
-          inArray(
-            schema.splitParticipants.splitId,
-            allSplitsForAccount.map((s) => s.id),
-          ),
-        )
-    : [];
-  const allSettlements = allSplitsForAccount.length
-    ? await db
-        .select({
-          splitParticipantId: schema.settlements.splitParticipantId,
-          amountPaise: schema.settlements.amountPaise,
-        })
-        .from(schema.settlements)
-        .where(
-          inArray(
-            schema.settlements.splitParticipantId,
-            allParticipants.map((p) => p.id),
-          ),
-        )
-    : [];
-  const settledByParticipant = new Map<string, number>();
-  for (const s of allSettlements) {
-    if (!s.splitParticipantId) continue;
-    settledByParticipant.set(
-      s.splitParticipantId,
-      (settledByParticipant.get(s.splitParticipantId) ?? 0) +
-        Number(s.amountPaise),
-    );
-  }
-
-  const splitByTxn = buildSplitByTxn(
-    splits,
-    participantsAll,
-    settledByParticipant,
-  );
-
-  const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
-  const participantOptions: ParticipantOption[] = allParticipants.map((p) => {
-    const meta = splitMetaById.get(p.splitId)!;
-    return {
-      id: p.id,
-      personName: p.personName,
-      expectedAmountPaise: Number(p.expectedAmountPaise),
-      splitTransactionDate: formatDate(meta.txnDate),
-      splitTransactionDescription:
-        counterpartyLabel(meta.rawDescription) ?? meta.rawDescription,
-      alreadySettledPaise: settledByParticipant.get(p.id) ?? 0,
-    };
-  });
-
-  // Net spend SQL: when a debit has a split, count only your_share; when a
-  // credit is a settlement, exclude it (already accounted for via your_share).
-  const [totals] = await db
-    .select({
-      debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      netSelf: sql<number>`
-        coalesce(sum(
-          case
-            when ${schema.transactions.isTransfer} = true then 0
-            when ${schema.transactions.drCr} = 'debit'
-              then coalesce((select ${schema.splits.yourSharePaise} from ${schema.splits} where ${schema.splits.transactionId} = ${schema.transactions.id}), ${schema.transactions.amountPaise})
-            when ${schema.transactions.drCr} = 'credit'
-              and exists (select 1 from ${schema.settlements} where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id})
-              then 0
-            when ${schema.transactions.drCr} = 'credit'
-              then -1 * ${schema.transactions.amountPaise}
-            else 0
-          end
-        ), 0)::bigint
-      `,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(schema.transactions)
-    .where(where);
-
   const totalDebit = Number(totals.debit);
   const totalCredit = Number(totals.credit);
   const netSpend = Number(totals.netSelf);
-
-  const categories = await db
-    .select({
-      id: schema.categories.id,
-      name: schema.categories.name,
-      kind: schema.categories.kind,
-    })
-    .from(schema.categories)
-    .where(eq(schema.categories.userId, userId))
-    .orderBy(asc(schema.categories.kind), asc(schema.categories.name));
-
-  const categoryOptions: CategoryOption[] = categories;
-
-  const personRows = await db
-    .select({ name: schema.persons.name })
-    .from(schema.persons)
-    .where(eq(schema.persons.userId, userId))
-    .orderBy(asc(schema.persons.name));
-  const knownPersonNames = personRows.map((p) => p.name);
-
-  const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
-    await Promise.all([
-      loadOpenReceivablesForAccount(account.id),
-      loadOpenPayablesForUser(userId),
-      loadNetEventsByTransactionIds(rows.map((r) => r.id)),
-      loadCounterpartyPersonHints(account.id),
-    ]);
 
   return (
     <AppShell
