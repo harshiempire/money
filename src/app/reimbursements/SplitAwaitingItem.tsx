@@ -48,7 +48,7 @@ function splitStatusLabel(status: SplitSettlementStatus): string {
 function splitStatusTone(status: SplitSettlementStatus): string {
   switch (status) {
     case "settled":
-      return "text-emerald-700 dark:text-emerald-400";
+      return "text-inflow";
     case "partial":
       return "text-amber-800 dark:text-amber-400";
     case "open":
@@ -87,7 +87,7 @@ export function SplitAwaitingItem({
               {formatDate(txnDate)} · {txnDescription}
             </div>
             {txnNote && (
-              <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
+              <div className="mt-0.5 text-xs italic text-owed-to-me">
                 {txnNote}
               </div>
             )}
@@ -102,7 +102,7 @@ export function SplitAwaitingItem({
             </div>
           </div>
           <div className="text-right font-mono text-sm">
-            <div className="text-amber-700 dark:text-amber-400">
+            <div className="text-owed-to-me">
               {formatPaise(outstandingReimbursePaise)} pending
             </div>
             <div className="text-[10px] font-sans text-neutral-500">
@@ -154,12 +154,12 @@ export function SplitAwaitingItem({
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {paid ? (
-                    <span className="text-xs text-emerald-700 dark:text-emerald-400">
+                    <span className="text-xs text-inflow">
                       Paid
                     </span>
                   ) : (
                     <>
-                      <span className="font-mono text-xs text-amber-700 dark:text-amber-400">
+                      <span className="font-mono text-xs text-owed-to-me">
                         {formatPaise(p.outstandingPaise)} owed
                       </span>
                       <CashSettlementButton

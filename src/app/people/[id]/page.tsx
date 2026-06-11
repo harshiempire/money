@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { getPersonDetail } from "@/lib/people/ledger";
 
@@ -17,12 +17,7 @@ export default async function PersonDetailPage({
   if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{detail.personName}</h1>
-        <AppNav current="/people" />
-      </header>
-
+    <AppShell title={detail.personName}>
       <p className="mt-1 text-xs text-neutral-500">
         <a href="/people" className="underline">
           ← All people
@@ -57,7 +52,7 @@ export default async function PersonDetailPage({
                   {formatDate(r.txnDate)} ·{" "}
                   {counterpartyLabel(r.txnDescription)}
                 </span>
-                <span className="font-mono text-xs text-amber-700 dark:text-amber-400">
+                <span className="font-mono text-xs text-owed-to-me">
                   {formatPaise(r.outstandingPaise)} outstanding
                 </span>
               </li>
@@ -83,7 +78,7 @@ export default async function PersonDetailPage({
                     </span>
                   )}
                 </span>
-                <span className="font-mono text-xs text-sky-700 dark:text-sky-400">
+                <span className="font-mono text-xs text-i-owe">
                   {formatPaise(p.outstandingPaise)} outstanding
                 </span>
               </li>
@@ -120,7 +115,7 @@ export default async function PersonDetailPage({
           </ul>
         </section>
       )}
-    </main>
+    </AppShell>
   );
 }
 

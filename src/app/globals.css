@@ -1,7 +1,68 @@
 @import "tailwindcss";
 
+/*
+ * Dark mode = explicit user choice via data-theme on <html> (set by the Phase-4
+ * toggle), falling back to the OS preference when no choice is stored.
+ * `dark:`* utilities everywhere in the app keep working unchanged.
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"]):not([data-theme="light"] *)) {
+      @slot;
+    }
+  }
+}
+
+/*
+ * Semantic tone tokens. Each generates utilities (text-spend, bg-inflow/10,
+ * border-owed-to-me, fill-spend, ...) that flip automatically with the theme —
+ * no dark: prefix needed at call sites.
+ */
+@theme {
+  --color-spend: oklch(50.5% 0.213 27.518); /* red-700 */
+  --color-inflow: oklch(50.8% 0.118 165.612); /* emerald-700 */
+  --color-owed-to-me: oklch(55.5% 0.163 48.998); /* amber-700 */
+  --color-i-owe: oklch(50% 0.134 242.749); /* sky-700 */
+  --color-split: oklch(49.1% 0.27 292.581); /* violet-700 */
+}
+
+:root[data-theme="dark"] {
+  --color-spend: oklch(70.4% 0.191 22.216); /* red-400 */
+  --color-inflow: oklch(76.5% 0.177 163.223); /* emerald-400 */
+  --color-owed-to-me: oklch(82.8% 0.189 84.429); /* amber-400 */
+  --color-i-owe: oklch(74.6% 0.16 232.661); /* sky-400 */
+  --color-split: oklch(70.2% 0.183 293.541); /* violet-400 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-spend: oklch(70.4% 0.191 22.216);
+    --color-inflow: oklch(76.5% 0.177 163.223);
+    --color-owed-to-me: oklch(82.8% 0.189 84.429);
+    --color-i-owe: oklch(74.6% 0.16 232.661);
+    --color-split: oklch(70.2% 0.183 293.541);
+  }
+}
+
+/*
+ * The app has no explicit background/text colors — the page canvas comes from
+ * the UA via color-scheme. Bind it to the manual theme too, or an explicit
+ * dark/light choice would flip the dark: utilities while the canvas keeps
+ * following the OS (half-dark, unreadable).
+ */
 :root {
   color-scheme: light dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {

@@ -203,8 +203,8 @@ export function NoteButton({
                             <span
                               className={`font-mono text-xs whitespace-nowrap ${
                                 c.drCr === "debit"
-                                  ? "text-red-700 dark:text-red-400"
-                                  : "text-emerald-700 dark:text-emerald-400"
+                                  ? "text-spend"
+                                  : "text-inflow"
                               }`}
                             >
                               {formatPaiseSigned(c.amountPaise, c.drCr)}
@@ -217,7 +217,7 @@ export function NoteButton({
                 )}
               </div>
               {candidates && candidates.some((c) => c.currentNote) && picked.size > 0 && (
-                <p className="mt-2 text-[10px] text-amber-700 dark:text-amber-400">
+                <p className="mt-2 text-[10px] text-owed-to-me">
                   Heads up: some checked rows already have a different note —
                   saving will overwrite them.
                 </p>
@@ -232,7 +232,7 @@ export function NoteButton({
           )}
 
           {feedback && (
-            <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+            <p className="mt-2 text-xs text-inflow">
               {feedback}
             </p>
           )}

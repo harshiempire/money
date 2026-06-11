@@ -34,6 +34,37 @@ export const formatPaisePlain = (paise: number | null | undefined): string => {
   return `${sign}₹${groups.join(",")},${last3}.${cents}`;
 };
 
+function stripTrailingDecimalZero(s: string): string {
+  return s.replace(/\.0(?=[kLCr]|$)/, "");
+}
+
+/** Compact INR label for charts (deterministic, no Intl). */
+export const formatPaiseShort = (
+  paise: number | null | undefined,
+): string => {
+  if (paise == null) return "—";
+  const sign = paise < 0 ? "−" : "";
+  const rupees = Math.abs(paise) / 100;
+
+  if (rupees < 1000) {
+    return `${sign}₹${Math.round(rupees)}`;
+  }
+  if (rupees < 100_000) {
+    const k = rupees / 1000;
+    const formatted =
+      k >= 100
+        ? String(Math.round(k))
+        : stripTrailingDecimalZero((Math.round(k * 10) / 10).toFixed(1));
+    return `${sign}₹${formatted}k`;
+  }
+  if (rupees < 10_000_000) {
+    const L = rupees / 100_000;
+    return `${sign}₹${stripTrailingDecimalZero((Math.round(L * 10) / 10).toFixed(1))}L`;
+  }
+  const Cr = rupees / 10_000_000;
+  return `${sign}₹${stripTrailingDecimalZero((Math.round(Cr * 10) / 10).toFixed(1))}Cr`;
+};
+
 export const formatPaiseSigned = (
   paise: number,
   drCr: "debit" | "credit",

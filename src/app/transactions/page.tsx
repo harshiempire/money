@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
@@ -419,18 +419,15 @@ export default async function TransactionsPage({
     ]);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
+    <AppShell
+      title="Transactions"
+      width="wide"
+      actions={<AutoDetectButton />}
+    >
       <ScrollToTransaction transactionId={highlightTxnId} />
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Transactions</h1>
-        <AppNav current="/transactions" />
-      </header>
-      <div className="mt-1 flex items-center justify-between gap-3">
-        <p className="text-xs text-neutral-500">
-          Account: <strong>{account.name}</strong> ({account.bank})
-        </p>
-        <AutoDetectButton />
-      </div>
+      <p className="mt-1 text-xs text-neutral-500">
+        Account: <strong>{account.name}</strong> ({account.bank})
+      </p>
 
       <FiltersBar
         from={effectiveFrom}
@@ -513,10 +510,7 @@ export default async function TransactionsPage({
         </p>
       ) : (
         <div className="relative mt-3">
-          <p className="mb-2 text-xs text-neutral-500 md:hidden">
-            Swipe horizontally for amount, tags, and actions →
-          </p>
-          <div className="overflow-x-auto rounded border border-neutral-200 dark:border-neutral-800">
+          <div className="hidden overflow-x-auto rounded border border-neutral-200 md:block dark:border-neutral-800">
           <table className="min-w-[720px] w-full border-collapse text-sm">
             <thead>
               <tr className="text-left text-xs uppercase text-neutral-500">
@@ -563,7 +557,7 @@ export default async function TransactionsPage({
                       </div>
                     )}
                     {r.note && (
-                      <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
+                      <div className="mt-0.5 text-xs italic text-owed-to-me">
                         {r.note}
                       </div>
                     )}
@@ -579,8 +573,8 @@ export default async function TransactionsPage({
                   <td
                     className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
                       r.drCr === "debit"
-                        ? "text-red-700 dark:text-red-400"
-                        : "text-emerald-700 dark:text-emerald-400"
+                        ? "text-spend"
+                        : "text-inflow"
                     }`}
                   >
                     {formatPaiseSigned(r.amountPaise, r.drCr)}
@@ -627,9 +621,105 @@ export default async function TransactionsPage({
             </tbody>
           </table>
           </div>
+
+          <ul className="space-y-2 md:hidden">
+            {rows.map((r) => {
+              const expenseLinks = expenseLinksByInflow.get(r.id);
+              const reimbursementLinks = reimbursementsByExpense.get(r.id);
+              const existingSplit = splitByTxn.get(r.id);
+              const isLinked =
+                (expenseLinks?.length ?? 0) > 0 ||
+                (reimbursementLinks?.length ?? 0) > 0;
+              return (
+                <li
+                  key={r.id}
+                  id={`txn-${r.id}`}
+                  className={`scroll-mt-4 rounded border border-neutral-200 p-3 dark:border-neutral-800 ${
+                    r.isTransfer ? "opacity-60" : ""
+                  } ${highlightTxnId === r.id ? "bg-sky-50/80 dark:bg-sky-950/30" : ""} ${r.needsReview ? "border-l-2 border-l-amber-400/70 dark:border-l-amber-500/60" : ""} ${isLinked ? "border-l-2 border-l-violet-400/60 dark:border-l-violet-600/50" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-xs text-neutral-500">
+                        {formatDate(r.txnDate)}
+                      </span>
+                      <ChannelPill channel={r.channel} />
+                    </div>
+                    <span
+                      className={`font-mono text-xs whitespace-nowrap ${
+                        r.drCr === "debit" ? "text-spend" : "text-inflow"
+                      }`}
+                    >
+                      {formatPaiseSigned(r.amountPaise, r.drCr)}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-sm">
+                    <div className="font-medium">
+                      {r.counterpartyDisplayName ??
+                        counterpartyLabel(r.rawDescription)}
+                    </div>
+                    {r.parsedPurpose && (
+                      <div className="text-xs text-neutral-500">
+                        {r.parsedPurpose}
+                      </div>
+                    )}
+                    {r.note && (
+                      <div className="mt-0.5 text-xs italic text-owed-to-me">
+                        {r.note}
+                      </div>
+                    )}
+                    <SplitSettlementLinks
+                      expenseLinks={expenseLinks}
+                      reimbursementLinks={reimbursementLinks}
+                      visibleTxnIds={visibleTxnIds}
+                    />
+                    {existingSplit && (
+                      <SplitSettlementStatusLine split={existingSplit} />
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-start justify-between gap-2">
+                    <RowActions
+                      transactionId={r.id}
+                      drCr={r.drCr}
+                      amountPaise={r.amountPaise}
+                      categoryId={r.categoryId}
+                      isTransfer={r.isTransfer}
+                      counterpartyId={r.counterpartyId}
+                      counterpartyDisplayName={r.counterpartyDisplayName}
+                      rawDescription={r.rawDescription}
+                      counterpartyPersonHints={counterpartyPersonHints}
+                      categories={categoryOptions}
+                      existingSplit={splitByTxn.get(r.id) ?? null}
+                      existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      participants={participantOptions}
+                      knownPersonNames={knownPersonNames}
+                      note={r.note}
+                      needsReview={r.needsReview}
+                      receivables={openReceivables}
+                      payables={openPayables}
+                      netEventId={netEventsByTxn.get(r.id)?.netEventId}
+                      netEventLegs={netEventsByTxn.get(r.id)?.legs.map((l) => ({
+                        kind: l.kind,
+                        targetId: l.targetId,
+                        amountPaise: l.amountPaise,
+                        method:
+                          l.method === "bank"
+                            ? ("bank" as const)
+                            : ("offset" as const),
+                      }))}
+                      txnDate={r.txnDate}
+                    />
+                    <span className="font-mono text-xs whitespace-nowrap text-neutral-500">
+                      {formatPaise(r.balancePaise)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
-    </main>
+    </AppShell>
   );
 }
 
@@ -646,9 +736,9 @@ function Stat({
 }) {
   const toneClass =
     tone === "debit"
-      ? "text-red-700 dark:text-red-400"
+      ? "text-spend"
       : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
+        ? "text-inflow"
         : "";
   return (
     <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">
