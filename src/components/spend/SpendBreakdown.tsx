@@ -1,15 +1,19 @@
 import { formatPaise } from "@/lib/format";
+import { InfoPopover } from "@/components/ui/InfoPopover";
 import type { SplitBridgeTotals } from "@/domain/spend/net";
 import type { ReimbursementBridgeTotals } from "@/domain/spend/reimbursements";
+import { SpendWaterfall } from "./SpendWaterfall";
 
 export function SpendBreakdown({
   bridge,
   netSelfPaise,
+  owedSelfPaise = 0,
   reimbursement,
   compact = false,
 }: {
   bridge: SplitBridgeTotals;
   netSelfPaise: number;
+  owedSelfPaise?: number;
   reimbursement?: ReimbursementBridgeTotals;
   compact?: boolean;
 }) {
@@ -22,7 +26,15 @@ export function SpendBreakdown({
 
   if (compact) {
     return (
-      <dl className="space-y-1 font-mono text-sm">
+      <>
+        <SpendWaterfall
+          bridge={bridge}
+          netSelfPaise={netSelfPaise}
+          owedSelfPaise={owedSelfPaise}
+          reimbursement={reimbursement}
+          compact
+        />
+        <dl className="space-y-1 font-mono text-sm">
         <BridgeRow label="Gross debits" value={bridge.personalDebitGrossPaise} />
         {bridge.othersSharePaise > 0 && (
           <BridgeRow
@@ -53,19 +65,26 @@ export function SpendBreakdown({
           />
         )}
       </dl>
+      </>
     );
   }
 
   return (
     <div className="space-y-4">
+      <SpendWaterfall
+        bridge={bridge}
+        netSelfPaise={netSelfPaise}
+        owedSelfPaise={owedSelfPaise}
+        reimbursement={reimbursement}
+      />
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
           Debits
+          <InfoPopover>
+            Money that left your bank, split into what was yours vs what you paid
+            for others.
+          </InfoPopover>
         </h3>
-        <p className="mt-1 text-xs text-neutral-500">
-          Money that left your bank, split into what was yours vs what you paid
-          for others.
-        </p>
         <dl className="mt-2 space-y-1.5 font-mono text-sm">
           <BridgeRow
             label="Personal debits (gross)"
@@ -100,12 +119,12 @@ export function SpendBreakdown({
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
           Net
+          <InfoPopover>
+            Your true spend after refunds — already uses your share, not gross
+            debits. Pending reimbursements are tracked above, not subtracted
+            again here.
+          </InfoPopover>
         </h3>
-        <p className="mt-1 text-xs text-neutral-500">
-          Your true spend after refunds — already uses your share, not gross
-          debits. Pending reimbursements are tracked above, not subtracted
-          again here.
-        </p>
         <dl className="mt-2 space-y-1.5 font-mono text-sm">
           {bridge.netCreditPaise > 0 && (
             <BridgeRow
@@ -146,12 +165,12 @@ function ReimbursementSection({
     <div>
       <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
         Reimbursements
+        <InfoPopover>
+          What others owe for shared expenses this period. Paid back and still
+          waiting are two parts of the same total — not extra amounts stacked on
+          top of each other.
+        </InfoPopover>
       </h3>
-      <p className="mt-1 text-xs text-neutral-500">
-        What others owe for shared expenses this period. Paid back and still
-        waiting are two parts of the same total — not extra amounts stacked on
-        top of each other.
-      </p>
 
       <div className="mt-3 rounded border border-neutral-200 p-3 dark:border-neutral-800">
         <div className="flex items-baseline justify-between gap-3 font-mono text-sm">
@@ -172,7 +191,7 @@ function ReimbursementSection({
               <dt className="font-sans text-neutral-600 dark:text-neutral-400">
                 Paid back so far
               </dt>
-              <dd className="text-emerald-700 dark:text-emerald-400">
+              <dd className="text-inflow">
                 {formatPaise(settledReimbursePaise)}
               </dd>
             </div>
@@ -182,13 +201,13 @@ function ReimbursementSection({
               <dt className="font-sans text-amber-800 dark:text-amber-300">
                 Still waiting
               </dt>
-              <dd className="text-amber-700 dark:text-amber-400">
+              <dd className="text-owed-to-me">
                 {formatPaise(outstandingReimbursePaise)}
               </dd>
             </div>
           )}
           {fullySettled && (
-            <div className="font-sans text-sm text-emerald-700 dark:text-emerald-400">
+            <div className="font-sans text-sm text-inflow">
               All paid back
             </div>
           )}
@@ -232,8 +251,8 @@ function BridgeRow({
   const resolvedTone = tone ?? (value >= 0 ? "debit" : "credit");
   const toneClass =
     resolvedTone === "debit"
-      ? "text-red-700 dark:text-red-400"
-      : "text-emerald-700 dark:text-emerald-400";
+      ? "text-spend"
+      : "text-inflow";
   const prefix = value < 0 ? "−" : "";
   return (
     <div

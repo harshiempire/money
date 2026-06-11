@@ -2,7 +2,7 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
@@ -285,12 +285,7 @@ export default async function ReimbursementsPage({
   const settledSplits = splitSummaries.filter((s) => s.status === "settled");
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Reimbursements</h1>
-        <AppNav current="/reimbursements" />
-      </header>
-
+    <AppShell title="Reimbursements">
       <p className="mt-1 text-xs text-neutral-500">
         Reimbursements for splits in the selected period. Settle inflows from{" "}
         <a className="underline" href="/transactions">
@@ -384,7 +379,7 @@ export default async function ReimbursementsPage({
           <ul className="mt-2 space-y-1 text-xs text-neutral-500">
             {settledSplits.map((s) => (
               <li key={s.splitId} className="flex flex-wrap items-center gap-2">
-                <span className="text-emerald-700 dark:text-emerald-400">
+                <span className="text-inflow">
                   ✓
                 </span>
                 <span>
@@ -434,7 +429,7 @@ export default async function ReimbursementsPage({
                       p.displayName
                     )}
                   </td>
-                  <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
+                  <td className="py-2 pr-3 text-right font-mono text-sm text-owed-to-me">
                     {formatPaise(p.outstandingPaise)}
                   </td>
                   <td className="py-2 pr-3 text-right text-xs text-neutral-500">
@@ -518,7 +513,7 @@ export default async function ReimbursementsPage({
                         </div>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right font-mono text-sm text-amber-700 dark:text-amber-400">
+                    <td className="py-2 pr-3 text-right font-mono text-sm text-owed-to-me">
                       {formatPaise(r.outstandingPaise)}
                     </td>
                     <td className="py-2 pr-3 text-right text-xs text-neutral-500">
@@ -579,6 +574,6 @@ export default async function ReimbursementsPage({
           </ul>
         </section>
       )}
-    </main>
+    </AppShell>
   );
 }

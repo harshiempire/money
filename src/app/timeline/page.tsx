@@ -2,7 +2,7 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { dailyClosingBalance } from "@/domain/spend/net";
 import {
@@ -67,12 +67,7 @@ export default async function TimelinePage({
     opening != null && closing != null ? closing - opening : null;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Timeline</h1>
-        <AppNav current="/timeline" />
-      </header>
-
+    <AppShell title="Timeline">
       <SpendPeriodPicker
         resolved={resolved}
         sp={sp}
@@ -135,8 +130,8 @@ export default async function TimelinePage({
                     <td
                       className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
                         r.drCr === "debit"
-                          ? "text-red-700 dark:text-red-400"
-                          : "text-emerald-700 dark:text-emerald-400"
+                          ? "text-spend"
+                          : "text-inflow"
                       }`}
                     >
                       {formatPaiseSigned(r.amountPaise, r.drCr)}
@@ -151,7 +146,7 @@ export default async function TimelinePage({
           </section>
         </>
       )}
-    </main>
+    </AppShell>
   );
 }
 
@@ -281,9 +276,9 @@ function Stat({
 }) {
   const toneClass =
     tone === "debit"
-      ? "text-red-700 dark:text-red-400"
+      ? "text-spend"
       : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
+        ? "text-inflow"
         : "";
   return (
     <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">

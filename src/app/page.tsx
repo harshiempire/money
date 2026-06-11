@@ -3,8 +3,9 @@ import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
+import { StatHero, SectionCard, Bar, Money, PeriodDelta } from "@/components/ui";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import {
   categoryBreakdown,
@@ -108,52 +109,38 @@ export default async function DashboardPage({
 
   const showBreakdown =
     bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0;
+  const isEmptyTenant = totals.count === 0 && cats.length === 0;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Money</h1>
-        <AppNav current="/" />
-      </header>
-
+    <AppShell title="Money">
       <PeriodPicker period={period} active={sp.preset} />
 
-      <section className="mt-8">
-        <div className="text-xs uppercase tracking-wide text-neutral-500">
-          Net personal spend · {period.label}
-        </div>
-        <div
-          className={`mt-1 font-mono text-5xl ${
-            totals.netSelfPaise >= 0
-              ? "text-red-700 dark:text-red-400"
-              : "text-emerald-700 dark:text-emerald-400"
-          }`}
-        >
-          {formatPaise(Math.abs(totals.netSelfPaise))}
-          {totals.netSelfPaise < 0 && (
-            <span className="ml-2 text-base text-emerald-700 dark:text-emerald-400">
-              (net inflow)
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && (
-            <PeriodDelta
-              delta={periodDelta}
-              previousLabel={prevComparison?.label}
-            />
-          )}
-          {burnPerDay != null && (
-            <span>
-              ~{formatPaise(burnPerDay)}/day over {dayCount} day
-              {dayCount === 1 ? "" : "s"}
-            </span>
-          )}
+      <StatHero
+        label={<>Net personal spend · {period.label}</>}
+        valuePaise={totals.netSelfPaise}
+        tone={totals.netSelfPaise >= 0 ? "spend" : "inflow"}
+        suffix={
+          totals.netSelfPaise < 0 ? (
+            <span className="ml-2 text-base text-inflow">(net inflow)</span>
+          ) : undefined
+        }
+      >
+        {periodDelta != null && (
+          <PeriodDelta
+            delta={periodDelta}
+            previousLabel={prevComparison?.label}
+          />
+        )}
+        {burnPerDay != null && (
           <span>
-            {totals.count} transaction{totals.count === 1 ? "" : "s"}
+            ~{formatPaise(burnPerDay)}/day over {dayCount} day
+            {dayCount === 1 ? "" : "s"}
           </span>
-        </div>
-      </section>
+        )}
+        <span>
+          {totals.count} transaction{totals.count === 1 ? "" : "s"}
+        </span>
+      </StatHero>
 
       {showTriage && (
         <section className="mt-6 rounded border border-amber-200 bg-amber-50/60 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-950/20">
@@ -186,29 +173,45 @@ export default async function DashboardPage({
         </section>
       )}
 
-      {showBreakdown && (
-        <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold">Spend breakdown</h2>
-            <a
-              href={spendLink}
-              className="text-xs text-neutral-500 underline-offset-2 hover:underline"
+      {isEmptyTenant ? (
+        <SectionCard className="mt-8" title="No transactions yet">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Import a Bank of Baroda statement to see your spend breakdown and
+            categories here.
+          </p>
+          <a
+            href="/import"
+            className="mt-3 inline-block rounded bg-neutral-900 px-3 py-1.5 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
+          >
+            Import statement →
+          </a>
+        </SectionCard>
+      ) : (
+        <>
+          {showBreakdown && (
+            <SectionCard
+              className="mt-8"
+              title="Spend breakdown"
+              action={
+                <a
+                  href={spendLink}
+                  className="text-xs text-neutral-500 underline-offset-2 hover:underline"
+                >
+                  Full report →
+                </a>
+              }
             >
-              Full report →
-            </a>
-          </div>
-          <div className="mt-3">
-            <SpendBreakdown
-              bridge={bridge}
-              netSelfPaise={totals.netSelfPaise}
-              reimbursement={reimbursement}
-              compact
-            />
-          </div>
-        </section>
-      )}
+              <SpendBreakdown
+                bridge={bridge}
+                netSelfPaise={totals.netSelfPaise}
+                owedSelfPaise={totals.owedSelfPaise}
+                reimbursement={reimbursement}
+                compact
+              />
+            </SectionCard>
+          )}
 
-      <section className="mt-10 grid gap-8 md:grid-cols-2">
+          <section className="mt-10 grid gap-8 md:grid-cols-2">
         <div>
           <h2 className="text-lg font-semibold">By category</h2>
           {totalSpendPaise > 0 && (
@@ -245,21 +248,14 @@ export default async function DashboardPage({
                       <span className="text-neutral-500"> · {c.count}</span>
                     </span>
                   </div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded bg-neutral-100 dark:bg-neutral-800">
-                    <div
-                      className="h-full bg-red-500/70 dark:bg-red-400/70"
-                      style={{
-                        width: `${Math.max(2, (c.netSelfPaise / maxSpend) * 100).toFixed(1)}%`,
-                      }}
-                    />
-                  </div>
+                  <Bar value={c.netSelfPaise} max={maxSpend} className="mt-1" />
                 </li>
               ))}
             </ul>
           )}
           {refundCats.length > 0 && (
             <>
-              <h3 className="mt-6 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+              <h3 className="mt-6 text-sm font-medium text-inflow">
                 Inflows reducing net
               </h3>
               <ul className="mt-2 space-y-1 text-sm">
@@ -269,9 +265,12 @@ export default async function DashboardPage({
                     className="flex items-baseline justify-between"
                   >
                     <span>{c.categoryName}</span>
-                    <span className="font-mono text-xs text-emerald-700 dark:text-emerald-400">
-                      −{formatPaise(Math.abs(c.netSelfPaise))}
-                    </span>
+                    <Money
+                      value={c.netSelfPaise}
+                      tone="inflow"
+                      signed
+                      className="text-xs"
+                    />
                   </li>
                 ))}
               </ul>
@@ -303,7 +302,9 @@ export default async function DashboardPage({
           )}
         </div>
       </section>
-    </main>
+        </>
+      )}
+    </AppShell>
   );
 }
 
@@ -352,37 +353,6 @@ async function loadPreviousPeriodComparison(
 
   const totals = await netSpendTotals(accountId, prevFrom, prevTo);
   return { totals, label };
-}
-
-function PeriodDelta({
-  delta,
-  previousLabel,
-}: {
-  delta: number;
-  previousLabel?: string;
-}) {
-  if (delta === 0) {
-    return (
-      <span>
-        Same as previous period
-        {previousLabel ? ` (${previousLabel})` : ""}
-      </span>
-    );
-  }
-  const up = delta > 0;
-  return (
-    <span
-      className={
-        up
-          ? "text-red-700 dark:text-red-400"
-          : "text-emerald-700 dark:text-emerald-400"
-      }
-    >
-      {up ? "+" : "−"}
-      {formatPaise(Math.abs(delta))} vs previous
-      {previousLabel ? ` (${previousLabel})` : " period"}
-    </span>
-  );
 }
 
 function PeriodPicker({

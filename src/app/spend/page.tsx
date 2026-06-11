@@ -1,10 +1,11 @@
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { ensureDefaultCategories } from "@/db/seed-categories";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { DailySpendChart } from "@/components/spend/DailySpendChart";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
+import { StatHero, SectionCard, Money, PeriodDelta } from "@/components/ui";
 import { monthlySpendHistory } from "@/domain/spend/monthly-history";
 import {
   categoryBreakdown,
@@ -87,12 +88,7 @@ export default async function SpendReportPage({
       : null;
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Spend report</h1>
-        <AppNav current="/spend" />
-      </header>
-
+    <AppShell title="Spend report">
       <p className="mt-1 text-xs text-neutral-500">
         What you actually spent, what you fronted for others, and what came back.
       </p>
@@ -103,73 +99,55 @@ export default async function SpendReportPage({
         statementPeriods={statements}
       />
 
-      <section className="mt-8">
-        <div className="text-xs uppercase tracking-wide text-neutral-500">
-          Net personal spend
-        </div>
-        <div
-          className={`mt-1 font-mono text-5xl ${
-            totals.netSelfPaise >= 0
-              ? "text-red-700 dark:text-red-400"
-              : "text-emerald-700 dark:text-emerald-400"
-          }`}
-        >
-          {formatPaise(Math.abs(totals.netSelfPaise))}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-          {periodDelta != null && (
-            <PeriodDelta delta={periodDelta} previousLabel={prevTotals?.label} />
-          )}
-          {dayCount != null && totals.netSelfPaise > 0 && (
-            <span>
-              ~{formatPaise(Math.round(totals.netSelfPaise / dayCount))}/day
-            </span>
-          )}
-          {reimbursement.outstandingReimbursePaise > 0 && (
-            <a
-              className="text-amber-700 underline dark:text-amber-400"
-              href={reimbQuery ? `/reimbursements?${reimbQuery}` : "/reimbursements"}
-            >
-              {formatPaise(reimbursement.outstandingReimbursePaise)} still owed
-              from this period
-            </a>
-          )}
-          {reimbursement.outstandingPayablePaise > 0 && (
-            <a
-              className="text-sky-700 underline dark:text-sky-400"
-              href="/people"
-            >
-              {formatPaise(reimbursement.outstandingPayablePaise)} you owe others
-              (this period)
-            </a>
-          )}
-          {totals.owedSelfPaise > 0 && (
-            <span className="text-neutral-500">
-              Includes {formatPaise(totals.owedSelfPaise)} from shared expenses
-              others paid
-            </span>
-          )}
-        </div>
-      </section>
+      <StatHero
+        label="Net personal spend"
+        valuePaise={totals.netSelfPaise}
+        tone={totals.netSelfPaise >= 0 ? "spend" : "inflow"}
+      >
+        {periodDelta != null && (
+          <PeriodDelta delta={periodDelta} previousLabel={prevTotals?.label} />
+        )}
+        {dayCount != null && totals.netSelfPaise > 0 && (
+          <span>
+            ~{formatPaise(Math.round(totals.netSelfPaise / dayCount))}/day
+          </span>
+        )}
+        {reimbursement.outstandingReimbursePaise > 0 && (
+          <a
+            className="text-owed-to-me underline"
+            href={reimbQuery ? `/reimbursements?${reimbQuery}` : "/reimbursements"}
+          >
+            {formatPaise(reimbursement.outstandingReimbursePaise)} still owed
+            from this period
+          </a>
+        )}
+        {reimbursement.outstandingPayablePaise > 0 && (
+          <a className="text-i-owe underline" href="/people">
+            {formatPaise(reimbursement.outstandingPayablePaise)} you owe others
+            (this period)
+          </a>
+        )}
+        {totals.owedSelfPaise > 0 && (
+          <span className="text-neutral-500">
+            Includes {formatPaise(totals.owedSelfPaise)} from shared expenses
+            others paid
+          </span>
+        )}
+      </StatHero>
 
-      <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-        <h2 className="text-sm font-semibold">Spend breakdown</h2>
-        <div className="mt-3">
-          <SpendBreakdown
-            bridge={bridge}
-            netSelfPaise={totals.netSelfPaise}
-            reimbursement={reimbursement}
-          />
-        </div>
-      </section>
+      <SectionCard className="mt-8" title="Spend breakdown">
+        <SpendBreakdown
+          bridge={bridge}
+          netSelfPaise={totals.netSelfPaise}
+          owedSelfPaise={totals.owedSelfPaise}
+          reimbursement={reimbursement}
+        />
+      </SectionCard>
 
       {daily.length >= 2 && (
-        <section className="mt-8 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-          <h2 className="text-sm font-semibold">Daily spend</h2>
-          <div className="mt-3">
-            <DailySpendChart points={daily} />
-          </div>
-        </section>
+        <SectionCard className="mt-8" title="Daily spend">
+          <DailySpendChart points={daily} />
+        </SectionCard>
       )}
 
       {spendCats.length > 0 && (
@@ -218,9 +196,7 @@ export default async function SpendReportPage({
                   </span>
                   {counterpartyLabel(d.rawDescription)}
                 </span>
-                <span className="font-mono text-xs whitespace-nowrap text-red-700 dark:text-red-400">
-                  {formatPaise(d.netSelfPaise)}
-                </span>
+                <Money value={d.netSelfPaise} tone="spend" className="text-xs" />
               </li>
             ))}
           </ul>
@@ -232,7 +208,7 @@ export default async function SpendReportPage({
         <p className="mt-0.5 text-xs text-neutral-500">
           Last 12 calendar months. Click a row to open that month.
         </p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 hidden overflow-x-auto md:block">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="text-left text-xs uppercase text-neutral-500">
@@ -281,9 +257,10 @@ export default async function SpendReportPage({
                     </td>
                     <td className="py-2 pr-3 text-right font-mono text-xs">
                       {row.outstandingReimbursePaise > 0 ? (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          {formatPaise(row.outstandingReimbursePaise)}
-                        </span>
+                        <Money
+                          value={row.outstandingReimbursePaise}
+                          tone="owed-to-me"
+                        />
                       ) : (
                         "—"
                       )}
@@ -294,6 +271,66 @@ export default async function SpendReportPage({
             </tbody>
           </table>
         </div>
+        <ul className="mt-3 space-y-2 md:hidden">
+          {history.map((row) => {
+            const isCurrent =
+              resolved.monthKey === row.monthKey &&
+              resolved.mode === "month";
+            return (
+              <li
+                key={row.monthKey}
+                className={`rounded border border-neutral-200 p-3 dark:border-neutral-800 ${
+                  isCurrent ? "bg-neutral-50 dark:bg-neutral-900/40" : ""
+                }`}
+              >
+                <a
+                  href={spendPeriodHref({ month: row.monthKey })}
+                  className="font-medium hover:underline"
+                >
+                  {row.label}
+                  {row.isPartial && (
+                    <span className="ml-1 text-xs font-normal text-neutral-500">
+                      (partial)
+                    </span>
+                  )}
+                </a>
+                <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                  <div>
+                    <dt className="text-neutral-500">Net</dt>
+                    <dd className="font-mono">{formatPaise(row.netSelfPaise)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-neutral-500">Your share</dt>
+                    <dd className="font-mono text-neutral-600 dark:text-neutral-400">
+                      {formatPaise(row.yourShareDebitPaise)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-neutral-500">Fronted</dt>
+                    <dd className="font-mono text-neutral-600 dark:text-neutral-400">
+                      {row.othersSharePaise > 0
+                        ? formatPaise(row.othersSharePaise)
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-neutral-500">Still owed</dt>
+                    <dd className="font-mono">
+                      {row.outstandingReimbursePaise > 0 ? (
+                        <Money
+                          value={row.outstandingReimbursePaise}
+                          tone="owed-to-me"
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
       {periodQuery && (
@@ -306,37 +343,7 @@ export default async function SpendReportPage({
           </a>
         </p>
       )}
-    </main>
+    </AppShell>
   );
 }
 
-function PeriodDelta({
-  delta,
-  previousLabel,
-}: {
-  delta: number;
-  previousLabel?: string;
-}) {
-  if (delta === 0) {
-    return (
-      <span>
-        Same as previous period
-        {previousLabel ? ` (${previousLabel})` : ""}
-      </span>
-    );
-  }
-  const up = delta > 0;
-  return (
-    <span
-      className={
-        up
-          ? "text-red-700 dark:text-red-400"
-          : "text-emerald-700 dark:text-emerald-400"
-      }
-    >
-      {up ? "+" : "−"}
-      {formatPaise(Math.abs(delta))} vs previous
-      {previousLabel ? ` (${previousLabel})` : " period"}
-    </span>
-  );
-}

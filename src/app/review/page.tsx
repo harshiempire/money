@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { loadTransactionTableContext } from "@/app/transactions/load-table-context";
@@ -25,12 +25,7 @@ export default async function ReviewPage() {
   const ctx = await loadTransactionTableContext(account.id, user.id, where);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Review later</h1>
-        <AppNav current="/review" />
-      </header>
-
+    <AppShell title="Review later" width="wide">
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
         Transactions you flagged to sort out later. Use{" "}
         <strong className="font-normal">Review ✓</strong> on a row to remove it
@@ -54,6 +49,6 @@ export default async function ReviewPage() {
         {...ctx}
         emptyMessage="Nothing marked for review. On Transactions, click Review on any row to add it here."
       />
-    </main>
+    </AppShell>
   );
 }

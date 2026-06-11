@@ -493,7 +493,7 @@ function NetSettleForm({
         <div
           className={
             invariantOk
-              ? "mt-1 text-emerald-700 dark:text-emerald-400"
+              ? "mt-1 text-inflow"
               : "mt-1 text-red-600"
           }
         >

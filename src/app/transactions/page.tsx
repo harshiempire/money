@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import {
@@ -419,18 +419,15 @@ export default async function TransactionsPage({
     ]);
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
+    <AppShell
+      title="Transactions"
+      width="wide"
+      actions={<AutoDetectButton />}
+    >
       <ScrollToTransaction transactionId={highlightTxnId} />
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Transactions</h1>
-        <AppNav current="/transactions" />
-      </header>
-      <div className="mt-1 flex items-center justify-between gap-3">
-        <p className="text-xs text-neutral-500">
-          Account: <strong>{account.name}</strong> ({account.bank})
-        </p>
-        <AutoDetectButton />
-      </div>
+      <p className="mt-1 text-xs text-neutral-500">
+        Account: <strong>{account.name}</strong> ({account.bank})
+      </p>
 
       <FiltersBar
         from={effectiveFrom}
@@ -563,7 +560,7 @@ export default async function TransactionsPage({
                       </div>
                     )}
                     {r.note && (
-                      <div className="mt-0.5 text-xs italic text-amber-700 dark:text-amber-400">
+                      <div className="mt-0.5 text-xs italic text-owed-to-me">
                         {r.note}
                       </div>
                     )}
@@ -579,8 +576,8 @@ export default async function TransactionsPage({
                   <td
                     className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${
                       r.drCr === "debit"
-                        ? "text-red-700 dark:text-red-400"
-                        : "text-emerald-700 dark:text-emerald-400"
+                        ? "text-spend"
+                        : "text-inflow"
                     }`}
                   >
                     {formatPaiseSigned(r.amountPaise, r.drCr)}
@@ -629,7 +626,7 @@ export default async function TransactionsPage({
           </div>
         </div>
       )}
-    </main>
+    </AppShell>
   );
 }
 
@@ -646,9 +643,9 @@ function Stat({
 }) {
   const toneClass =
     tone === "debit"
-      ? "text-red-700 dark:text-red-400"
+      ? "text-spend"
       : tone === "credit"
-        ? "text-emerald-700 dark:text-emerald-400"
+        ? "text-inflow"
         : "";
   return (
     <div className="rounded border border-neutral-200 p-3 dark:border-neutral-800">

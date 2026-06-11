@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
-import { AppNav } from "@/components/AppNav";
+import { AppShell } from "@/components/AppShell";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { UploadForm } from "./UploadForm";
 
@@ -18,11 +18,7 @@ export default async function ImportPage() {
     .limit(10);
 
   return (
-    <main className="mx-auto max-w-2xl p-8">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Import statement</h1>
-        <AppNav current="/import" />
-      </header>
+    <AppShell title="Import statement" width="narrow">
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Upload a Bank of Baroda PDF. Re-uploading the same period inserts zero
         new rows.
@@ -71,6 +67,6 @@ export default async function ImportPage() {
           </tbody>
         </table>
       )}
-    </main>
+    </AppShell>
   );
 }
