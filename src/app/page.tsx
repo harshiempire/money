@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { AppShell } from "@/components/AppShell";
@@ -39,22 +39,23 @@ export default async function DashboardPage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
   const userId = user.id;
   await ensureDefaultCategories(userId);
-  await backfillCounterparties(account.id, userId);
+  await backfillCounterparties(accountIds, userId);
 
   const isStatementMode = !sp.preset && !sp.from && !sp.to;
 
   let period = resolvePeriod(sp);
-  if (isStatementMode) {
+  if (isStatementMode && accountIds.length > 0) {
     const [latest] = await db
       .select({
         periodStart: schema.imports.periodStart,
         periodEnd: schema.imports.periodEnd,
       })
       .from(schema.imports)
-      .where(eq(schema.imports.accountId, account.id))
+      .where(inArray(schema.imports.accountId, accountIds))
       .orderBy(desc(schema.imports.createdAt))
       .limit(1);
     if (latest?.periodStart && latest?.periodEnd) {
@@ -76,13 +77,13 @@ export default async function DashboardPage({
 
   const [totals, bridge, reimbursement, triage, cats, tops, prevComparison] =
     await Promise.all([
-      netSpendTotals(account.id, period.from, period.to),
-      splitBridgeTotals(account.id, period.from, period.to),
-      reimbursementBridgeTotals(account.id, period.from, period.to),
-      triageStats(account.id, period.from, period.to),
-      categoryBreakdown(account.id, period.from, period.to),
-      topCounterparties(account.id, period.from, period.to, 8),
-      loadPreviousPeriodComparison(account.id, period, isStatementMode),
+      netSpendTotals(accountIds, period.from, period.to, userId),
+      splitBridgeTotals(accountIds, period.from, period.to),
+      reimbursementBridgeTotals(accountIds, userId, period.from, period.to),
+      triageStats(accountIds, period.from, period.to),
+      categoryBreakdown(accountIds, period.from, period.to, userId),
+      topCounterparties(accountIds, period.from, period.to, 8),
+      loadPreviousPeriodComparison(accountIds, userId, period, isStatementMode),
     ]);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
@@ -176,8 +177,8 @@ export default async function DashboardPage({
       {isEmptyTenant ? (
         <SectionCard className="mt-8" title="No transactions yet">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Import a Bank of Baroda statement to see your spend breakdown and
-            categories here.
+            Import a bank statement to see your spend breakdown and categories
+            here.
           </p>
           <a
             href="/import"
@@ -309,7 +310,8 @@ export default async function DashboardPage({
 }
 
 async function loadPreviousPeriodComparison(
-  accountId: string,
+  accountIds: string[],
+  userId: string,
   period: { from: string | null; to: string | null },
   isStatementMode: boolean,
 ) {
@@ -319,14 +321,14 @@ async function loadPreviousPeriodComparison(
   let prevTo = period.to;
   let label = `${prevFrom} → ${prevTo}`;
 
-  if (isStatementMode) {
+  if (isStatementMode && accountIds.length > 0) {
     const imports = await db
       .select({
         periodStart: schema.imports.periodStart,
         periodEnd: schema.imports.periodEnd,
       })
       .from(schema.imports)
-      .where(eq(schema.imports.accountId, accountId))
+      .where(inArray(schema.imports.accountId, accountIds))
       .orderBy(desc(schema.imports.createdAt));
 
     const idx = imports.findIndex(
@@ -351,7 +353,7 @@ async function loadPreviousPeriodComparison(
     label = shifted.label;
   }
 
-  const totals = await netSpendTotals(accountId, prevFrom, prevTo);
+  const totals = await netSpendTotals(accountIds, prevFrom, prevTo, userId);
   return { totals, label };
 }
 

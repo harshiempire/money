@@ -28,8 +28,9 @@ export interface PayableOption {
 }
 
 export async function loadOpenReceivablesForAccount(
-  accountId: string,
+  accountIds: string[],
 ): Promise<ReceivableOption[]> {
+  if (accountIds.length === 0) return [];
   const splitsRaw = await db
     .select({
       splitId: schema.splits.id,
@@ -41,7 +42,7 @@ export async function loadOpenReceivablesForAccount(
       schema.transactions,
       eq(schema.splits.transactionId, schema.transactions.id),
     )
-    .where(eq(schema.transactions.accountId, accountId));
+    .where(inArray(schema.transactions.accountId, accountIds));
 
   if (splitsRaw.length === 0) return [];
 

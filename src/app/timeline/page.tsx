@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppShell } from "@/components/AppShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
@@ -27,27 +27,24 @@ export default async function TimelinePage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
 
   const [resolved, statementPeriods] = await Promise.all([
-    resolveTimelinePeriod(account.id, sp),
-    listStatementPeriods(account.id),
+    resolveTimelinePeriod(accountIds, sp),
+    listStatementPeriods(accountIds),
   ]);
   const { period } = resolved;
 
-  const balances = await dailyClosingBalance(
-    account.id,
-    period.from,
-    period.to,
-  );
+  const balances = await dailyClosingBalance(accountIds, period.from, period.to);
 
-  // Biggest movers in the period: top 10 debits and credits by amount.
-  const filters = [eq(schema.transactions.accountId, account.id)];
-  if (period.from) filters.push(gte(schema.transactions.txnDate, period.from));
-  if (period.to) filters.push(lte(schema.transactions.txnDate, period.to));
-  const where = and(...filters);
+  const moversFilters = accountIds.length > 0
+    ? [inArray(schema.transactions.accountId, accountIds)]
+    : [];
+  if (period.from) moversFilters.push(gte(schema.transactions.txnDate, period.from));
+  if (period.to) moversFilters.push(lte(schema.transactions.txnDate, period.to));
 
-  const movers = await db
+  const movers = accountIds.length > 0 ? await db
     .select({
       id: schema.transactions.id,
       txnDate: schema.transactions.txnDate,
@@ -57,9 +54,9 @@ export default async function TimelinePage({
       isTransfer: schema.transactions.isTransfer,
     })
     .from(schema.transactions)
-    .where(where)
+    .where(and(...moversFilters))
     .orderBy(desc(schema.transactions.amountPaise))
-    .limit(15);
+    .limit(15) : [];
 
   const opening = balances[0]?.balancePaise ?? null;
   const closing = balances[balances.length - 1]?.balancePaise ?? null;

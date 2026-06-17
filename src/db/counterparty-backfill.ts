@@ -1,24 +1,20 @@
 import "server-only";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, schema } from "./index";
 import { extractCounterparty } from "@/domain/categorize/counterparty";
 
-/**
- * Walks transactions for `accountId` that have no counterparty linked yet,
- * extracts a counterparty from the raw description, upserts a counterparty
- * row, and links the transaction. Idempotent and cheap when there's nothing
- * to do (a single COUNT round-trip).
- */
 export async function backfillCounterparties(
-  accountId: string,
+  accountIds: string[],
   userId: string,
 ) {
+  if (accountIds.length === 0) return { linked: 0, created: 0 };
+
   const [{ pending }] = await db
     .select({ pending: sql<number>`count(*)::int` })
     .from(schema.transactions)
     .where(
       and(
-        eq(schema.transactions.accountId, accountId),
+        inArray(schema.transactions.accountId, accountIds),
         isNull(schema.transactions.counterpartyId),
       ),
     );
@@ -33,12 +29,11 @@ export async function backfillCounterparties(
     .from(schema.transactions)
     .where(
       and(
-        eq(schema.transactions.accountId, accountId),
+        inArray(schema.transactions.accountId, accountIds),
         isNull(schema.transactions.counterpartyId),
       ),
     );
 
-  // Cache existing counterparties by key to avoid one SELECT per row.
   const existing = await db
     .select({
       id: schema.counterparties.id,
@@ -73,7 +68,6 @@ export async function backfillCounterparties(
         byKey.set(cp.key, id);
         created++;
       } else {
-        // Lost the upsert race; re-read.
         const [found] = await db
           .select({ id: schema.counterparties.id })
           .from(schema.counterparties)
