@@ -1,4 +1,4 @@
-import { desc, eq, and, lte, gte } from "drizzle-orm";
+import { desc, eq, and, lte, gte, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import {
   calendarMonthPeriod,
@@ -46,13 +46,12 @@ export function reimbursementsPeriodHref(sp: SpendSearchParams): string {
   return spendPeriodHref(sp, "/reimbursements");
 }
 
-/** Default spend report period: current calendar month. */
 export async function resolveSpendPeriod(
-  accountId: string,
+  accountIds: string[],
   sp: SpendSearchParams,
 ): Promise<ResolvedSpendPeriod> {
   if (sp.statement === "1" || sp.statement === "true") {
-    return resolveStatementPeriod(accountId);
+    return resolveStatementPeriod(accountIds);
   }
 
   if (sp.preset && PRESET_PERIODS[sp.preset]) {
@@ -94,9 +93,8 @@ export async function resolveSpendPeriod(
   };
 }
 
-/** Timeline default: latest statement period; falls back like spend when none imported. */
 export async function resolveTimelinePeriod(
-  accountId: string,
+  accountIds: string[],
   sp: SpendSearchParams,
 ): Promise<ResolvedSpendPeriod> {
   const hasExplicit =
@@ -108,16 +106,16 @@ export async function resolveTimelinePeriod(
     sp.statement === "true";
 
   if (!hasExplicit) {
-    return resolveStatementPeriod(accountId);
+    return resolveStatementPeriod(accountIds);
   }
 
-  return resolveSpendPeriod(accountId, sp);
+  return resolveSpendPeriod(accountIds, sp);
 }
 
 async function resolveStatementPeriod(
-  accountId: string,
+  accountIds: string[],
 ): Promise<ResolvedSpendPeriod> {
-  const period = await getLatestStatementPeriod(accountId);
+  const period = await getLatestStatementPeriod(accountIds);
   if (period) {
     return {
       period,
@@ -136,11 +134,11 @@ async function resolveStatementPeriod(
   };
 }
 
-/** Statement import whose date range contains txnDate, or null. */
 export async function getStatementPeriodForDate(
-  accountId: string,
+  accountIds: string[],
   txnDate: string,
 ): Promise<Period | null> {
+  if (accountIds.length === 0) return null;
   const [row] = await db
     .select({
       periodStart: schema.imports.periodStart,
@@ -149,7 +147,7 @@ export async function getStatementPeriodForDate(
     .from(schema.imports)
     .where(
       and(
-        eq(schema.imports.accountId, accountId),
+        inArray(schema.imports.accountId, accountIds),
         lte(schema.imports.periodStart, txnDate),
         gte(schema.imports.periodEnd, txnDate),
       ),
@@ -165,17 +163,17 @@ export async function getStatementPeriodForDate(
   };
 }
 
-/** Latest imported statement date range, or null if none. */
 export async function getLatestStatementPeriod(
-  accountId: string,
+  accountIds: string[],
 ): Promise<Period | null> {
+  if (accountIds.length === 0) return null;
   const [latest] = await db
     .select({
       periodStart: schema.imports.periodStart,
       periodEnd: schema.imports.periodEnd,
     })
     .from(schema.imports)
-    .where(eq(schema.imports.accountId, accountId))
+    .where(inArray(schema.imports.accountId, accountIds))
     .orderBy(desc(schema.imports.createdAt))
     .limit(1);
 
@@ -187,14 +185,15 @@ export async function getLatestStatementPeriod(
   };
 }
 
-export async function listStatementPeriods(accountId: string) {
+export async function listStatementPeriods(accountIds: string[]) {
+  if (accountIds.length === 0) return [];
   const rows = await db
     .select({
       periodStart: schema.imports.periodStart,
       periodEnd: schema.imports.periodEnd,
     })
     .from(schema.imports)
-    .where(eq(schema.imports.accountId, accountId))
+    .where(inArray(schema.imports.accountId, accountIds))
     .orderBy(desc(schema.imports.createdAt));
 
   const seen = new Set<string>();

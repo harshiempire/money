@@ -1,4 +1,4 @@
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { AppShell } from "@/components/AppShell";
@@ -39,11 +39,12 @@ export default async function SpendReportPage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
   await ensureDefaultCategories(user.id);
-  await backfillCounterparties(account.id, user.id);
+  await backfillCounterparties(accountIds, user.id);
 
-  const resolved = await resolveSpendPeriod(account.id, sp);
+  const resolved = await resolveSpendPeriod(accountIds, sp);
   const { period } = resolved;
   const periodQuery = spendPeriodHref(sp).replace("/spend?", "");
   const reimbQuery = reimbursementsPeriodHref(sp).replace("/reimbursements?", "");
@@ -59,18 +60,18 @@ export default async function SpendReportPage({
     statements,
     prevTotals,
   ] = await Promise.all([
-    netSpendTotals(account.id, period.from, period.to),
-    splitBridgeTotals(account.id, period.from, period.to),
-    reimbursementBridgeTotals(account.id, period.from, period.to),
-    categoryBreakdown(account.id, period.from, period.to),
-    topDebits(account.id, period.from, period.to, 8),
-    dailyNetSpend(account.id, period.from, period.to),
-    monthlySpendHistory(account.id, 12),
-    listStatementPeriods(account.id),
+    netSpendTotals(accountIds, period.from, period.to, user.id),
+    splitBridgeTotals(accountIds, period.from, period.to),
+    reimbursementBridgeTotals(accountIds, user.id, period.from, period.to),
+    categoryBreakdown(accountIds, period.from, period.to, user.id),
+    topDebits(accountIds, period.from, period.to, user.id, 8),
+    dailyNetSpend(accountIds, period.from, period.to, user.id),
+    monthlySpendHistory(accountIds, user.id, 12),
+    listStatementPeriods(accountIds),
     period.from && period.to
       ? (async () => {
           const p = previousPeriodWindow(period.from!, period.to!);
-          const totals = await netSpendTotals(account.id, p.from, p.to);
+          const totals = await netSpendTotals(accountIds, p.from, p.to, user.id);
           return { totals, label: p.label };
         })()
       : null,

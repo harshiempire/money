@@ -1,18 +1,7 @@
 import "server-only";
-import { type SQL, and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { type SQL, and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
-/**
- * The single source of truth for "net personal spend" semantics:
- *
- *   net_self =
- *     + (debit amount, or your_share if a split exists)         when !is_transfer
- *     - (credit amount)                                          when !is_transfer && !is_settlement
- *     + 0                                                        otherwise
- *
- * "Settlement credits" are credits already accounted for via the related
- * debit's your_share, so counting them again would double-count.
- */
 const netSelfExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
@@ -43,11 +32,12 @@ export interface NetSpendTotals {
 }
 
 const buildTxnWhere = (
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
 ): SQL | undefined => {
-  const filters = [eq(schema.transactions.accountId, accountId)];
+  if (accountIds.length === 0) return sql`false`;
+  const filters: SQL[] = [inArray(schema.transactions.accountId, accountIds)];
   if (from) filters.push(gte(schema.transactions.txnDate, from));
   if (to) filters.push(lte(schema.transactions.txnDate, to));
   return and(...filters);
@@ -103,17 +93,15 @@ async function owedSpendByCategory(
 }
 
 export async function netSpendTotals(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
+  userId: string,
 ): Promise<NetSpendTotals> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
-  const userId = account?.userId;
+  if (accountIds.length === 0) {
+    return { totalDebitPaise: 0, totalCreditPaise: 0, netSelfPaise: 0, owedSelfPaise: 0, count: 0 };
+  }
+  const where = buildTxnWhere(accountIds, from, to);
 
   const [r, owedSelfPaise] = await Promise.all([
     db
@@ -125,7 +113,7 @@ export async function netSpendTotals(
       })
       .from(schema.transactions)
       .where(where),
-    userId ? owedSelfPaiseForUser(userId, from, to) : Promise.resolve(0),
+    owedSelfPaiseForUser(userId, from, to),
   ]);
 
   const txnNetSelf = Number(r[0].netSelf);
@@ -145,21 +133,14 @@ export interface CategoryRow {
   count: number;
 }
 
-/**
- * Net-self grouped by category over the period. Uncategorized rows surface
- * as "Uncategorized" so the user knows there's still work to triage.
- */
 export async function categoryBreakdown(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
+  userId: string,
 ): Promise<CategoryRow[]> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
+  if (accountIds.length === 0) return [];
+  const where = buildTxnWhere(accountIds, from, to);
 
   const rows = await db
     .select({
@@ -183,9 +164,7 @@ export async function categoryBreakdown(
     count: r.count,
   }));
 
-  const owedRows = account?.userId
-    ? await owedSpendByCategory(account.userId, from, to)
-    : [];
+  const owedRows = await owedSpendByCategory(userId, from, to);
 
   const merged = new Map<string, CategoryRow>();
   for (const row of [...txnRows, ...owedRows]) {
@@ -211,17 +190,13 @@ export interface DailyBalance {
   balancePaise: number;
 }
 
-/**
- * Last known running balance per day in the period. We use the bank's
- * stored balance on the latest transaction of each date — no derivation,
- * so it stays trustworthy even if a row is missing.
- */
 export async function dailyClosingBalance(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
 ): Promise<DailyBalance[]> {
-  const where = buildTxnWhere(accountId, from, to);
+  if (accountIds.length === 0) return [];
+  const where = buildTxnWhere(accountIds, from, to);
   const rows = await db
     .select({
       date: schema.transactions.txnDate,
@@ -250,12 +225,13 @@ export interface TopCounterparty {
 }
 
 export async function topCounterparties(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
   limit = 10,
 ): Promise<TopCounterparty[]> {
-  const where = buildTxnWhere(accountId, from, to);
+  if (accountIds.length === 0) return [];
+  const where = buildTxnWhere(accountIds, from, to);
   const rows = await db
     .select({
       counterpartyId: schema.transactions.counterpartyId,
@@ -333,13 +309,15 @@ export interface SplitBridgeTotals {
   splitTxnCount: number;
 }
 
-/** Decompose gross debits into your share vs others' share on split transactions. */
 export async function splitBridgeTotals(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
 ): Promise<SplitBridgeTotals> {
-  const where = buildTxnWhere(accountId, from, to);
+  if (accountIds.length === 0) {
+    return { personalDebitGrossPaise: 0, yourShareDebitPaise: 0, othersSharePaise: 0, netCreditPaise: 0, splitTxnCount: 0 };
+  }
+  const where = buildTxnWhere(accountIds, from, to);
   const [r, splitCountRow] = await Promise.all([
     db
       .select({
@@ -385,11 +363,14 @@ export interface TriageStats {
 }
 
 export async function triageStats(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
 ): Promise<TriageStats> {
-  const where = buildTxnWhere(accountId, from, to);
+  if (accountIds.length === 0) {
+    return { uncategorizedNetSelfPaise: 0, uncategorizedCount: 0, needsReviewCount: 0 };
+  }
+  const where = buildTxnWhere(accountIds, from, to);
   const [uncat] = await db
     .select({
       netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
@@ -417,19 +398,14 @@ export interface DailyNetSpend {
   netSelfPaise: number;
 }
 
-/** Net personal spend per calendar day — for dashboard sparkline. */
 export async function dailyNetSpend(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
+  userId: string,
 ): Promise<DailyNetSpend[]> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
-  const userId = account?.userId;
+  if (accountIds.length === 0) return [];
+  const where = buildTxnWhere(accountIds, from, to);
 
   const [txnRows, owedRows] = await Promise.all([
     db
@@ -440,21 +416,19 @@ export async function dailyNetSpend(
       .from(schema.transactions)
       .where(where)
       .groupBy(schema.transactions.txnDate),
-    userId
-      ? (async () => {
-          const filters = [eq(schema.owedExpenses.userId, userId)];
-          if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
-          if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
-          return db
-            .select({
-              date: schema.owedExpenses.incurredDate,
-              netSelf: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
-            })
-            .from(schema.owedExpenses)
-            .where(and(...filters))
-            .groupBy(schema.owedExpenses.incurredDate);
-        })()
-      : Promise.resolve([] as Array<{ date: string; netSelf: number }>),
+    (async () => {
+      const filters = [eq(schema.owedExpenses.userId, userId)];
+      if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+      if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+      return db
+        .select({
+          date: schema.owedExpenses.incurredDate,
+          netSelf: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
+        })
+        .from(schema.owedExpenses)
+        .where(and(...filters))
+        .groupBy(schema.owedExpenses.incurredDate);
+    })(),
   ]);
 
   const merged = new Map<string, number>();
@@ -477,20 +451,15 @@ export interface TopDebit {
   netSelfPaise: number;
 }
 
-/** Largest personal debits by net-self amount (split-aware). */
 export async function topDebits(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
+  userId: string,
   limit = 5,
 ): Promise<TopDebit[]> {
-  const where = buildTxnWhere(accountId, from, to);
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
-  const userId = account?.userId;
+  if (accountIds.length === 0) return [];
+  const where = buildTxnWhere(accountIds, from, to);
 
   const [txnRows, owedRows] = await Promise.all([
     db
@@ -510,35 +479,24 @@ export async function topDebits(
       )
       .orderBy(desc(yourShareDebitExpr))
       .limit(limit),
-    userId
-      ? (async () => {
-          const filters = [eq(schema.owedExpenses.userId, userId)];
-          if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
-          if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
-          return db
-            .select({
-              id: schema.owedExpenses.id,
-              txnDate: schema.owedExpenses.incurredDate,
-              rawDescription: schema.owedExpenses.description,
-              netSelf: schema.owedExpenses.amountPaise,
-            })
-            .from(schema.owedExpenses)
-            .where(and(...filters))
-            .orderBy(desc(schema.owedExpenses.amountPaise))
-            .limit(limit);
-        })()
-      : Promise.resolve(
-          [] as Array<{
-            id: string;
-            txnDate: string;
-            rawDescription: string;
-            netSelf: number;
-          }>,
-        ),
+    (async () => {
+      const filters = [eq(schema.owedExpenses.userId, userId)];
+      if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+      if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+      return db
+        .select({
+          id: schema.owedExpenses.id,
+          txnDate: schema.owedExpenses.incurredDate,
+          rawDescription: schema.owedExpenses.description,
+          netSelf: schema.owedExpenses.amountPaise,
+        })
+        .from(schema.owedExpenses)
+        .where(and(...filters))
+        .orderBy(desc(schema.owedExpenses.amountPaise))
+        .limit(limit);
+    })(),
   ]);
 
-  // TODO: downstream UI links to /transactions#txn-${id}; owed_expense ids
-  // won't resolve there. Revisit once we have a unified "expense" detail route.
   const combined: TopDebit[] = [
     ...txnRows.map((r) => ({
       id: r.id,

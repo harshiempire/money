@@ -3,7 +3,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { detectTransferPairs } from "@/domain/transfers/detect";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
 import {
@@ -258,7 +258,9 @@ export async function applyNoteToTransactions(input: {
 
 export async function autoDetectTransfers(): Promise<{ pairs: number }> {
   const user = await requireCurrentUserAction();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
+  if (accountIds.length === 0) return { pairs: 0 };
   const rows = await db
     .select({
       id: schema.transactions.id,
@@ -270,7 +272,7 @@ export async function autoDetectTransfers(): Promise<{ pairs: number }> {
       isTransfer: schema.transactions.isTransfer,
     })
     .from(schema.transactions)
-    .where(eq(schema.transactions.accountId, account.id));
+    .where(inArray(schema.transactions.accountId, accountIds));
 
   const pairs = detectTransferPairs(rows);
   if (pairs.length === 0) {

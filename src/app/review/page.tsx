@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, inArray, eq } from "drizzle-orm";
 import { schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppShell } from "@/components/AppShell";
 import { ensureDefaultCategories } from "@/db/seed-categories";
@@ -12,17 +12,21 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewPage() {
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
 
   await ensureDefaultCategories(user.id);
-  await backfillCounterparties(account.id, user.id);
+  await backfillCounterparties(accountIds, user.id);
 
-  const where = and(
-    eq(schema.transactions.accountId, account.id),
-    eq(schema.transactions.needsReview, true),
-  );
+  const where =
+    accountIds.length > 0
+      ? and(
+          inArray(schema.transactions.accountId, accountIds),
+          eq(schema.transactions.needsReview, true),
+        )
+      : and(eq(schema.transactions.needsReview, true));
 
-  const ctx = await loadTransactionTableContext(account.id, user.id, where);
+  const ctx = await loadTransactionTableContext(accountIds, user.id, where);
 
   return (
     <AppShell title="Review later" width="wide">
@@ -32,7 +36,6 @@ export default async function ReviewPage() {
         from this list when done.
       </p>
       <p className="mt-1 text-xs text-neutral-500">
-        Account: <strong>{account.name}</strong> ({account.bank}) ·{" "}
         {ctx.rows.length} item{ctx.rows.length === 1 ? "" : "s"}
       </p>
 

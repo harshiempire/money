@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppShell } from "@/components/AppShell";
 import { ensureDefaultCategories } from "@/db/seed-categories";
@@ -69,11 +69,12 @@ export default async function TransactionsPage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
   const userId = user.id;
 
   await ensureDefaultCategories(userId);
-  await backfillCounterparties(account.id, userId);
+  await backfillCounterparties(accountIds, userId);
 
   const showAllTime = sp.all === "1";
   const highlightTxnId = sp.txn?.trim() || null;
@@ -90,7 +91,9 @@ export default async function TransactionsPage({
       .where(
         and(
           eq(schema.transactions.id, highlightTxnId),
-          eq(schema.transactions.accountId, account.id),
+          accountIds.length > 0
+            ? inArray(schema.transactions.accountId, accountIds)
+            : undefined,
         ),
       )
       .limit(1);
@@ -99,7 +102,7 @@ export default async function TransactionsPage({
       linkedTxnNotFound = true;
     } else {
       const statement = await getStatementPeriodForDate(
-        account.id,
+        accountIds,
         target.txnDate,
       );
       effectiveFrom = statement?.from ?? target.txnDate;
@@ -108,7 +111,7 @@ export default async function TransactionsPage({
       usingDefaultStatement = Boolean(statement);
     }
   } else if (!showAllTime && !effectiveFrom && !effectiveTo) {
-    const statement = await getLatestStatementPeriod(account.id);
+    const statement = await getLatestStatementPeriod(accountIds);
     if (statement?.from && statement?.to) {
       effectiveFrom = statement.from;
       effectiveTo = statement.to;
@@ -126,7 +129,9 @@ export default async function TransactionsPage({
           ? `${effectiveFrom ?? "…"} → ${effectiveTo ?? "…"}`
           : null;
 
-  const filters = [eq(schema.transactions.accountId, account.id)];
+  const filters = accountIds.length > 0
+    ? [inArray(schema.transactions.accountId, accountIds)]
+    : [eq(schema.transactions.id, "")];
   if (effectiveFrom) filters.push(gte(schema.transactions.txnDate, effectiveFrom));
   if (effectiveTo) filters.push(lte(schema.transactions.txnDate, effectiveTo));
   if (isChannel(sp.channel))
@@ -293,19 +298,21 @@ export default async function TransactionsPage({
 
   // For the SettleDialog: list every participant across all splits in the
   // account, with how much has already been settled across all inflows.
-  const allSplitsForAccount = await db
-    .select({
-      id: schema.splits.id,
-      transactionId: schema.splits.transactionId,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, account.id));
+  const allSplitsForAccount = accountIds.length > 0
+    ? await db
+        .select({
+          id: schema.splits.id,
+          transactionId: schema.splits.transactionId,
+          txnDate: schema.transactions.txnDate,
+          rawDescription: schema.transactions.rawDescription,
+        })
+        .from(schema.splits)
+        .innerJoin(
+          schema.transactions,
+          eq(schema.splits.transactionId, schema.transactions.id),
+        )
+        .where(inArray(schema.transactions.accountId, accountIds))
+    : [];
   const allParticipants = allSplitsForAccount.length
     ? await db
         .select()
@@ -412,10 +419,10 @@ export default async function TransactionsPage({
 
   const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
     await Promise.all([
-      loadOpenReceivablesForAccount(account.id),
+      loadOpenReceivablesForAccount(accountIds),
       loadOpenPayablesForUser(userId),
       loadNetEventsByTransactionIds(rows.map((r) => r.id)),
-      loadCounterpartyPersonHints(account.id),
+      loadCounterpartyPersonHints(accountIds),
     ]);
 
   return (
@@ -426,7 +433,7 @@ export default async function TransactionsPage({
     >
       <ScrollToTransaction transactionId={highlightTxnId} />
       <p className="mt-1 text-xs text-neutral-500">
-        Account: <strong>{account.name}</strong> ({account.bank})
+        {accounts.map((a) => `${a.name} (${a.bank})`).join(" · ")}
       </p>
 
       <FiltersBar

@@ -36,12 +36,12 @@ export function UploadForm() {
           type="password"
           name="pdfPassword"
           autoComplete="off"
-          placeholder="e.g. DDMMYYYY for Bank of Baroda"
+          placeholder="Leave blank if not required"
           className="mt-1 block w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
         />
         <span className="mt-1 block text-xs text-neutral-500">
-          Many bank statement PDFs are encrypted. BoB usually uses your date of birth
-          (DDMMYYYY).
+          Some bank PDFs are password-protected. Bank of Baroda typically uses
+          your date of birth (DDMMYYYY).
         </span>
       </label>
       <button

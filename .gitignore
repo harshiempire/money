@@ -17,10 +17,7 @@ bun.lockb
 .bun
 
 # env
-.env
 .env*.local
-.env.development
-.env.production
 
 # logs
 *.log
@@ -39,10 +36,10 @@ next-env.d.ts
 drizzle/migrations/meta/_journal.json.bak
 
 # editor
-.vscode
 .idea
 
 # bank statement PII — never commit
 *.pdf
 *.xlsx
 sample-data/
+config.bat
