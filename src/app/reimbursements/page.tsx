@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
+import { getAllAccountsForUser } from "@/db/money-account";
 import { requireCurrentUser } from "@/lib/auth/require-current-user";
 import { AppShell } from "@/components/AppShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
@@ -75,17 +75,18 @@ export default async function ReimbursementsPage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const accounts = await getAllAccountsForUser(user.id);
+  const accountIds = accounts.map((a) => a.id);
 
   const [resolved, statements] = await Promise.all([
-    resolveSpendPeriod(account.id, sp),
-    listStatementPeriods(account.id),
+    resolveSpendPeriod(accountIds, sp),
+    listStatementPeriods(accountIds),
   ]);
   const { period } = resolved;
 
   const [openReceivables, openPayables, categories, personRows] =
     await Promise.all([
-    loadOpenReceivablesForAccount(account.id),
+    loadOpenReceivablesForAccount(accountIds),
     loadOpenPayablesForUser(user.id),
     db
       .select({
@@ -106,7 +107,9 @@ export default async function ReimbursementsPage({
   const categoryOptions = categories;
   const knownPersonNames = personRows.map((p) => p.name);
 
-  const txnFilters = [eq(schema.transactions.accountId, account.id)];
+  const txnFilters = accountIds.length > 0
+    ? [inArray(schema.transactions.accountId, accountIds)]
+    : [eq(schema.transactions.id, "")];
   if (period.from) txnFilters.push(gte(schema.transactions.txnDate, period.from));
   if (period.to) txnFilters.push(lte(schema.transactions.txnDate, period.to));
   const txnWhere = and(...txnFilters);

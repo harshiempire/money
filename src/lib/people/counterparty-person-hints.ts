@@ -1,11 +1,7 @@
 import "server-only";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
-/**
- * From past bank settlements on inflow transactions: which person name was
- * most often settled when money arrived from each counterparty.
- */
 function mergeHintRows(
   bestByCounterparty: Map<string, { name: string; count: number }>,
   rows: Array<{
@@ -27,10 +23,12 @@ function mergeHintRows(
 }
 
 export async function loadCounterpartyPersonHints(
-  accountId: string,
+  accountIds: string[],
 ): Promise<Record<string, string>> {
+  if (accountIds.length === 0) return {};
+
   const baseWhere = and(
-    eq(schema.transactions.accountId, accountId),
+    inArray(schema.transactions.accountId, accountIds),
     isNotNull(schema.transactions.counterpartyId),
   );
 

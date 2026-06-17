@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  and,
   asc,
   desc,
   eq,
@@ -43,7 +42,7 @@ export type TransactionListRow = {
 };
 
 export async function loadTransactionTableContext(
-  accountId: string,
+  accountIds: string[],
   userId: string,
   where: SQL | undefined,
   options?: { limit?: number },
@@ -194,19 +193,21 @@ export async function loadTransactionTableContext(
     settlementsByInflow.set(st.inflowTransactionId, arr);
   }
 
-  const allSplitsForAccount = await db
-    .select({
-      id: schema.splits.id,
-      transactionId: schema.splits.transactionId,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, accountId));
+  const allSplitsForAccount = accountIds.length > 0
+    ? await db
+        .select({
+          id: schema.splits.id,
+          transactionId: schema.splits.transactionId,
+          txnDate: schema.transactions.txnDate,
+          rawDescription: schema.transactions.rawDescription,
+        })
+        .from(schema.splits)
+        .innerJoin(
+          schema.transactions,
+          eq(schema.splits.transactionId, schema.transactions.id),
+        )
+        .where(inArray(schema.transactions.accountId, accountIds))
+    : [];
 
   const allParticipants = allSplitsForAccount.length
     ? await db
@@ -285,10 +286,10 @@ export async function loadTransactionTableContext(
 
   const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
     await Promise.all([
-      loadOpenReceivablesForAccount(accountId),
+      loadOpenReceivablesForAccount(accountIds),
       loadOpenPayablesForUser(userId),
       loadNetEventsByTransactionIds(rows.map((r) => r.id)),
-      loadCounterpartyPersonHints(accountId),
+      loadCounterpartyPersonHints(accountIds),
     ]);
 
   return {

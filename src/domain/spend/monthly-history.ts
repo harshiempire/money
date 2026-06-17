@@ -1,5 +1,5 @@
 import "server-only";
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { calendarMonthPeriod, type Period } from "@/lib/period";
 import {
@@ -22,9 +22,9 @@ export interface MonthlySpendRow {
   outstandingReimbursePaise: number;
 }
 
-/** Last N calendar months of spend summary (newest first). */
 export async function monthlySpendHistory(
-  accountId: string,
+  accountIds: string[],
+  userId: string,
   monthCount = 12,
 ): Promise<MonthlySpendRow[]> {
   const now = new Date();
@@ -34,9 +34,9 @@ export async function monthlySpendHistory(
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const period = calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1);
     const [totals, bridge, reimb] = await Promise.all([
-      netSpendTotals(accountId, period.from, period.to),
-      splitBridgeTotals(accountId, period.from, period.to),
-      reimbursementBridgeTotals(accountId, period.from, period.to),
+      netSpendTotals(accountIds, period.from, period.to, userId),
+      splitBridgeTotals(accountIds, period.from, period.to),
+      reimbursementBridgeTotals(accountIds, userId, period.from, period.to),
     ]);
     rows.push(buildMonthlyRow(period, totals, bridge, reimb));
   }
@@ -63,17 +63,20 @@ function buildMonthlyRow(
   };
 }
 
-/** Earliest transaction month through current month for month picker bounds. */
 export async function transactionMonthBounds(
-  accountId: string,
+  accountIds: string[],
 ): Promise<{ earliest: string | null; latest: string }> {
+  if (accountIds.length === 0) {
+    const today = new Date();
+    return { earliest: null, latest: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}` };
+  }
   const [r] = await db
     .select({
       earliest: sql<string>`min(${schema.transactions.txnDate})`,
       latest: sql<string>`max(${schema.transactions.txnDate})`,
     })
     .from(schema.transactions)
-    .where(sql`${schema.transactions.accountId} = ${accountId}`);
+    .where(inArray(schema.transactions.accountId, accountIds));
 
   const today = new Date();
   const latestMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;

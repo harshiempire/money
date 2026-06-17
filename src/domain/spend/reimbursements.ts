@@ -17,11 +17,23 @@ export interface ReimbursementBridgeTotals {
 }
 
 export async function reimbursementBridgeTotals(
-  accountId: string,
+  accountIds: string[],
+  userId: string,
   from: string | null,
   to: string | null,
 ): Promise<ReimbursementBridgeTotals> {
-  const txnFilters = [eq(schema.transactions.accountId, accountId)];
+  const zero = {
+    expectedReimbursePaise: 0,
+    settledReimbursePaise: 0,
+    outstandingReimbursePaise: 0,
+    outstandingPayablePaise: 0,
+    receivedInPeriodPaise: 0,
+    splitCount: 0,
+    openSplitCount: 0,
+  };
+  if (accountIds.length === 0) return zero;
+
+  const txnFilters = [inArray(schema.transactions.accountId, accountIds)];
   if (from) txnFilters.push(gte(schema.transactions.txnDate, from));
   if (to) txnFilters.push(lte(schema.transactions.txnDate, to));
   const txnWhere = and(...txnFilters);
@@ -36,54 +48,38 @@ export async function reimbursementBridgeTotals(
     .where(txnWhere);
 
   const splitIds = splitsInPeriod.map((s) => s.splitId);
-  const receivedInPeriodPaise = await sumSettlementsReceivedInPeriod(
-    accountId,
-    from,
-    to,
-  );
+  const [receivedInPeriodPaise, outstandingPayablePaise] = await Promise.all([
+    sumSettlementsReceivedInPeriod(accountIds, from, to),
+    (async () => {
+      const owedFilters = [eq(schema.owedExpenses.userId, userId)];
+      if (from) owedFilters.push(gte(schema.owedExpenses.incurredDate, from));
+      if (to) owedFilters.push(lte(schema.owedExpenses.incurredDate, to));
 
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
+      const owedInPeriod = await db
+        .select({
+          id: schema.owedExpenses.id,
+          amountPaise: schema.owedExpenses.amountPaise,
+        })
+        .from(schema.owedExpenses)
+        .where(and(...owedFilters));
 
-  let outstandingPayablePaise = 0;
-  if (account?.userId) {
-    const owedFilters = [eq(schema.owedExpenses.userId, account.userId)];
-    if (from) owedFilters.push(gte(schema.owedExpenses.incurredDate, from));
-    if (to) owedFilters.push(lte(schema.owedExpenses.incurredDate, to));
+      if (owedInPeriod.length === 0) return 0;
 
-    const owedInPeriod = await db
-      .select({
-        id: schema.owedExpenses.id,
-        amountPaise: schema.owedExpenses.amountPaise,
-      })
-      .from(schema.owedExpenses)
-      .where(and(...owedFilters));
-
-    if (owedInPeriod.length > 0) {
       const settled = await settledAmountByOwedExpenseIds(
         owedInPeriod.map((o) => o.id),
       );
+      let total = 0;
       for (const o of owedInPeriod) {
         const expected = Number(o.amountPaise);
         const paid = settled.get(o.id) ?? 0;
-        outstandingPayablePaise += Math.max(0, expected - paid);
+        total += Math.max(0, expected - paid);
       }
-    }
-  }
+      return total;
+    })(),
+  ]);
 
   if (splitIds.length === 0) {
-    return {
-      expectedReimbursePaise: 0,
-      settledReimbursePaise: 0,
-      outstandingReimbursePaise: 0,
-      outstandingPayablePaise,
-      receivedInPeriodPaise,
-      splitCount: 0,
-      openSplitCount: 0,
-    };
+    return { ...zero, outstandingPayablePaise, receivedInPeriodPaise };
   }
 
   const partsWithSplit = await db
@@ -145,11 +141,11 @@ export async function reimbursementBridgeTotals(
 }
 
 async function sumSettlementsReceivedInPeriod(
-  accountId: string,
+  accountIds: string[],
   from: string | null,
   to: string | null,
 ): Promise<number> {
-  if (!from || !to) return 0;
+  if (!from || !to || accountIds.length === 0) return 0;
 
   const expenseTxn = schema.transactions;
 
@@ -173,7 +169,7 @@ async function sumSettlementsReceivedInPeriod(
     )
     .where(
       and(
-        eq(expenseTxn.accountId, accountId),
+        inArray(expenseTxn.accountId, accountIds),
         eq(schema.settlements.method, "bank"),
         gte(inflowTxn.txnDate, from),
         lte(inflowTxn.txnDate, to),
@@ -196,7 +192,7 @@ async function sumSettlementsReceivedInPeriod(
     .innerJoin(expenseTxn, eq(schema.splits.transactionId, expenseTxn.id))
     .where(
       and(
-        eq(expenseTxn.accountId, accountId),
+        inArray(expenseTxn.accountId, accountIds),
         eq(schema.settlements.method, "cash"),
         sql`${schema.settlements.createdAt}::date >= ${from}::date`,
         sql`${schema.settlements.createdAt}::date <= ${to}::date`,

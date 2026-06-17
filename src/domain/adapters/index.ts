@@ -10,6 +10,7 @@ export interface AdapterContext {
   readonly pdfPassword?: string;
 }
 import { bobAdapter } from "./bob/parser";
+import { axisAdapter } from "./axis/parser";
 
 export interface BankAdapter {
   /** Slug used in the DB's `bank` column. */
@@ -27,7 +28,7 @@ export interface BankAdapter {
   ) => Effect.Effect<ParsedStatement, ParseError | PdfPasswordError>;
 }
 
-const REGISTRY: readonly BankAdapter[] = [bobAdapter];
+const REGISTRY: readonly BankAdapter[] = [bobAdapter, axisAdapter];
 
 /**
  * Walk the registry and return the first adapter whose `detect` says yes.
