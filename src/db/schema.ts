@@ -108,24 +108,28 @@ export const verificationTokens = pgTable(
 // ─── Domain tables ───────────────────────────────────────────────────────────
 
 // Bank/wallet account that holds money. (Distinct from Auth.js's `account`.)
-export const moneyAccounts = pgTable("money_account", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  bank: text("bank").notNull(), // "bob" | "icici" | ...
-  // Money stored as paise (integer) to avoid float drift.
-  openingBalancePaise: bigint("opening_balance_paise", {
-    mode: "number",
-  }).notNull(),
-  openingDate: date("opening_date", { mode: "string" }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const moneyAccounts = pgTable(
+  "money_account",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    bank: text("bank").notNull(), // "bob" | "icici" | ...
+    // Money stored as paise (integer) to avoid float drift.
+    openingBalancePaise: bigint("opening_balance_paise", {
+      mode: "number",
+    }).notNull(),
+    openingDate: date("opening_date", { mode: "string" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("money_account_user_bank_uniq").on(t.userId, t.bank)],
+);
 
 export const counterparties = pgTable(
   "counterparty",
@@ -168,24 +172,28 @@ export const categories = pgTable(
   (t) => [uniqueIndex("category_user_name_uniq").on(t.userId, t.name)],
 );
 
-export const imports = pgTable("import", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  accountId: text("account_id")
-    .notNull()
-    .references(() => moneyAccounts.id, { onDelete: "cascade" }),
-  filename: text("filename").notNull(),
-  sha256: text("sha256").notNull(),
-  bank: text("bank").notNull(),
-  periodStart: date("period_start", { mode: "string" }),
-  periodEnd: date("period_end", { mode: "string" }),
-  rowsSeen: integer("rows_seen").notNull().default(0),
-  rowsNew: integer("rows_new").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const imports = pgTable(
+  "import",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => moneyAccounts.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    sha256: text("sha256").notNull(),
+    bank: text("bank").notNull(),
+    periodStart: date("period_start", { mode: "string" }),
+    periodEnd: date("period_end", { mode: "string" }),
+    rowsSeen: integer("rows_seen").notNull().default(0),
+    rowsNew: integer("rows_new").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("import_account_created_idx").on(t.accountId, t.createdAt)],
+);
 
 export const transactions = pgTable(
   "transaction",
@@ -227,20 +235,24 @@ export const transactions = pgTable(
   ],
 );
 
-export const splits = pgTable("split", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  transactionId: text("transaction_id")
-    .notNull()
-    .references(() => transactions.id, { onDelete: "cascade" }),
-  totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
-  yourSharePaise: bigint("your_share_paise", { mode: "number" }).notNull(),
-  note: text("note"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const splits = pgTable(
+  "split",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    yourSharePaise: bigint("your_share_paise", { mode: "number" }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("split_transaction_id_idx").on(t.transactionId)],
+);
 
 export const persons = pgTable(
   "person",
@@ -264,42 +276,50 @@ export const persons = pgTable(
   ],
 );
 
-export const splitParticipants = pgTable("split_participant", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  splitId: text("split_id")
-    .notNull()
-    .references(() => splits.id, { onDelete: "cascade" }),
-  personId: text("person_id").references(() => persons.id, {
-    onDelete: "set null",
-  }),
-  personName: text("person_name").notNull(),
-  expectedAmountPaise: bigint("expected_amount_paise", {
-    mode: "number",
-  }).notNull(),
-});
+export const splitParticipants = pgTable(
+  "split_participant",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    splitId: text("split_id")
+      .notNull()
+      .references(() => splits.id, { onDelete: "cascade" }),
+    personId: text("person_id").references(() => persons.id, {
+      onDelete: "set null",
+    }),
+    personName: text("person_name").notNull(),
+    expectedAmountPaise: bigint("expected_amount_paise", {
+      mode: "number",
+    }).notNull(),
+  },
+  (t) => [index("split_participant_split_id_idx").on(t.splitId)],
+);
 
-export const owedExpenses = pgTable("owed_expense", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  personId: text("person_id").references(() => persons.id, {
-    onDelete: "set null",
-  }),
-  personName: text("person_name").notNull(),
-  incurredDate: date("incurred_date", { mode: "string" }).notNull(),
-  amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
-  description: text("description").notNull(),
-  categoryId: text("category_id").references(() => categories.id),
-  note: text("note"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const owedExpenses = pgTable(
+  "owed_expense",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    personId: text("person_id").references(() => persons.id, {
+      onDelete: "set null",
+    }),
+    personName: text("person_name").notNull(),
+    incurredDate: date("incurred_date", { mode: "string" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    description: text("description").notNull(),
+    categoryId: text("category_id").references(() => categories.id),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("owed_expense_user_incurred_idx").on(t.userId, t.incurredDate)],
+);
 
 export const netEvents = pgTable("net_event", {
   id: text("id")
@@ -359,6 +379,9 @@ export const settlements = pgTable(
         (${t.splitParticipantId} IS NULL AND ${t.owedExpenseId} IS NOT NULL)
       )`,
     ),
+    index("settlement_inflow_txn_idx").on(t.inflowTransactionId),
+    index("settlement_split_participant_idx").on(t.splitParticipantId),
+    index("settlement_owed_expense_idx").on(t.owedExpenseId),
   ],
 );
 

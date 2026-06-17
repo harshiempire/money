@@ -3,12 +3,10 @@ import { sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { calendarMonthPeriod, type Period } from "@/lib/period";
 import {
-  netSpendTotals,
-  splitBridgeTotals,
-  type NetSpendTotals,
-  type SplitBridgeTotals,
+  loadBulkMonthlyOwedSelf,
+  loadBulkMonthlyTxnMetrics,
 } from "./net";
-import { reimbursementBridgeTotals } from "./reimbursements";
+import { loadBulkMonthlyReimburseOutstanding } from "./reimbursements";
 
 export interface MonthlySpendRow {
   monthKey: string;
@@ -26,41 +24,42 @@ export interface MonthlySpendRow {
 export async function monthlySpendHistory(
   accountId: string,
   monthCount = 12,
+  userId?: string | null,
 ): Promise<MonthlySpendRow[]> {
   const now = new Date();
-  const rows: MonthlySpendRow[] = [];
+  const periods: (Period & { monthKey: string; isPartial: boolean })[] = [];
 
   for (let i = 0; i < monthCount; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const period = calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1);
-    const [totals, bridge, reimb] = await Promise.all([
-      netSpendTotals(accountId, period.from, period.to),
-      splitBridgeTotals(accountId, period.from, period.to),
-      reimbursementBridgeTotals(accountId, period.from, period.to),
-    ]);
-    rows.push(buildMonthlyRow(period, totals, bridge, reimb));
+    periods.push(calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1));
   }
 
-  return rows;
-}
+  const oldestFrom = periods[periods.length - 1].from!;
+  const newestTo = periods[0].to!;
 
-function buildMonthlyRow(
-  period: Period & { monthKey: string; isPartial: boolean },
-  totals: NetSpendTotals,
-  bridge: SplitBridgeTotals,
-  reimb: { outstandingReimbursePaise: number },
-): MonthlySpendRow {
-  return {
-    monthKey: period.monthKey,
-    label: period.label,
-    from: period.from!,
-    to: period.to!,
-    isPartial: period.isPartial,
-    netSelfPaise: totals.netSelfPaise,
-    yourShareDebitPaise: bridge.yourShareDebitPaise,
-    othersSharePaise: bridge.othersSharePaise,
-    outstandingReimbursePaise: reimb.outstandingReimbursePaise,
-  };
+  const [txnByMonth, owedByMonth, reimbByMonth] = await Promise.all([
+    loadBulkMonthlyTxnMetrics(accountId, oldestFrom, newestTo),
+    userId
+      ? loadBulkMonthlyOwedSelf(userId, oldestFrom, newestTo)
+      : Promise.resolve(new Map<string, number>()),
+    loadBulkMonthlyReimburseOutstanding(accountId, oldestFrom, newestTo),
+  ]);
+
+  return periods.map((period) => {
+    const txn = txnByMonth.get(period.monthKey);
+    const owed = owedByMonth.get(period.monthKey) ?? 0;
+    return {
+      monthKey: period.monthKey,
+      label: period.label,
+      from: period.from!,
+      to: period.to!,
+      isPartial: period.isPartial,
+      netSelfPaise: (txn?.txnNetSelfPaise ?? 0) + owed,
+      yourShareDebitPaise: txn?.yourShareDebitPaise ?? 0,
+      othersSharePaise: txn?.othersSharePaise ?? 0,
+      outstandingReimbursePaise: reimbByMonth.get(period.monthKey) ?? 0,
+    };
+  });
 }
 
 /** Earliest transaction month through current month for month picker bounds. */

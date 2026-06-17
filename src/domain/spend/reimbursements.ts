@@ -2,7 +2,10 @@ import "server-only";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
-import { settledAmountByOwedExpenseIds } from "@/lib/splits/outstanding";
+import {
+  settledAmountByOwedExpenseIds,
+  settledAmountByParticipantIds,
+} from "@/lib/splits/outstanding";
 
 const inflowTxn = alias(schema.transactions, "inflow_txn");
 
@@ -20,37 +23,40 @@ export async function reimbursementBridgeTotals(
   accountId: string,
   from: string | null,
   to: string | null,
+  userId?: string | null,
 ): Promise<ReimbursementBridgeTotals> {
   const txnFilters = [eq(schema.transactions.accountId, accountId)];
   if (from) txnFilters.push(gte(schema.transactions.txnDate, from));
   if (to) txnFilters.push(lte(schema.transactions.txnDate, to));
   const txnWhere = and(...txnFilters);
 
-  const splitsInPeriod = await db
-    .select({ splitId: schema.splits.id })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(txnWhere);
+  const resolvedUserId =
+    userId ??
+    (
+      await db
+        .select({ userId: schema.moneyAccounts.userId })
+        .from(schema.moneyAccounts)
+        .where(eq(schema.moneyAccounts.id, accountId))
+        .limit(1)
+    )[0]?.userId;
+
+  const [splitsInPeriod, receivedInPeriodPaise] = await Promise.all([
+    db
+      .select({ splitId: schema.splits.id })
+      .from(schema.splits)
+      .innerJoin(
+        schema.transactions,
+        eq(schema.splits.transactionId, schema.transactions.id),
+      )
+      .where(txnWhere),
+    sumSettlementsReceivedInPeriod(accountId, from, to),
+  ]);
 
   const splitIds = splitsInPeriod.map((s) => s.splitId);
-  const receivedInPeriodPaise = await sumSettlementsReceivedInPeriod(
-    accountId,
-    from,
-    to,
-  );
-
-  const [account] = await db
-    .select({ userId: schema.moneyAccounts.userId })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.id, accountId))
-    .limit(1);
 
   let outstandingPayablePaise = 0;
-  if (account?.userId) {
-    const owedFilters = [eq(schema.owedExpenses.userId, account.userId)];
+  if (resolvedUserId) {
+    const owedFilters = [eq(schema.owedExpenses.userId, resolvedUserId)];
     if (from) owedFilters.push(gte(schema.owedExpenses.incurredDate, from));
     if (to) owedFilters.push(lte(schema.owedExpenses.incurredDate, to));
 
@@ -101,24 +107,10 @@ export async function reimbursementBridgeTotals(
     0,
   );
 
-  const settledByParticipant = new Map<string, number>();
-  if (participantIds.length > 0) {
-    const sets = await db
-      .select({
-        splitParticipantId: schema.settlements.splitParticipantId,
-        amountPaise: schema.settlements.amountPaise,
-      })
-      .from(schema.settlements)
-      .where(inArray(schema.settlements.splitParticipantId, participantIds));
-    for (const s of sets) {
-      if (!s.splitParticipantId) continue;
-      settledByParticipant.set(
-        s.splitParticipantId,
-        (settledByParticipant.get(s.splitParticipantId) ?? 0) +
-          Number(s.amountPaise),
-      );
-    }
-  }
+  const settledByParticipant =
+    participantIds.length > 0
+      ? await settledAmountByParticipantIds(participantIds)
+      : new Map<string, number>();
 
   let settledReimbursePaise = 0;
   const openSplitIds = new Set<string>();
@@ -204,4 +196,56 @@ async function sumSettlementsReceivedInPeriod(
     );
 
   return Number(bank.total) + Number(cash.total);
+}
+
+const splitTxnMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.transactions.txnDate}::timestamp), 'YYYY-MM')`;
+
+/** Outstanding split reimbursements grouped by expense month (one bulk query). */
+export async function loadBulkMonthlyReimburseOutstanding(
+  accountId: string,
+  from: string,
+  to: string,
+): Promise<Map<string, number>> {
+  const txnWhere = and(
+    eq(schema.transactions.accountId, accountId),
+    gte(schema.transactions.txnDate, from),
+    lte(schema.transactions.txnDate, to),
+  );
+
+  const rows = await db
+    .select({
+      monthKey: splitTxnMonthKeyExpr,
+      participantId: schema.splitParticipants.id,
+      expectedAmountPaise: schema.splitParticipants.expectedAmountPaise,
+    })
+    .from(schema.splits)
+    .innerJoin(
+      schema.transactions,
+      eq(schema.splits.transactionId, schema.transactions.id),
+    )
+    .innerJoin(
+      schema.splitParticipants,
+      eq(schema.splitParticipants.splitId, schema.splits.id),
+    )
+    .where(txnWhere);
+
+  if (rows.length === 0) return new Map();
+
+  const settled = await settledAmountByParticipantIds(
+    rows.map((r) => r.participantId),
+  );
+
+  const byMonth = new Map<string, { expected: number; settled: number }>();
+  for (const r of rows) {
+    const entry = byMonth.get(r.monthKey) ?? { expected: 0, settled: 0 };
+    entry.expected += Number(r.expectedAmountPaise);
+    entry.settled += settled.get(r.participantId) ?? 0;
+    byMonth.set(r.monthKey, entry);
+  }
+
+  const result = new Map<string, number>();
+  for (const [monthKey, { expected, settled: settledAmt }] of byMonth) {
+    result.set(monthKey, Math.max(0, expected - settledAmt));
+  }
+  return result;
 }

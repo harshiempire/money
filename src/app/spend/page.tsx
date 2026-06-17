@@ -1,5 +1,4 @@
 import { getOrCreateAccountForBank } from "@/db/money-account";
-import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { ensureDefaultCategories } from "@/db/seed-categories";
 import { AppShell } from "@/components/AppShell";
 import { DailySpendChart } from "@/components/spend/DailySpendChart";
@@ -10,8 +9,8 @@ import { monthlySpendHistory } from "@/domain/spend/monthly-history";
 import {
   categoryBreakdown,
   dailyNetSpend,
+  loadPeriodTxnMetrics,
   netSpendTotals,
-  splitBridgeTotals,
   topDebits,
 } from "@/domain/spend/net";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
@@ -39,9 +38,9 @@ export default async function SpendReportPage({
 }) {
   const sp = await searchParams;
   const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
-  await ensureDefaultCategories(user.id);
-  await backfillCounterparties(account.id, user.id);
+  const userId = user.id;
+  const account = await getOrCreateAccountForBank(userId, "bob");
+  await ensureDefaultCategories(userId);
 
   const resolved = await resolveSpendPeriod(account.id, sp);
   const { period } = resolved;
@@ -49,8 +48,7 @@ export default async function SpendReportPage({
   const reimbQuery = reimbursementsPeriodHref(sp).replace("/reimbursements?", "");
 
   const [
-    totals,
-    bridge,
+    metrics,
     reimbursement,
     cats,
     debits,
@@ -59,22 +57,36 @@ export default async function SpendReportPage({
     statements,
     prevTotals,
   ] = await Promise.all([
-    netSpendTotals(account.id, period.from, period.to),
-    splitBridgeTotals(account.id, period.from, period.to),
-    reimbursementBridgeTotals(account.id, period.from, period.to),
-    categoryBreakdown(account.id, period.from, period.to),
-    topDebits(account.id, period.from, period.to, 8),
-    dailyNetSpend(account.id, period.from, period.to),
-    monthlySpendHistory(account.id, 12),
+    loadPeriodTxnMetrics(account.id, period.from, period.to, userId),
+    reimbursementBridgeTotals(account.id, period.from, period.to, userId),
+    categoryBreakdown(account.id, period.from, period.to, userId),
+    topDebits(account.id, period.from, period.to, 8, userId),
+    dailyNetSpend(account.id, period.from, period.to, userId),
+    monthlySpendHistory(account.id, 12, userId),
     listStatementPeriods(account.id),
     period.from && period.to
       ? (async () => {
           const p = previousPeriodWindow(period.from!, period.to!);
-          const totals = await netSpendTotals(account.id, p.from, p.to);
+          const totals = await netSpendTotals(account.id, p.from, p.to, userId);
           return { totals, label: p.label };
         })()
       : null,
   ]);
+
+  const totals = {
+    totalDebitPaise: metrics.totalDebitPaise,
+    totalCreditPaise: metrics.totalCreditPaise,
+    netSelfPaise: metrics.txnNetSelfPaise + metrics.owedSelfPaise,
+    owedSelfPaise: metrics.owedSelfPaise,
+    count: metrics.count,
+  };
+  const bridge = {
+    personalDebitGrossPaise: metrics.personalDebitGrossPaise,
+    yourShareDebitPaise: metrics.yourShareDebitPaise,
+    othersSharePaise: metrics.othersSharePaise,
+    netCreditPaise: metrics.netCreditPaise,
+    splitTxnCount: metrics.splitTxnCount,
+  };
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const totalSpendPaise = spendCats.reduce((s, c) => s + c.netSelfPaise, 0);
