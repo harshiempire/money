@@ -13,6 +13,9 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
+    /** Matches user.token_version; 0 is valid (do not treat as missing). */
     tokenVersion?: number;
+    /** epoch ms of last Neon token_version re-check */
+    tvCheckedAt?: number;
   }
 }

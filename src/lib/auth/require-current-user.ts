@@ -9,12 +9,22 @@ export type CurrentUser = {
 };
 
 async function sessionUser(): Promise<CurrentUser | null> {
-  const session = await auth();
-  if (!session?.user?.id) return null;
-  return {
-    id: session.user.id,
-    email: session.user.email ?? null,
-  };
+  try {
+    // auth() is overloaded (middleware | session); call with no args for session.
+    const session = await auth();
+    if (!session || typeof session !== "object" || !("user" in session)) {
+      return null;
+    }
+    const user = session.user as { id?: string; email?: string | null } | undefined;
+    if (!user?.id) return null;
+    return {
+      id: user.id,
+      email: user.email ?? null,
+    };
+  } catch (err) {
+    console.error("[auth] sessionUser failed", err);
+    return null;
+  }
 }
 
 /** For server components — redirects to login when unauthenticated. */

@@ -11,9 +11,35 @@ import type {
   PayableOption,
   ReceivableOption,
 } from "@/lib/net-events/load-net-settle-data";
+import { balanceAllocationsToExpectedNet } from "@/lib/net-events/validate";
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
-const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
+const rupeesToPaise = (r: string) => {
+  const n = Number.parseFloat(r);
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+};
+
+function allocMapToPaise(
+  allocs: Record<string, string>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, raw] of Object.entries(allocs)) {
+    if (!raw?.trim()) continue;
+    const p = rupeesToPaise(raw);
+    if (Number.isFinite(p) && p > 0) out[id] = p;
+  }
+  return out;
+}
+
+function paiseMapToAllocStrings(
+  m: Record<string, number>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(m)
+      .filter(([, p]) => p > 0)
+      .map(([id, p]) => [id, paiseToRupeesStr(p)]),
+  );
+}
 
 export interface NetSettleExistingLeg {
   kind: "receivable" | "payable";
@@ -277,7 +303,8 @@ function NetSettleForm({
 
   const netTotal = receivableTotal - payableTotal;
   const expectedNet = inflowAmountPaise - outflowAmountPaise;
-  const invariantOk = netTotal === expectedNet;
+  const residualPaise = netTotal - expectedNet;
+  const invariantOk = residualPaise === 0;
   const hasNonZeroLeg = receivableTotal > 0 || payableTotal > 0;
 
   const overAllocationError = useMemo(() => {
@@ -299,6 +326,36 @@ function NetSettleForm({
     }
     return null;
   }, [receivables, allPayables, receivableAllocs, payableAllocs]);
+
+  const balanceToBank = () => {
+    setError(null);
+    const rPaise = allocMapToPaise(receivableAllocs);
+    const pPaise = allocMapToPaise(payableAllocs);
+    const rCaps = Object.fromEntries(
+      receivables.map((r) => [r.id, r.outstandingPaise]),
+    );
+    const pCaps = Object.fromEntries(
+      allPayables.map((p) => [p.id, p.outstandingPaise]),
+    );
+
+    const result = balanceAllocationsToExpectedNet(
+      rPaise,
+      pPaise,
+      rCaps,
+      pCaps,
+      expectedNet,
+    );
+    if (!result) {
+      setError(
+        residualPaise === 0
+          ? null
+          : "Cannot auto-balance within outstanding caps — adjust lines manually",
+      );
+      return;
+    }
+    setReceivableAllocs(paiseMapToAllocStrings(result.receivableAllocs));
+    setPayableAllocs(paiseMapToAllocStrings(result.payableAllocs));
+  };
 
   const addNewPayable = () => {
     const amountPaise = rupeesToPaise(newPayable.amount);
@@ -497,8 +554,23 @@ function NetSettleForm({
               : "mt-1 text-red-600"
           }
         >
-          {invariantOk ? "✓ Balanced" : "✗ Mismatch — adjust allocations"}
+          {invariantOk
+            ? "✓ Balanced"
+            : `✗ Off by ₹${paiseToRupeesStr(Math.abs(residualPaise))} (${Math.abs(residualPaise)} paise) — ${
+                residualPaise > 0
+                  ? "net too high: reduce a receivable or increase a payable"
+                  : "net too low: increase a receivable or reduce a payable"
+              }`}
         </div>
+        {!invariantOk && hasNonZeroLeg && (
+          <button
+            type="button"
+            onClick={balanceToBank}
+            className="mt-2 text-xs font-medium text-violet-700 underline dark:text-violet-300"
+          >
+            Adjust to match bank (prefer largest receivable)
+          </button>
+        )}
       </div>
 
       <label className="mt-3 block text-sm">

@@ -1,5 +1,3 @@
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { ensureDefaultCategories } from "@/db/seed-categories";
 import { AppShell } from "@/components/AppShell";
 import { DailySpendChart } from "@/components/spend/DailySpendChart";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
@@ -14,7 +12,11 @@ import {
   topDebits,
 } from "@/domain/spend/net";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import {
+  ensureTenantDefaults,
+  getBobAccount,
+  getCurrentUser,
+} from "@/lib/auth/request-tenant";
 import {
   counterpartyLabel,
   formatDate,
@@ -37,10 +39,10 @@ export default async function SpendReportPage({
   searchParams: Promise<SpendSearchParams>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
+  const user = await getCurrentUser();
   const userId = user.id;
-  const account = await getOrCreateAccountForBank(userId, "bob");
-  await ensureDefaultCategories(userId);
+  const account = await getBobAccount();
+  await ensureTenantDefaults();
 
   const resolved = await resolveSpendPeriod(account.id, sp);
   const { period } = resolved;

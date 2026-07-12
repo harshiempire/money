@@ -31,6 +31,104 @@ export function validateNetEventInvariant(
   return { ok: true };
 }
 
+/**
+ * Bank invariant: Σ receivable − Σ payable = inflow − outflow (exact paise).
+ *
+ * residual = (R − P) − expectedNet
+ *  residual > 0 → net too high → reduce a receivable or increase a payable
+ *  residual < 0 → net too low  → increase a receivable or reduce a payable
+ *
+ * Prefers adjusting the largest current allocation that can absorb residual
+ * without exceeding outstanding caps or going negative.
+ */
+export function balanceAllocationsToExpectedNet(
+  receivableAllocs: Record<string, number>,
+  payableAllocs: Record<string, number>,
+  receivableCaps: Record<string, number>,
+  payableCaps: Record<string, number>,
+  expectedNet: number,
+): {
+  receivableAllocs: Record<string, number>;
+  payableAllocs: Record<string, number>;
+  adjusted: { side: "receivable" | "payable"; id: string; byPaise: number };
+} | null {
+  const sum = (m: Record<string, number>) =>
+    Object.values(m).reduce((s, v) => s + v, 0);
+
+  const nextR = { ...receivableAllocs };
+  const nextP = { ...payableAllocs };
+  let residual = sum(nextR) - sum(nextP) - expectedNet;
+  if (residual === 0) {
+    return null;
+  }
+
+  const sortedIds = (m: Record<string, number>) =>
+    Object.keys(m)
+      .filter((id) => m[id] > 0)
+      .sort((a, b) => m[b] - m[a]);
+
+  if (residual > 0) {
+    // Prefer shaving the largest receivable
+    for (const id of sortedIds(nextR)) {
+      const room = nextR[id]; // can reduce by up to full alloc
+      if (room >= residual) {
+        nextR[id] -= residual;
+        if (nextR[id] === 0) delete nextR[id];
+        return {
+          receivableAllocs: nextR,
+          payableAllocs: nextP,
+          adjusted: { side: "receivable", id, byPaise: -residual },
+        };
+      }
+    }
+    // Else grow a payable toward its cap
+    for (const id of Object.keys(payableCaps).sort(
+      (a, b) => (nextP[b] ?? 0) - (nextP[a] ?? 0),
+    )) {
+      const current = nextP[id] ?? 0;
+      const room = payableCaps[id] - current;
+      if (room >= residual) {
+        nextP[id] = current + residual;
+        return {
+          receivableAllocs: nextR,
+          payableAllocs: nextP,
+          adjusted: { side: "payable", id, byPaise: residual },
+        };
+      }
+    }
+    return null;
+  }
+
+  // residual < 0
+  const need = -residual;
+  for (const id of Object.keys(receivableCaps).sort(
+    (a, b) => (nextR[b] ?? 0) - (nextR[a] ?? 0),
+  )) {
+    const current = nextR[id] ?? 0;
+    const room = receivableCaps[id] - current;
+    if (room >= need) {
+      nextR[id] = current + need;
+      return {
+        receivableAllocs: nextR,
+        payableAllocs: nextP,
+        adjusted: { side: "receivable", id, byPaise: need },
+      };
+    }
+  }
+  for (const id of sortedIds(nextP)) {
+    if (nextP[id] >= need) {
+      nextP[id] -= need;
+      if (nextP[id] === 0) delete nextP[id];
+      return {
+        receivableAllocs: nextR,
+        payableAllocs: nextP,
+        adjusted: { side: "payable", id, byPaise: -need },
+      };
+    }
+  }
+  return null;
+}
+
 /** 16-Apr GPay scenario: Starbucks ₹444 receivable, biker ₹295 payable, ₹149 inflow */
 export function buildApr16ScenarioLegs(
   starbucksParticipantId: string,

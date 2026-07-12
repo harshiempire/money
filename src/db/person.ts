@@ -1,11 +1,20 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
-import type { NeonDatabase } from "drizzle-orm/neon-serverless";
+import type { ExtractTablesWithRelations } from "drizzle-orm";
+import type { PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { db, schema } from "./index";
 
 const PG_UNIQUE_VIOLATION = "23505";
 
-type DbClient = NeonDatabase<typeof schema>;
+type Schema = typeof schema;
+type DbClient =
+  | PostgresJsDatabase<Schema>
+  | PgTransaction<
+      PgQueryResultHKT,
+      Schema,
+      ExtractTablesWithRelations<Schema>
+    >;
 
 export async function getOrCreatePerson(
   userId: string,

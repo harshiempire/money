@@ -1,7 +1,6 @@
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { getBobAccount, getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
@@ -74,8 +73,8 @@ export default async function ReimbursementsPage({
   searchParams: Promise<SpendSearchParams>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
 
   const [resolved, statements] = await Promise.all([
     resolveSpendPeriod(account.id, sp),

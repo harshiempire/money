@@ -95,19 +95,9 @@ export async function saveNetEvent(input: {
     );
   }
 
-  if (input.inflowTransactionId) {
-    await assertTransactionOwned(user.id, input.inflowTransactionId);
-  }
-  if (input.outflowTransactionId) {
-    await assertTransactionOwned(user.id, input.outflowTransactionId);
-  }
-  if (input.netEventId) {
-    await assertNetEventOwned(user.id, input.netEventId);
-  }
-
+  // Sync validation first (no DB), then fan out ownership / outstanding checks.
   for (const leg of cleanLegs) {
     if (leg.kind === "receivable") {
-      await assertSplitParticipantOwned(user.id, leg.splitParticipantId);
       if (leg.method === "bank" && !input.inflowTransactionId) {
         throw new NetEventValidationError(
           "MISSING_BANK_TXN",
@@ -115,7 +105,6 @@ export async function saveNetEvent(input: {
         );
       }
     } else if (leg.owedExpenseId) {
-      await assertOwedExpenseOwned(user.id, leg.owedExpenseId);
       if (leg.method !== "offset") {
         throw new NetEventValidationError(
           "INVALID_LEG",
@@ -142,8 +131,11 @@ export async function saveNetEvent(input: {
           "New payable amount must be positive",
         );
       }
-      if (leg.newPayable.categoryId) {
-        await assertCategoryOwned(user.id, leg.newPayable.categoryId);
+      if (leg.amountPaise > leg.newPayable.amountPaise) {
+        throw new NetEventValidationError(
+          "OVER_ALLOCATION",
+          `Payable leg exceeds new expense amount by ${(leg.amountPaise - leg.newPayable.amountPaise) / 100}`,
+        );
       }
     } else {
       throw new NetEventValidationError(
@@ -153,12 +145,43 @@ export async function saveNetEvent(input: {
     }
   }
 
-  const inflowAmount = input.inflowTransactionId
-    ? await fetchTransactionAmount(user.id, input.inflowTransactionId)
-    : 0;
-  const outflowAmount = input.outflowTransactionId
-    ? await fetchTransactionAmount(user.id, input.outflowTransactionId)
-    : 0;
+  const ownershipChecks: Promise<unknown>[] = [];
+  if (input.inflowTransactionId) {
+    ownershipChecks.push(
+      assertTransactionOwned(user.id, input.inflowTransactionId),
+    );
+  }
+  if (input.outflowTransactionId) {
+    ownershipChecks.push(
+      assertTransactionOwned(user.id, input.outflowTransactionId),
+    );
+  }
+  if (input.netEventId) {
+    ownershipChecks.push(assertNetEventOwned(user.id, input.netEventId));
+  }
+  for (const leg of cleanLegs) {
+    if (leg.kind === "receivable") {
+      ownershipChecks.push(
+        assertSplitParticipantOwned(user.id, leg.splitParticipantId),
+      );
+    } else if (leg.owedExpenseId) {
+      ownershipChecks.push(assertOwedExpenseOwned(user.id, leg.owedExpenseId));
+    } else if (leg.newPayable?.categoryId) {
+      ownershipChecks.push(
+        assertCategoryOwned(user.id, leg.newPayable.categoryId),
+      );
+    }
+  }
+  await Promise.all(ownershipChecks);
+
+  const [inflowAmount, outflowAmount] = await Promise.all([
+    input.inflowTransactionId
+      ? fetchTransactionAmount(user.id, input.inflowTransactionId)
+      : Promise.resolve(0),
+    input.outflowTransactionId
+      ? fetchTransactionAmount(user.id, input.outflowTransactionId)
+      : Promise.resolve(0),
+  ]);
 
   const invariant = validateNetEventInvariant(
     cleanLegs,
@@ -169,39 +192,35 @@ export async function saveNetEvent(input: {
     throw new NetEventValidationError("INVARIANT_MISMATCH", invariant.message);
   }
 
-  for (const leg of cleanLegs) {
-    if (leg.kind === "receivable") {
-      const outstanding = await participantOutstanding(
-        leg.splitParticipantId,
-        input.netEventId,
-      );
-      if (leg.amountPaise > outstanding) {
-        throw new NetEventValidationError(
-          "OVER_ALLOCATION",
-          `Receivable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+  await Promise.all(
+    cleanLegs.map(async (leg) => {
+      if (leg.kind === "receivable") {
+        const outstanding = await participantOutstanding(
+          leg.splitParticipantId,
+          input.netEventId,
         );
-      }
-    } else if (leg.owedExpenseId) {
-      const outstanding = await owedExpenseOutstanding(
-        leg.owedExpenseId,
-        input.netEventId,
-      );
-      if (leg.amountPaise > outstanding) {
-        throw new NetEventValidationError(
-          "OVER_ALLOCATION",
-          `Payable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+        if (leg.amountPaise > outstanding) {
+          throw new NetEventValidationError(
+            "OVER_ALLOCATION",
+            `Receivable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+          );
+        }
+      } else if (leg.owedExpenseId) {
+        const outstanding = await owedExpenseOutstanding(
+          leg.owedExpenseId,
+          input.netEventId,
         );
+        if (leg.amountPaise > outstanding) {
+          throw new NetEventValidationError(
+            "OVER_ALLOCATION",
+            `Payable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+          );
+        }
       }
-    } else if (leg.newPayable) {
-      if (leg.amountPaise > leg.newPayable.amountPaise) {
-        throw new NetEventValidationError(
-          "OVER_ALLOCATION",
-          `Payable leg exceeds new expense amount by ${(leg.amountPaise - leg.newPayable.amountPaise) / 100}`,
-        );
-      }
-    }
-  }
+    }),
+  );
 
+  try {
   await db.transaction(async (tx) => {
     if (input.netEventId) {
       await tx
@@ -275,6 +294,15 @@ export async function saveNetEvent(input: {
 
     await tx.insert(schema.settlements).values(settlementRows);
   });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/timeout|terminat|connect/i.test(msg)) {
+      throw new Error(
+        "Database connection timed out while saving. Please try again in a moment.",
+      );
+    }
+    throw err;
+  }
 
   revalidateAll();
 }
@@ -283,14 +311,24 @@ export async function deleteNetEvent(input: { netEventId: string }) {
   const user = await requireCurrentUserAction();
   await assertNetEventOwned(user.id, input.netEventId);
 
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(schema.settlements)
-      .where(eq(schema.settlements.netEventId, input.netEventId));
-    await tx
-      .delete(schema.netEvents)
-      .where(eq(schema.netEvents.id, input.netEventId));
-  });
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(schema.settlements)
+        .where(eq(schema.settlements.netEventId, input.netEventId));
+      await tx
+        .delete(schema.netEvents)
+        .where(eq(schema.netEvents.id, input.netEventId));
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/timeout|terminat|connect/i.test(msg)) {
+      throw new Error(
+        "Database connection timed out while reversing. Please try again.",
+      );
+    }
+    throw err;
+  }
 
   revalidateAll();
 }

@@ -1,16 +1,25 @@
 import "server-only";
-import ws from "ws";
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { resolveDatabaseUrl } from "./connection-url";
 import * as schema from "./schema";
 
-neonConfig.webSocketConstructor = ws;
+/**
+ * TCP via postgres.js (documented in AGENTS.md).
+ *
+ * Neon WebSocket Pool was flaky in Next dev:
+ * - simple selects → opaque "Failed query"
+ * - db.transaction (saveNetEvent) → "Connection terminated due to connection timeout"
+ *
+ * postgres.js uses the pooler URL over TCP and supports real transactions.
+ */
+const client = postgres(resolveDatabaseUrl(), {
+  max: 10,
+  idle_timeout: 20,
+  connect_timeout: 15,
+  // prepare: false is recommended for PgBouncer / Neon pooler transaction mode
+  prepare: false,
+});
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is not set");
-}
-
-const pool = new Pool({ connectionString });
-export const db = drizzle(pool, { schema });
+export const db = drizzle(client, { schema });
 export { schema };
