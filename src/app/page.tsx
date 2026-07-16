@@ -1,19 +1,21 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { ensureDefaultCategories } from "@/db/seed-categories";
-import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { AppShell } from "@/components/AppShell";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
 import { StatHero, SectionCard, Bar, Money, PeriodDelta } from "@/components/ui";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import {
+  getBobAccount,
+  getCurrentUser,
+  ensureTenantDefaults,
+  runCounterpartyBackfill,
+} from "@/lib/auth/request-tenant";
 import {
   categoryBreakdown,
+  loadPeriodTxnMetrics,
   netSpendTotals,
-  splitBridgeTotals,
   topCounterparties,
-  triageStats,
 } from "@/domain/spend/net";
+import { mapPeriodMetrics } from "@/domain/spend/period-metrics";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
 import {
   inclusiveDayCount,
@@ -38,11 +40,11 @@ export default async function DashboardPage({
   searchParams: Promise<SP>;
 }) {
   const sp = await searchParams;
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
   const userId = user.id;
-  await ensureDefaultCategories(userId);
-  await backfillCounterparties(account.id, userId);
+  await ensureTenantDefaults();
+  await runCounterpartyBackfill();
 
   const isStatementMode = !sp.preset && !sp.from && !sp.to;
 
@@ -74,16 +76,16 @@ export default async function DashboardPage({
         : {},
   );
 
-  const [totals, bridge, reimbursement, triage, cats, tops, prevComparison] =
+  const [metrics, reimbursement, cats, tops, prevComparison] =
     await Promise.all([
-      netSpendTotals(account.id, period.from, period.to),
-      splitBridgeTotals(account.id, period.from, period.to),
-      reimbursementBridgeTotals(account.id, period.from, period.to),
-      triageStats(account.id, period.from, period.to),
-      categoryBreakdown(account.id, period.from, period.to),
+      loadPeriodTxnMetrics(account.id, period.from, period.to, userId),
+      reimbursementBridgeTotals(account.id, period.from, period.to, userId),
+      categoryBreakdown(account.id, period.from, period.to, userId),
       topCounterparties(account.id, period.from, period.to, 8),
-      loadPreviousPeriodComparison(account.id, period, isStatementMode),
+      loadPreviousPeriodComparison(account.id, period, isStatementMode, userId),
     ]);
+
+  const { totals, bridge, triage } = mapPeriodMetrics(metrics);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const refundCats = cats.filter((c) => c.netSelfPaise < 0);
@@ -312,6 +314,7 @@ async function loadPreviousPeriodComparison(
   accountId: string,
   period: { from: string | null; to: string | null },
   isStatementMode: boolean,
+  userId?: string | null,
 ) {
   if (!period.from || !period.to) return null;
 
@@ -351,7 +354,7 @@ async function loadPreviousPeriodComparison(
     label = shifted.label;
   }
 
-  const totals = await netSpendTotals(accountId, prevFrom, prevTo);
+  const totals = await netSpendTotals(accountId, prevFrom, prevTo, userId);
   return { totals, label };
 }
 

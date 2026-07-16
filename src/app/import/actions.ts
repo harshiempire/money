@@ -6,6 +6,7 @@ import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
 import { ingestStatement } from "@/domain/ingest/pipeline";
 import type { ImportSummary } from "@/domain/ingest/dedupe";
+import { backfillCounterparties } from "@/db/counterparty-backfill";
 
 export type ImportResult =
   | { ok: true; summary: ImportSummary; bank: string }
@@ -54,6 +55,12 @@ export async function uploadStatement(
             ? `Parse failed at ${err.stage}: ${err.detail}`
             : `Database error: ${String((err as { cause?: unknown }).cause ?? "unknown")}`;
     return { ok: false, error: msg };
+  }
+
+  try {
+    await backfillCounterparties(account.id, user.id);
+  } catch (err) {
+    console.error("[import] counterparty backfill failed", err);
   }
 
   revalidatePath("/import");

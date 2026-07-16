@@ -1,21 +1,23 @@
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import {
+  ensureTenantDefaults,
+  getBobAccount,
+  getCurrentUser,
+  runCounterpartyBackfill,
+} from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
-import { ensureDefaultCategories } from "@/db/seed-categories";
-import { backfillCounterparties } from "@/db/counterparty-backfill";
 import { loadTransactionTableContext } from "@/app/transactions/load-table-context";
 import { TransactionTable } from "@/app/transactions/TransactionTable";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReviewPage() {
-  const user = await requireCurrentUser();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const user = await getCurrentUser();
+  const account = await getBobAccount();
 
-  await ensureDefaultCategories(user.id);
-  await backfillCounterparties(account.id, user.id);
+  await ensureTenantDefaults();
+  await runCounterpartyBackfill();
 
   const where = and(
     eq(schema.transactions.accountId, account.id),

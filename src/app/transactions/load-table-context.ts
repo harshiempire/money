@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  and,
   asc,
   desc,
   eq,
@@ -10,7 +9,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { counterpartyLabel, formatDate } from "@/lib/format";
+import { creditSumExpr, debitSumExpr, netSelfExpr } from "@/domain/spend/net";
 import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
 import {
   buildExpenseLinks,
@@ -21,8 +20,12 @@ import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
 import {
   loadNetEventsByTransactionIds,
   loadOpenPayablesForUser,
-  loadOpenReceivablesForAccount,
 } from "@/lib/net-events/load-net-settle-data";
+import {
+  buildOpenReceivablesFromLedger,
+  buildParticipantOptions,
+  getAccountSplitLedger,
+} from "@/lib/splits/account-split-ledger";
 import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
 
 export type TransactionListRow = {
@@ -42,6 +45,35 @@ export type TransactionListRow = {
   note: string | null;
 };
 
+export type PeriodTxnTotals = {
+  debit: number;
+  credit: number;
+  netSelf: number;
+  count: number;
+};
+
+/** Period footer stats for the same filter `where` as the table list. */
+export async function loadPeriodTxnTotals(
+  where: SQL | undefined,
+): Promise<PeriodTxnTotals> {
+  const [totals] = await db
+    .select({
+      debit: debitSumExpr,
+      credit: creditSumExpr,
+      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.transactions)
+    .where(where);
+
+  return {
+    debit: Number(totals.debit),
+    credit: Number(totals.credit),
+    netSelf: Number(totals.netSelf),
+    count: totals.count,
+  };
+}
+
 export async function loadTransactionTableContext(
   accountId: string,
   userId: string,
@@ -50,64 +82,111 @@ export async function loadTransactionTableContext(
 ) {
   const limit = options?.limit ?? 1000;
 
-  const rows = await db
+  // Kick off account-scoped async work (real, already-running promises) so
+  // it overlaps with the main list query below. These MUST be consumed in
+  // the same Promise.all as the rows query — if the rows query rejects
+  // while these are still in flight and unattached, they'd reject with no
+  // handler and crash the process on unhandledRejection.
+  const ledgerPromise = getAccountSplitLedger(accountId);
+  const payablesPromise = loadOpenPayablesForUser(userId);
+  const hintsPromise = loadCounterpartyPersonHints(accountId);
+
+  // categoriesPromise/personsPromise are lazy Drizzle query builders, not
+  // started promises — they don't issue any query (and so can't leak an
+  // unhandled rejection) until they're actually awaited below.
+  const categoriesPromise = db
     .select({
-      id: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      amountPaise: schema.transactions.amountPaise,
-      drCr: schema.transactions.drCr,
-      channel: schema.transactions.channel,
-      rawDescription: schema.transactions.rawDescription,
-      parsedPurpose: schema.transactions.parsedPurpose,
-      balancePaise: schema.transactions.balancePaise,
-      counterpartyId: schema.transactions.counterpartyId,
-      counterpartyDisplayName: schema.counterparties.displayName,
-      categoryId: schema.transactions.categoryId,
-      isTransfer: schema.transactions.isTransfer,
-      needsReview: schema.transactions.needsReview,
-      note: schema.transactions.note,
+      id: schema.categories.id,
+      name: schema.categories.name,
+      kind: schema.categories.kind,
     })
-    .from(schema.transactions)
-    .leftJoin(
-      schema.counterparties,
-      eq(schema.transactions.counterpartyId, schema.counterparties.id),
-    )
-    .where(where)
-    .orderBy(
-      desc(schema.transactions.txnDate),
-      desc(schema.transactions.createdAt),
-      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
-    )
-    .limit(limit);
+    .from(schema.categories)
+    .where(eq(schema.categories.userId, userId))
+    .orderBy(asc(schema.categories.kind), asc(schema.categories.name));
+  const personsPromise = db
+    .select({ name: schema.persons.name })
+    .from(schema.persons)
+    .where(eq(schema.persons.userId, userId))
+    .orderBy(asc(schema.persons.name));
+
+  const [rows, ledger, openPayables, counterpartyPersonHints] =
+    await Promise.all([
+      db
+        .select({
+          id: schema.transactions.id,
+          txnDate: schema.transactions.txnDate,
+          amountPaise: schema.transactions.amountPaise,
+          drCr: schema.transactions.drCr,
+          channel: schema.transactions.channel,
+          rawDescription: schema.transactions.rawDescription,
+          parsedPurpose: schema.transactions.parsedPurpose,
+          balancePaise: schema.transactions.balancePaise,
+          counterpartyId: schema.transactions.counterpartyId,
+          counterpartyDisplayName: schema.counterparties.displayName,
+          categoryId: schema.transactions.categoryId,
+          isTransfer: schema.transactions.isTransfer,
+          needsReview: schema.transactions.needsReview,
+          note: schema.transactions.note,
+        })
+        .from(schema.transactions)
+        .leftJoin(
+          schema.counterparties,
+          eq(schema.transactions.counterpartyId, schema.counterparties.id),
+        )
+        .where(where)
+        .orderBy(
+          desc(schema.transactions.txnDate),
+          desc(schema.transactions.createdAt),
+          sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
+        )
+        .limit(limit),
+      ledgerPromise,
+      payablesPromise,
+      hintsPromise,
+    ]);
 
   const txnIds = rows.map((r) => r.id);
-  const splits = txnIds.length
-    ? await db
-        .select()
-        .from(schema.splits)
-        .where(inArray(schema.splits.transactionId, txnIds))
-    : [];
+
+  const [splits, settlementsForRows, categories, personRows, netEventsByTxn] =
+    await Promise.all([
+      txnIds.length
+        ? db
+            .select()
+            .from(schema.splits)
+            .where(inArray(schema.splits.transactionId, txnIds))
+        : Promise.resolve([] as (typeof schema.splits.$inferSelect)[]),
+      txnIds.length
+        ? db
+            .select()
+            .from(schema.settlements)
+            .where(inArray(schema.settlements.inflowTransactionId, txnIds))
+        : Promise.resolve([] as (typeof schema.settlements.$inferSelect)[]),
+      categoriesPromise,
+      personsPromise,
+      loadNetEventsByTransactionIds(txnIds),
+    ]);
+
   const splitIds = splits.map((s) => s.id);
+  const inflowSettlementIds = settlementsForRows
+    .map((s) => s.inflowTransactionId)
+    .filter((id): id is string => id != null);
+
+  const expenseTxn = schema.transactions;
+  const expenseCp = schema.counterparties;
+  const inflowTxn = schema.transactions;
+
   const participantsAll = splitIds.length
     ? await db
         .select()
         .from(schema.splitParticipants)
         .where(inArray(schema.splitParticipants.splitId, splitIds))
     : [];
-  const settlementsForRows = txnIds.length
-    ? await db
-        .select()
-        .from(schema.settlements)
-        .where(inArray(schema.settlements.inflowTransactionId, txnIds))
-    : [];
 
-  const expenseTxn = schema.transactions;
-  const expenseCp = schema.counterparties;
-  const inflowTxn = schema.transactions;
+  const participantIds = participantsAll.map((p) => p.id);
 
-  const settlementExpenseRows =
-    settlementsForRows.length > 0
-      ? await db
+  const [settlementExpenseRows, reimbursementRows] = await Promise.all([
+    inflowSettlementIds.length > 0
+      ? db
           .select({
             inflowTransactionId: schema.settlements.inflowTransactionId,
             amountPaise: schema.settlements.amountPaise,
@@ -133,19 +212,11 @@ export async function loadTransactionTableContext(
           .innerJoin(expenseTxn, eq(schema.splits.transactionId, expenseTxn.id))
           .leftJoin(expenseCp, eq(expenseTxn.counterpartyId, expenseCp.id))
           .where(
-            inArray(
-              schema.settlements.inflowTransactionId,
-              settlementsForRows
-                .map((s) => s.inflowTransactionId)
-                .filter((id): id is string => id != null),
-            ),
+            inArray(schema.settlements.inflowTransactionId, inflowSettlementIds),
           )
-      : [];
-
-  const participantIds = participantsAll.map((p) => p.id);
-  const reimbursementRows =
+      : Promise.resolve([]),
     participantIds.length > 0
-      ? await db
+      ? db
           .select({
             splitTransactionId: schema.splits.transactionId,
             inflowTransactionId: schema.settlements.inflowTransactionId,
@@ -178,7 +249,8 @@ export async function loadTransactionTableContext(
           .where(
             inArray(schema.settlements.splitParticipantId, participantIds),
           )
-      : [];
+      : Promise.resolve([]),
+  ]);
 
   const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
   const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
@@ -194,102 +266,16 @@ export async function loadTransactionTableContext(
     settlementsByInflow.set(st.inflowTransactionId, arr);
   }
 
-  const allSplitsForAccount = await db
-    .select({
-      id: schema.splits.id,
-      transactionId: schema.splits.transactionId,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .where(eq(schema.transactions.accountId, accountId));
-
-  const allParticipants = allSplitsForAccount.length
-    ? await db
-        .select()
-        .from(schema.splitParticipants)
-        .where(
-          inArray(
-            schema.splitParticipants.splitId,
-            allSplitsForAccount.map((s) => s.id),
-          ),
-        )
-    : [];
-
-  const allSettlements = allSplitsForAccount.length
-    ? await db
-        .select({
-          splitParticipantId: schema.settlements.splitParticipantId,
-          amountPaise: schema.settlements.amountPaise,
-        })
-        .from(schema.settlements)
-        .where(
-          inArray(
-            schema.settlements.splitParticipantId,
-            allParticipants.map((p) => p.id),
-          ),
-        )
-    : [];
-
-  const settledByParticipant = new Map<string, number>();
-  for (const s of allSettlements) {
-    if (!s.splitParticipantId) continue;
-    settledByParticipant.set(
-      s.splitParticipantId,
-      (settledByParticipant.get(s.splitParticipantId) ?? 0) +
-        Number(s.amountPaise),
-    );
-  }
-
   const splitByTxn = buildSplitByTxn(
     splits,
     participantsAll,
-    settledByParticipant,
+    ledger.settledByParticipant,
   );
 
-  const splitMetaById = new Map(allSplitsForAccount.map((s) => [s.id, s]));
-  const participantOptions: ParticipantOption[] = allParticipants.map((p) => {
-    const meta = splitMetaById.get(p.splitId)!;
-    return {
-      id: p.id,
-      personName: p.personName,
-      expectedAmountPaise: Number(p.expectedAmountPaise),
-      splitTransactionDate: formatDate(meta.txnDate),
-      splitTransactionDescription:
-        counterpartyLabel(meta.rawDescription) ?? meta.rawDescription,
-      alreadySettledPaise: settledByParticipant.get(p.id) ?? 0,
-    };
-  });
-
-  const categories = await db
-    .select({
-      id: schema.categories.id,
-      name: schema.categories.name,
-      kind: schema.categories.kind,
-    })
-    .from(schema.categories)
-    .where(eq(schema.categories.userId, userId))
-    .orderBy(asc(schema.categories.kind), asc(schema.categories.name));
-
+  const participantOptions: ParticipantOption[] =
+    buildParticipantOptions(ledger);
   const categoryOptions: CategoryOption[] = categories;
-
-  const personRows = await db
-    .select({ name: schema.persons.name })
-    .from(schema.persons)
-    .where(eq(schema.persons.userId, userId))
-    .orderBy(asc(schema.persons.name));
-
-  const [openReceivables, openPayables, netEventsByTxn, counterpartyPersonHints] =
-    await Promise.all([
-      loadOpenReceivablesForAccount(accountId),
-      loadOpenPayablesForUser(userId),
-      loadNetEventsByTransactionIds(rows.map((r) => r.id)),
-      loadCounterpartyPersonHints(accountId),
-    ]);
+  const openReceivables = buildOpenReceivablesFromLedger(ledger);
 
   return {
     rows,

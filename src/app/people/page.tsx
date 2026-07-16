@@ -1,4 +1,4 @@
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { formatPaise } from "@/lib/format";
 import { listPersonBalances } from "@/lib/people/ledger";
@@ -6,7 +6,7 @@ import { listPersonBalances } from "@/lib/people/ledger";
 export const dynamic = "force-dynamic";
 
 export default async function PeoplePage() {
-  const user = await requireCurrentUser();
+  const user = await getCurrentUser();
   const balances = await listPersonBalances(user.id);
 
   return (

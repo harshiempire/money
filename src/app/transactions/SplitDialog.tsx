@@ -230,21 +230,35 @@ function SplitForm({
         : 0;
     }
     startTransition(async () => {
-      await createSplit({
-        transactionId,
-        totalPaise: Number.isFinite(totalPaise) ? totalPaise : 0,
-        yourSharePaise,
-        note: note.trim() || null,
-        participants: cleaned,
-      });
-      onClose();
+      try {
+        await createSplit({
+          transactionId,
+          totalPaise: Number.isFinite(totalPaise) ? totalPaise : 0,
+          yourSharePaise,
+          note: note.trim() || null,
+          participants: cleaned,
+        });
+        onClose();
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to save split";
+        console.error("[createSplit]", err);
+        window.alert(msg);
+      }
     });
   };
 
   const remove = () => {
     startTransition(async () => {
-      await deleteSplit({ transactionId });
-      onClose();
+      try {
+        await deleteSplit({ transactionId });
+        onClose();
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to remove split";
+        console.error("[deleteSplit]", err);
+        window.alert(msg);
+      }
     });
   };
 

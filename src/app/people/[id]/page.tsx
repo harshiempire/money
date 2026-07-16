@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireCurrentUser } from "@/lib/auth/require-current-user";
+import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { getPersonDetail } from "@/lib/people/ledger";
@@ -12,7 +12,7 @@ export default async function PersonDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireCurrentUser();
+  const user = await getCurrentUser();
   const detail = await getPersonDetail(user.id, id);
   if (!detail) notFound();
 
