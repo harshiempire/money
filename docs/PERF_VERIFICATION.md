@@ -11,6 +11,20 @@ bun test
 bun run perf:http-pages   # requires dev server + BOOTSTRAP_* env
 ```
 
+## Pre-deploy — migration 0008
+
+Migration 0008 adds a unique index on `money_account (user_id, bank)` and will
+abort if duplicates already exist. Before deploying, confirm the target DB is
+clean (must return zero rows):
+
+```sql
+SELECT user_id, bank, count(*) FROM money_account
+GROUP BY user_id, bank HAVING count(*) > 1;
+```
+
+If any rows come back, reassign the duplicates' children (transactions,
+imports) to one canonical account and delete the extras before migrating.
+
 ## Manual — tenant isolation
 
 - [ ] Log in as seed/bootstrap user — historical transactions and imports visible

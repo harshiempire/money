@@ -8,6 +8,12 @@ import { checkLoginRateLimit } from "@/lib/rate-limit";
 
 /** How often to re-read user.token_version from Neon (revocation check). */
 const TOKEN_VERSION_CHECK_MS = 5 * 60 * 1000;
+/**
+ * If the revocation check errors (Neon blip), keep the JWT only while the
+ * last successful check is younger than this — beyond it, fail closed so a
+ * DB outage cannot keep a revoked session alive indefinitely.
+ */
+const TOKEN_VERSION_GRACE_MS = 15 * 60 * 1000;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db),
@@ -104,9 +110,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token;
       } catch (err) {
         // Transient Neon blips must not wipe the session mid-action
-        // (that previously surfaced as ForbiddenError after ~30s hangs).
-        console.error("[auth] token_version check failed; keeping JWT", err);
-        return token;
+        // (that previously surfaced as ForbiddenError after ~30s hangs),
+        // but only within a bounded grace window — a sustained outage must
+        // not indefinitely defer revocation.
+        if (Date.now() - lastCheck < TOKEN_VERSION_GRACE_MS) {
+          console.error(
+            "[auth] token_version check failed; keeping JWT within grace window",
+            err,
+          );
+          return token;
+        }
+        console.error(
+          "[auth] token_version check failed beyond grace window; revoking session",
+          err,
+        );
+        return null;
       }
     },
     session({ session, token }) {

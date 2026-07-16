@@ -13,7 +13,7 @@ import { db, schema } from "@/db";
  * "Settlement credits" are credits already accounted for via the related
  * debit's your_share, so counting them again would double-count.
  */
-const netSelfExpr = sql<number>`
+export const netSelfExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'debit'
@@ -71,7 +71,12 @@ const netCreditExpr = sql<number>`
   end
 `;
 
-const txnMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.transactions.txnDate}::timestamp), 'YYYY-MM')`;
+export const txnMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.transactions.txnDate}::timestamp), 'YYYY-MM')`;
+
+/** Shared debit/credit sum fragments — the single source of truth for the
+ * gross debit/credit totals used across period totals and metrics queries. */
+export const debitSumExpr = sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`;
+export const creditSumExpr = sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`;
 
 export interface NetSpendTotals {
   totalDebitPaise: number;
@@ -183,8 +188,8 @@ export async function loadPeriodTxnMetrics(
   const [r, splitCountRow, owedSelfPaise] = await Promise.all([
     db
       .select({
-        debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-        credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
+        debit: debitSumExpr,
+        credit: creditSumExpr,
         netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
         count: sql<number>`count(*)::int`,
         personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
@@ -236,19 +241,39 @@ export async function loadPeriodTxnMetrics(
   };
 }
 
+/** Lean period totals — debit/credit/netSelf/count only, composed from the
+ * same shared SQL fragments as loadPeriodTxnMetrics without paying for the
+ * split-count join or the bridge/triage aggregates. */
 export async function netSpendTotals(
   accountId: string,
   from: string | null,
   to: string | null,
   userId?: string | null,
 ): Promise<NetSpendTotals> {
-  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
+  const where = buildTxnWhere(accountId, from, to);
+  const resolvedUserId = await resolveAccountUserId(accountId, userId);
+
+  const [[r], owedSelfPaise] = await Promise.all([
+    db
+      .select({
+        debit: debitSumExpr,
+        credit: creditSumExpr,
+        netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.transactions)
+      .where(where),
+    resolvedUserId
+      ? owedSelfPaiseForUser(resolvedUserId, from, to)
+      : Promise.resolve(0),
+  ]);
+
   return {
-    totalDebitPaise: m.totalDebitPaise,
-    totalCreditPaise: m.totalCreditPaise,
-    netSelfPaise: m.txnNetSelfPaise + m.owedSelfPaise,
-    owedSelfPaise: m.owedSelfPaise,
-    count: m.count,
+    totalDebitPaise: Number(r.debit),
+    totalCreditPaise: Number(r.credit),
+    netSelfPaise: Number(r.netSelf) + owedSelfPaise,
+    owedSelfPaise,
+    count: r.count,
   };
 }
 

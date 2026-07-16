@@ -40,6 +40,12 @@ export function validateNetEventInvariant(
  *
  * Prefers adjusting the largest current allocation that can absorb residual
  * without exceeding outstanding caps or going negative.
+ *
+ * Only lines the user has already allocated are ever adjusted — a line with a
+ * zero allocation belongs to someone the user did not select, and silently
+ * settling against it would corrupt that person's balance. If no allocated
+ * line can absorb the residual, returns null and the caller asks the user to
+ * adjust manually.
  */
 export function balanceAllocationsToExpectedNet(
   receivableAllocs: Record<string, number>,
@@ -81,12 +87,10 @@ export function balanceAllocationsToExpectedNet(
         };
       }
     }
-    // Else grow a payable toward its cap
-    for (const id of Object.keys(payableCaps).sort(
-      (a, b) => (nextP[b] ?? 0) - (nextP[a] ?? 0),
-    )) {
-      const current = nextP[id] ?? 0;
-      const room = payableCaps[id] - current;
+    // Else grow an already-allocated payable toward its cap
+    for (const id of sortedIds(nextP)) {
+      const current = nextP[id];
+      const room = (payableCaps[id] ?? current) - current;
       if (room >= residual) {
         nextP[id] = current + residual;
         return {
@@ -101,11 +105,9 @@ export function balanceAllocationsToExpectedNet(
 
   // residual < 0
   const need = -residual;
-  for (const id of Object.keys(receivableCaps).sort(
-    (a, b) => (nextR[b] ?? 0) - (nextR[a] ?? 0),
-  )) {
-    const current = nextR[id] ?? 0;
-    const room = receivableCaps[id] - current;
+  for (const id of sortedIds(nextR)) {
+    const current = nextR[id];
+    const room = (receivableCaps[id] ?? current) - current;
     if (room >= need) {
       nextR[id] = current + need;
       return {

@@ -9,6 +9,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { creditSumExpr, debitSumExpr, netSelfExpr } from "@/domain/spend/net";
 import { buildSplitByTxn } from "@/lib/splits/build-split-by-txn";
 import {
   buildExpenseLinks,
@@ -57,23 +58,9 @@ export async function loadPeriodTxnTotals(
 ): Promise<PeriodTxnTotals> {
   const [totals] = await db
     .select({
-      debit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      credit: sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`,
-      netSelf: sql<number>`
-        coalesce(sum(
-          case
-            when ${schema.transactions.isTransfer} = true then 0
-            when ${schema.transactions.drCr} = 'debit'
-              then coalesce((select ${schema.splits.yourSharePaise} from ${schema.splits} where ${schema.splits.transactionId} = ${schema.transactions.id}), ${schema.transactions.amountPaise})
-            when ${schema.transactions.drCr} = 'credit'
-              and exists (select 1 from ${schema.settlements} where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id})
-              then 0
-            when ${schema.transactions.drCr} = 'credit'
-              then -1 * ${schema.transactions.amountPaise}
-            else 0
-          end
-        ), 0)::bigint
-      `,
+      debit: debitSumExpr,
+      credit: creditSumExpr,
+      netSelf: sql<number>`coalesce(sum(${netSelfExpr}), 0)::bigint`,
       count: sql<number>`count(*)::int`,
     })
     .from(schema.transactions)
@@ -95,8 +82,18 @@ export async function loadTransactionTableContext(
 ) {
   const limit = options?.limit ?? 1000;
 
-  // Overlap account-scoped work with the main list query.
+  // Kick off account-scoped async work (real, already-running promises) so
+  // it overlaps with the main list query below. These MUST be consumed in
+  // the same Promise.all as the rows query — if the rows query rejects
+  // while these are still in flight and unattached, they'd reject with no
+  // handler and crash the process on unhandledRejection.
   const ledgerPromise = getAccountSplitLedger(accountId);
+  const payablesPromise = loadOpenPayablesForUser(userId);
+  const hintsPromise = loadCounterpartyPersonHints(accountId);
+
+  // categoriesPromise/personsPromise are lazy Drizzle query builders, not
+  // started promises — they don't issue any query (and so can't leak an
+  // unhandled rejection) until they're actually awaited below.
   const categoriesPromise = db
     .select({
       id: schema.categories.id,
@@ -111,70 +108,63 @@ export async function loadTransactionTableContext(
     .from(schema.persons)
     .where(eq(schema.persons.userId, userId))
     .orderBy(asc(schema.persons.name));
-  const payablesPromise = loadOpenPayablesForUser(userId);
-  const hintsPromise = loadCounterpartyPersonHints(accountId);
 
-  const rows = await db
-    .select({
-      id: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      amountPaise: schema.transactions.amountPaise,
-      drCr: schema.transactions.drCr,
-      channel: schema.transactions.channel,
-      rawDescription: schema.transactions.rawDescription,
-      parsedPurpose: schema.transactions.parsedPurpose,
-      balancePaise: schema.transactions.balancePaise,
-      counterpartyId: schema.transactions.counterpartyId,
-      counterpartyDisplayName: schema.counterparties.displayName,
-      categoryId: schema.transactions.categoryId,
-      isTransfer: schema.transactions.isTransfer,
-      needsReview: schema.transactions.needsReview,
-      note: schema.transactions.note,
-    })
-    .from(schema.transactions)
-    .leftJoin(
-      schema.counterparties,
-      eq(schema.transactions.counterpartyId, schema.counterparties.id),
-    )
-    .where(where)
-    .orderBy(
-      desc(schema.transactions.txnDate),
-      desc(schema.transactions.createdAt),
-      sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
-    )
-    .limit(limit);
+  const [rows, ledger, openPayables, counterpartyPersonHints] =
+    await Promise.all([
+      db
+        .select({
+          id: schema.transactions.id,
+          txnDate: schema.transactions.txnDate,
+          amountPaise: schema.transactions.amountPaise,
+          drCr: schema.transactions.drCr,
+          channel: schema.transactions.channel,
+          rawDescription: schema.transactions.rawDescription,
+          parsedPurpose: schema.transactions.parsedPurpose,
+          balancePaise: schema.transactions.balancePaise,
+          counterpartyId: schema.transactions.counterpartyId,
+          counterpartyDisplayName: schema.counterparties.displayName,
+          categoryId: schema.transactions.categoryId,
+          isTransfer: schema.transactions.isTransfer,
+          needsReview: schema.transactions.needsReview,
+          note: schema.transactions.note,
+        })
+        .from(schema.transactions)
+        .leftJoin(
+          schema.counterparties,
+          eq(schema.transactions.counterpartyId, schema.counterparties.id),
+        )
+        .where(where)
+        .orderBy(
+          desc(schema.transactions.txnDate),
+          desc(schema.transactions.createdAt),
+          sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
+        )
+        .limit(limit),
+      ledgerPromise,
+      payablesPromise,
+      hintsPromise,
+    ]);
 
   const txnIds = rows.map((r) => r.id);
 
-  const [
-    splits,
-    settlementsForRows,
-    ledger,
-    categories,
-    personRows,
-    openPayables,
-    counterpartyPersonHints,
-    netEventsByTxn,
-  ] = await Promise.all([
-    txnIds.length
-      ? db
-          .select()
-          .from(schema.splits)
-          .where(inArray(schema.splits.transactionId, txnIds))
-      : Promise.resolve([] as (typeof schema.splits.$inferSelect)[]),
-    txnIds.length
-      ? db
-          .select()
-          .from(schema.settlements)
-          .where(inArray(schema.settlements.inflowTransactionId, txnIds))
-      : Promise.resolve([] as (typeof schema.settlements.$inferSelect)[]),
-    ledgerPromise,
-    categoriesPromise,
-    personsPromise,
-    payablesPromise,
-    hintsPromise,
-    loadNetEventsByTransactionIds(txnIds),
-  ]);
+  const [splits, settlementsForRows, categories, personRows, netEventsByTxn] =
+    await Promise.all([
+      txnIds.length
+        ? db
+            .select()
+            .from(schema.splits)
+            .where(inArray(schema.splits.transactionId, txnIds))
+        : Promise.resolve([] as (typeof schema.splits.$inferSelect)[]),
+      txnIds.length
+        ? db
+            .select()
+            .from(schema.settlements)
+            .where(inArray(schema.settlements.inflowTransactionId, txnIds))
+        : Promise.resolve([] as (typeof schema.settlements.$inferSelect)[]),
+      categoriesPromise,
+      personsPromise,
+      loadNetEventsByTransactionIds(txnIds),
+    ]);
 
   const splitIds = splits.map((s) => s.id);
   const inflowSettlementIds = settlementsForRows

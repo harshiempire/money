@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
+import { txnMonthKeyExpr } from "@/domain/spend/net";
 import {
   settledAmountByOwedExpenseIds,
   settledAmountByParticipantIds,
@@ -198,8 +199,6 @@ async function sumSettlementsReceivedInPeriod(
   return Number(bank.total) + Number(cash.total);
 }
 
-const splitTxnMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.transactions.txnDate}::timestamp), 'YYYY-MM')`;
-
 /** Outstanding split reimbursements grouped by expense month (one bulk query). */
 export async function loadBulkMonthlyReimburseOutstanding(
   accountId: string,
@@ -214,7 +213,7 @@ export async function loadBulkMonthlyReimburseOutstanding(
 
   const rows = await db
     .select({
-      monthKey: splitTxnMonthKeyExpr,
+      monthKey: txnMonthKeyExpr,
       participantId: schema.splitParticipants.id,
       expectedAmountPaise: schema.splitParticipants.expectedAmountPaise,
     })

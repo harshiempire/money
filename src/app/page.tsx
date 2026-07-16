@@ -15,6 +15,7 @@ import {
   netSpendTotals,
   topCounterparties,
 } from "@/domain/spend/net";
+import { mapPeriodMetrics } from "@/domain/spend/period-metrics";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
 import {
   inclusiveDayCount,
@@ -84,25 +85,7 @@ export default async function DashboardPage({
       loadPreviousPeriodComparison(account.id, period, isStatementMode, userId),
     ]);
 
-  const totals = {
-    totalDebitPaise: metrics.totalDebitPaise,
-    totalCreditPaise: metrics.totalCreditPaise,
-    netSelfPaise: metrics.txnNetSelfPaise + metrics.owedSelfPaise,
-    owedSelfPaise: metrics.owedSelfPaise,
-    count: metrics.count,
-  };
-  const bridge = {
-    personalDebitGrossPaise: metrics.personalDebitGrossPaise,
-    yourShareDebitPaise: metrics.yourShareDebitPaise,
-    othersSharePaise: metrics.othersSharePaise,
-    netCreditPaise: metrics.netCreditPaise,
-    splitTxnCount: metrics.splitTxnCount,
-  };
-  const triage = {
-    uncategorizedNetSelfPaise: metrics.uncategorizedNetSelfPaise,
-    uncategorizedCount: metrics.uncategorizedCount,
-    needsReviewCount: metrics.needsReviewCount,
-  };
+  const { totals, bridge, triage } = mapPeriodMetrics(metrics);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const refundCats = cats.filter((c) => c.netSelfPaise < 0);

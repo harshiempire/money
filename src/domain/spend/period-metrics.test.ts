@@ -1,30 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PeriodTxnMetrics } from "./net";
-
-/** Maps loadPeriodTxnMetrics to legacy netSpendTotals / splitBridge / triage shapes. */
-function mapPeriodMetrics(m: PeriodTxnMetrics) {
-  return {
-    totals: {
-      totalDebitPaise: m.totalDebitPaise,
-      totalCreditPaise: m.totalCreditPaise,
-      netSelfPaise: m.txnNetSelfPaise + m.owedSelfPaise,
-      owedSelfPaise: m.owedSelfPaise,
-      count: m.count,
-    },
-    bridge: {
-      personalDebitGrossPaise: m.personalDebitGrossPaise,
-      yourShareDebitPaise: m.yourShareDebitPaise,
-      othersSharePaise: m.othersSharePaise,
-      netCreditPaise: m.netCreditPaise,
-      splitTxnCount: m.splitTxnCount,
-    },
-    triage: {
-      uncategorizedNetSelfPaise: m.uncategorizedNetSelfPaise,
-      uncategorizedCount: m.uncategorizedCount,
-      needsReviewCount: m.needsReviewCount,
-    },
-  };
-}
+import { mapPeriodMetrics } from "./period-metrics";
 
 describe("mapPeriodMetrics", () => {
   test("combines txn net with owed for headline net spend", () => {

@@ -11,6 +11,7 @@ import {
   netSpendTotals,
   topDebits,
 } from "@/domain/spend/net";
+import { mapPeriodMetrics } from "@/domain/spend/period-metrics";
 import { reimbursementBridgeTotals } from "@/domain/spend/reimbursements";
 import {
   ensureTenantDefaults,
@@ -75,20 +76,7 @@ export default async function SpendReportPage({
       : null,
   ]);
 
-  const totals = {
-    totalDebitPaise: metrics.totalDebitPaise,
-    totalCreditPaise: metrics.totalCreditPaise,
-    netSelfPaise: metrics.txnNetSelfPaise + metrics.owedSelfPaise,
-    owedSelfPaise: metrics.owedSelfPaise,
-    count: metrics.count,
-  };
-  const bridge = {
-    personalDebitGrossPaise: metrics.personalDebitGrossPaise,
-    yourShareDebitPaise: metrics.yourShareDebitPaise,
-    othersSharePaise: metrics.othersSharePaise,
-    netCreditPaise: metrics.netCreditPaise,
-    splitTxnCount: metrics.splitTxnCount,
-  };
+  const { totals, bridge } = mapPeriodMetrics(metrics);
 
   const spendCats = cats.filter((c) => c.netSelfPaise > 0);
   const totalSpendPaise = spendCats.reduce((s, c) => s + c.netSelfPaise, 0);

@@ -81,8 +81,27 @@ describe("balanceAllocationsToExpectedNet", () => {
     ).toBeNull();
   });
 
-  test("grows payable when no single receivable can absorb residual", () => {
-    // R=50, expected=-50 → residual +100; largest receivable only 50
+  test("grows an allocated payable when no single receivable can absorb residual", () => {
+    // R=50, P=50, expected=-100 → residual +100; shaving r (max 50) can't absorb it
+    const result = balanceAllocationsToExpectedNet(
+      { r: 50 },
+      { p: 50 },
+      { r: 50 },
+      { p: 200 },
+      -100,
+    );
+    expect(result!.payableAllocs.p).toBe(150);
+    expect(result!.receivableAllocs.r).toBe(50);
+    expect(result!.adjusted).toEqual({
+      side: "payable",
+      id: "p",
+      byPaise: 100,
+    });
+  });
+
+  test("never grows an unallocated line — returns null instead", () => {
+    // Residual +100 can only be absorbed by p's cap, but the user never
+    // allocated p; silently settling against it would hit the wrong person.
     const result = balanceAllocationsToExpectedNet(
       { r: 50 },
       {},
@@ -90,8 +109,19 @@ describe("balanceAllocationsToExpectedNet", () => {
       { p: 200 },
       -50,
     );
-    expect(result!.payableAllocs.p).toBe(100);
-    expect(result!.receivableAllocs.r).toBe(50);
-    expect(result!.adjusted.side).toBe("payable");
+    expect(result).toBeNull();
+  });
+
+  test("never grows an unallocated receivable — returns null instead", () => {
+    // residual −100: only the zero-alloc receivable "other" has cap room
+    // (r is at its cap, p is too small to shave)
+    const result = balanceAllocationsToExpectedNet(
+      { r: 50 },
+      { p: 50 },
+      { r: 50, other: 500 },
+      { p: 50 },
+      100,
+    );
+    expect(result).toBeNull();
   });
 });
