@@ -1,5 +1,5 @@
 import "server-only";
-import { type SQL, and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { type SQL, and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 /**
@@ -340,6 +340,117 @@ export async function categoryBreakdown(
   return [...merged.values()]
     .filter((r) => r.netSelfPaise !== 0)
     .sort((a, b) => b.netSelfPaise - a.netSelfPaise);
+}
+
+export interface CategoryTransactionRow {
+  id: string;
+  txnDate: string;
+  rawDescription: string;
+  counterpartyDisplayName: string | null;
+  parsedPurpose: string | null;
+  note: string | null;
+  netSelfPaise: number;
+  /** owed_expense ids don't resolve on /transactions — only "bank" rows are linkable there. */
+  source: "bank" | "owed";
+}
+
+/**
+ * The individual rows behind one category's total in categoryBreakdown —
+ * same two sources (bank transactions + shared expenses others fronted),
+ * same filters, just ungrouped and scoped to one category. Meant to be
+ * called on demand (e.g. an accordion expand), not part of the period's
+ * bulk metrics load.
+ */
+export async function categoryTransactions(
+  accountId: string,
+  from: string | null,
+  to: string | null,
+  categoryId: string | null,
+  userId?: string | null,
+): Promise<CategoryTransactionRow[]> {
+  const where = buildTxnWhere(accountId, from, to);
+  const resolvedUserId = await resolveAccountUserId(accountId, userId);
+  const txnCategoryFilter = categoryId
+    ? eq(schema.transactions.categoryId, categoryId)
+    : isNull(schema.transactions.categoryId);
+
+  const [txnRows, owedRows] = await Promise.all([
+    db
+      .select({
+        id: schema.transactions.id,
+        txnDate: schema.transactions.txnDate,
+        rawDescription: schema.transactions.rawDescription,
+        counterpartyDisplayName: schema.counterparties.displayName,
+        parsedPurpose: schema.transactions.parsedPurpose,
+        note: schema.transactions.note,
+        netSelf: netSelfExpr,
+      })
+      .from(schema.transactions)
+      .leftJoin(
+        schema.counterparties,
+        eq(schema.transactions.counterpartyId, schema.counterparties.id),
+      )
+      .where(and(where, txnCategoryFilter))
+      .orderBy(desc(schema.transactions.txnDate)),
+    resolvedUserId
+      ? (async () => {
+          const filters = [eq(schema.owedExpenses.userId, resolvedUserId)];
+          if (from) filters.push(gte(schema.owedExpenses.incurredDate, from));
+          if (to) filters.push(lte(schema.owedExpenses.incurredDate, to));
+          filters.push(
+            categoryId
+              ? eq(schema.owedExpenses.categoryId, categoryId)
+              : isNull(schema.owedExpenses.categoryId),
+          );
+          return db
+            .select({
+              id: schema.owedExpenses.id,
+              txnDate: schema.owedExpenses.incurredDate,
+              rawDescription: schema.owedExpenses.description,
+              note: schema.owedExpenses.note,
+              netSelf: schema.owedExpenses.amountPaise,
+            })
+            .from(schema.owedExpenses)
+            .where(and(...filters))
+            .orderBy(desc(schema.owedExpenses.incurredDate));
+        })()
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            txnDate: string;
+            rawDescription: string;
+            note: string | null;
+            netSelf: number;
+          }>,
+        ),
+  ]);
+
+  const combined: CategoryTransactionRow[] = [
+    ...txnRows
+      .filter((r) => Number(r.netSelf) !== 0)
+      .map((r) => ({
+        id: r.id,
+        txnDate: r.txnDate,
+        rawDescription: r.rawDescription,
+        counterpartyDisplayName: r.counterpartyDisplayName,
+        parsedPurpose: r.parsedPurpose,
+        note: r.note,
+        netSelfPaise: Number(r.netSelf),
+        source: "bank" as const,
+      })),
+    ...owedRows.map((r) => ({
+      id: r.id,
+      txnDate: r.txnDate,
+      rawDescription: r.rawDescription,
+      counterpartyDisplayName: null,
+      parsedPurpose: null,
+      note: r.note,
+      netSelfPaise: Number(r.netSelf),
+      source: "owed" as const,
+    })),
+  ];
+
+  return combined.sort((a, b) => b.txnDate.localeCompare(a.txnDate));
 }
 
 export interface DailyBalance {

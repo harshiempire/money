@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { getPersonDetail } from "@/lib/people/ledger";
+import { transactionHref } from "@/lib/transactions/href";
 
 export const dynamic = "force-dynamic";
 
@@ -48,9 +49,25 @@ export default async function PersonDetailPage({
                 key={r.participantId}
                 className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800"
               >
-                <span>
-                  {formatDate(r.txnDate)} ·{" "}
-                  {counterpartyLabel(r.txnDescription)}
+                <span className="min-w-0">
+                  <span className="block">
+                    {formatDate(r.txnDate)} ·{" "}
+                    {r.counterpartyDisplayName ??
+                      counterpartyLabel(r.txnDescription)}{" "}
+                    <a
+                      href={transactionHref(r.txnId)}
+                      className="text-xs text-neutral-500 underline-offset-2 hover:underline"
+                    >
+                      View transaction →
+                    </a>
+                  </span>
+                  {(r.parsedPurpose || r.txnNote) && (
+                    <span className="mt-0.5 block text-xs italic text-neutral-500">
+                      {[r.parsedPurpose, r.txnNote]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  )}
                 </span>
                 <span className="font-mono text-xs text-owed-to-me">
                   {formatPaise(r.outstandingPaise)} outstanding

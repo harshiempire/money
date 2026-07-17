@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { db, schema } from "@/db";
 import { checkLoginRateLimit } from "@/lib/rate-limit";
+import { authConfig } from "@/auth.config";
 
 /** How often to re-read user.token_version from Neon (revocation check). */
 const TOKEN_VERSION_CHECK_MS = 5 * 60 * 1000;
@@ -16,10 +17,9 @@ const TOKEN_VERSION_CHECK_MS = 5 * 60 * 1000;
 const TOKEN_VERSION_GRACE_MS = 15 * 60 * 1000;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   adapter: DrizzleAdapter(db),
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
-  pages: { signIn: "/login" },
-  trustHost: true,
   providers: [
     Credentials({
       name: "credentials",
@@ -133,17 +133,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
       return session;
     },
-    authorized({ auth, request }) {
-      const { pathname } = request.nextUrl;
-      if (
-        pathname.startsWith("/login") ||
-        pathname.startsWith("/register") ||
-        pathname.startsWith("/api/auth")
-      ) {
-        return true;
-      }
-      return !!auth?.user;
-    },
+    ...authConfig.callbacks,
   },
 });
 

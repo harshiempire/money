@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { CategoryAccordion } from "@/components/spend/CategoryAccordion";
 import { DailySpendChart } from "@/components/spend/DailySpendChart";
 import { SpendBreakdown } from "@/components/spend/SpendBreakdown";
 import { SpendPeriodPicker } from "@/components/spend/SpendPeriodPicker";
@@ -160,26 +161,23 @@ export default async function SpendReportPage({
               % of net personal spend in this period
             </p>
           )}
-          <ul className="mt-3 space-y-2 text-sm">
+          <div className="mt-3 space-y-2">
             {spendCats.map((c) => (
-              <li
-                key={c.categoryName}
-                className="flex items-baseline justify-between gap-2"
-              >
-                <span className="font-medium">{c.categoryName}</span>
-                <span className="font-mono text-xs whitespace-nowrap">
-                  {formatPaise(c.netSelfPaise)}
-                  {totalSpendPaise > 0 && (
-                    <span className="text-neutral-500">
-                      {" "}
-                      ·{" "}
-                      {((c.netSelfPaise / totalSpendPaise) * 100).toFixed(0)}%
-                    </span>
-                  )}
-                </span>
-              </li>
+              <CategoryAccordion
+                key={c.categoryId ?? c.categoryName}
+                categoryId={c.categoryId}
+                categoryName={c.categoryName}
+                netSelfPaise={c.netSelfPaise}
+                sharePercent={
+                  totalSpendPaise > 0
+                    ? (c.netSelfPaise / totalSpendPaise) * 100
+                    : null
+                }
+                from={period.from}
+                to={period.to}
+              />
             ))}
-          </ul>
+          </div>
         </section>
       )}
 

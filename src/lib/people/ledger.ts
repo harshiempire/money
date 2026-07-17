@@ -18,8 +18,12 @@ export interface PersonBalanceRow {
 
 export interface PersonReceivableRow {
   participantId: string;
+  txnId: string;
   txnDate: string;
   txnDescription: string;
+  counterpartyDisplayName: string | null;
+  parsedPurpose: string | null;
+  txnNote: string | null;
   expectedPaise: number;
   settledPaise: number;
   outstandingPaise: number;
@@ -55,13 +59,21 @@ async function loadAllReceivablesForUser(userId: string) {
   const splitsRaw = await db
     .select({
       splitId: schema.splits.id,
+      transactionId: schema.transactions.id,
       txnDate: schema.transactions.txnDate,
       rawDescription: schema.transactions.rawDescription,
+      parsedPurpose: schema.transactions.parsedPurpose,
+      txnNote: schema.transactions.note,
+      counterpartyDisplayName: schema.counterparties.displayName,
     })
     .from(schema.splits)
     .innerJoin(
       schema.transactions,
       eq(schema.splits.transactionId, schema.transactions.id),
+    )
+    .leftJoin(
+      schema.counterparties,
+      eq(schema.transactions.counterpartyId, schema.counterparties.id),
     )
     .where(inArray(schema.transactions.accountId, accountIds));
 
@@ -90,8 +102,12 @@ async function loadAllReceivablesForUser(userId: string) {
       personId: p.personId,
       personName: p.personName,
       participantId: p.id,
+      txnId: meta.transactionId,
       txnDate: meta.txnDate,
       txnDescription: meta.rawDescription,
+      counterpartyDisplayName: meta.counterpartyDisplayName,
+      parsedPurpose: meta.parsedPurpose,
+      txnNote: meta.txnNote,
       expectedPaise: expected,
       settledPaise: paid,
       outstandingPaise: Math.max(0, expected - paid),
@@ -261,8 +277,12 @@ export async function getPersonDetail(
     .filter((r) => r.outstandingPaise > 0)
     .map((r) => ({
       participantId: r.participantId,
+      txnId: r.txnId,
       txnDate: r.txnDate,
       txnDescription: r.txnDescription,
+      counterpartyDisplayName: r.counterpartyDisplayName,
+      parsedPurpose: r.parsedPurpose,
+      txnNote: r.txnNote,
       expectedPaise: r.expectedPaise,
       settledPaise: r.settledPaise,
       outstandingPaise: r.outstandingPaise,
