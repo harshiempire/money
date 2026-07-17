@@ -1,4 +1,9 @@
 export async function register() {
+  // register() runs once per runtime the app boots into — both "nodejs"
+  // and "edge" (the latter because middleware runs on Edge). The DB check
+  // below uses postgres.js (raw TCP sockets), which Edge can't run; skip it
+  // there so it doesn't crash middleware on every request.
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.SKIP_AUTH_BOOTSTRAP_CHECK === "1") return;
   if (process.env.NODE_ENV !== "production") return;
 
