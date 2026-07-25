@@ -6,12 +6,18 @@ import { db, schema } from "@/db";
  * The single source of truth for "net personal spend" semantics:
  *
  *   net_self =
- *     + (debit amount, or your_share if a split exists)         when !is_transfer
- *     - (credit amount)                                          when !is_transfer && !is_settlement
- *     + 0                                                        otherwise
+ *     + (debit amount, or your_share if a split exists)          when !is_transfer
+ *     - (credit amount - allocated settlement amount)             when !is_transfer
+ *     + 0                                                         otherwise
  *
- * "Settlement credits" are credits already accounted for via the related
- * debit's your_share, so counting them again would double-count.
+ * A credit's "allocated" portion is the sum of settlement rows pointing at
+ * it — money already accounted for via the related debit's your_share, so
+ * counting it again would double-count. Only the *unallocated* remainder of
+ * a credit is unexplained incoming money and reduces net spend like any
+ * other credit. A credit with no settlement rows has allocated = 0, so this
+ * reduces to the plain "- credit amount" case. Historical over-allocated
+ * rows (allocated > amount) are clamped to contribute 0 rather than a
+ * negative (i.e. flipping into a debit-like contribution).
  */
 export const netSelfExpr = sql<number>`
   case
@@ -23,13 +29,14 @@ export const netSelfExpr = sql<number>`
         ${schema.transactions.amountPaise}
       )
     when ${schema.transactions.drCr} = 'credit'
-      and exists (
-        select 1 from ${schema.settlements}
-        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      then -1 * greatest(
+        ${schema.transactions.amountPaise} - coalesce(
+          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+           where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ),
+        0
       )
-      then 0
-    when ${schema.transactions.drCr} = 'credit'
-      then -1 * ${schema.transactions.amountPaise}
     else 0
   end
 `;
@@ -60,13 +67,14 @@ const netCreditExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'credit'
-      and exists (
-        select 1 from ${schema.settlements}
-        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      then greatest(
+        ${schema.transactions.amountPaise} - coalesce(
+          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+           where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ),
+        0
       )
-      then 0
-    when ${schema.transactions.drCr} = 'credit'
-      then ${schema.transactions.amountPaise}
     else 0
   end
 `;

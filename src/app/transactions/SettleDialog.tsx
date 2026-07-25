@@ -23,6 +23,66 @@ const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
 const outstandingPaise = (p: ParticipantOption) =>
   Math.max(0, p.expectedAmountPaise - p.alreadySettledPaise);
 
+type SettlementBadgeStatus = "none" | "partial" | "settled" | "over";
+
+function settlementStatus(
+  amountPaise: number,
+  allocatedPaise: number,
+): SettlementBadgeStatus {
+  if (allocatedPaise <= 0) return "none";
+  if (allocatedPaise < amountPaise) return "partial";
+  if (allocatedPaise > amountPaise) return "over";
+  return "settled";
+}
+
+function settleButtonLabel(
+  status: SettlementBadgeStatus,
+  remainingPaise: number,
+): string {
+  switch (status) {
+    case "settled":
+      return "Settled ✓";
+    case "partial":
+      return `₹${paiseToRupeesStr(remainingPaise)} LEFT`;
+    case "over":
+      return `₹${paiseToRupeesStr(-remainingPaise)} OVER`;
+    default:
+      return "Settle";
+  }
+}
+
+function settleButtonClass(status: SettlementBadgeStatus): string {
+  switch (status) {
+    case "settled":
+      return "border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300";
+    case "partial":
+      return "border-amber-400 text-amber-800 dark:border-amber-700 dark:text-amber-300";
+    case "over":
+      return "border-red-400 text-red-700 dark:border-red-700 dark:text-red-300";
+    default:
+      return "border-neutral-300 text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800";
+  }
+}
+
+function settleButtonTitle(
+  status: SettlementBadgeStatus,
+  amountPaise: number,
+  allocatedPaise: number,
+  remainingPaise: number,
+): string {
+  const allocated = `allocated ₹${paiseToRupeesStr(allocatedPaise)} of ₹${paiseToRupeesStr(amountPaise)} credit`;
+  switch (status) {
+    case "settled":
+      return `Settlement: ${allocated} · fully settled`;
+    case "partial":
+      return `Settlement: ${allocated} · ₹${paiseToRupeesStr(remainingPaise)} unallocated`;
+    case "over":
+      return `Settlement: ${allocated} · over-allocated by ₹${paiseToRupeesStr(-remainingPaise)}`;
+    default:
+      return "Mark this credit as a reimbursement against a split";
+  }
+}
+
 function matchesParticipantFilters(
   p: ParticipantOption,
   personQuery: string,
@@ -65,6 +125,9 @@ export function SettleButton({
   const close = () => dialogRef.current?.close();
 
   const isSettlement = existing.length > 0;
+  const allocatedPaise = existing.reduce((s, e) => s + e.amountPaise, 0);
+  const remainingPaise = amountPaise - allocatedPaise;
+  const status = settlementStatus(amountPaise, allocatedPaise);
 
   return (
     <>
@@ -75,15 +138,11 @@ export function SettleButton({
         title={
           participants.length === 0 && !isSettlement
             ? "No outstanding split participants — record a split on a debit first"
-            : "Mark this credit as a reimbursement against a split"
+            : settleButtonTitle(status, amountPaise, allocatedPaise, remainingPaise)
         }
-        className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
-          isSettlement
-            ? "border-emerald-400 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300"
-            : "border-neutral-300 text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-        }`}
+        className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${settleButtonClass(status)}`}
       >
-        {isSettlement ? "Settled ✓" : "Settle"}
+        {settleButtonLabel(status, remainingPaise)}
       </button>
       <dialog
         ref={dialogRef}
@@ -155,18 +214,32 @@ function SettleForm({
       }))
       .filter((a) => Number.isFinite(a.amountPaise) && a.amountPaise > 0);
     startTransition(async () => {
-      await recordSettlement({
-        inflowTransactionId,
-        allocations: cleaned,
-      });
-      onClose();
+      try {
+        await recordSettlement({
+          inflowTransactionId,
+          allocations: cleaned,
+        });
+        onClose();
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to save settlement";
+        console.error("[recordSettlement]", err);
+        window.alert(msg);
+      }
     });
   };
 
   const remove = () => {
     startTransition(async () => {
-      await clearSettlement({ inflowTransactionId });
-      onClose();
+      try {
+        await clearSettlement({ inflowTransactionId });
+        onClose();
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to clear settlement";
+        console.error("[clearSettlement]", err);
+        window.alert(msg);
+      }
     });
   };
 
@@ -301,15 +374,25 @@ function SettleForm({
         </div>
       )}
 
-      <p className="mt-3 text-xs text-neutral-500">
-        Allocated ₹{paiseToRupeesStr(allocatedPaise)} · remaining unallocated ₹
-        {paiseToRupeesStr(Math.max(0, remaining))}
-        {remaining < 0 && (
-          <span className="ml-2 text-red-600">
-            (over-allocated by ₹{paiseToRupeesStr(-remaining)})
-          </span>
-        )}
-      </p>
+      {remaining === 0 ? (
+        <p className="mt-3 text-xs text-neutral-500">
+          Allocated ₹{paiseToRupeesStr(allocatedPaise)} · fully settled
+        </p>
+      ) : (
+        <p
+          className={`mt-3 rounded border px-3 py-2 text-sm ${
+            remaining < 0
+              ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+              : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+          }`}
+        >
+          Allocated ₹{paiseToRupeesStr(allocatedPaise)} of ₹
+          {paiseToRupeesStr(amountPaise)}
+          {remaining < 0
+            ? ` · over-allocated by ₹${paiseToRupeesStr(-remaining)} — reduce an allocation to save`
+            : ` · ₹${paiseToRupeesStr(remaining)} remaining unallocated`}
+        </p>
+      )}
 
       <footer className="mt-5 flex items-center justify-between">
         {existing.length > 0 ? (
@@ -336,7 +419,12 @@ function SettleForm({
           <button
             type="button"
             onClick={submit}
-            disabled={pending}
+            disabled={pending || remaining < 0}
+            title={
+              remaining < 0
+                ? "Over-allocated — reduce an allocation before saving"
+                : undefined
+            }
             className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           >
             {pending ? "Saving…" : "Save"}
