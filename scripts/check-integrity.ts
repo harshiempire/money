@@ -23,6 +23,19 @@ import { formatPaise } from "../src/lib/format";
 
 try {
   await db.select({ id: schema.settlements.id }).from(schema.settlements).limit(1);
+  await db
+    .select({
+      residualDisposition: schema.transactions.residualDisposition,
+      residualAcknowledgedPaise: schema.transactions.residualAcknowledgedPaise,
+    })
+    .from(schema.transactions)
+    .limit(1);
+  await db
+    .select({
+      sourceInflowTransactionId: schema.owedExpenses.sourceInflowTransactionId,
+    })
+    .from(schema.owedExpenses)
+    .limit(1);
 } catch (err) {
   const code =
     err &&
@@ -66,6 +79,18 @@ function section(label: string, count: number) {
 }
 
 // ─── 1. Credits with a settlement residual ───────────────────────────────────
+//
+// A credit is fully explained once allocated + acknowledged (kept/written_off)
+// + overpaymentPayables (owed_back) account for the whole amount — see
+// src/domain/spend/net.ts for the shared "accountedPaise" identity. Only the
+// unexplained remainder is a real finding.
+//
+// The overpayment sum is pulled via a correlated scalar subquery rather than
+// a join: ${schema.owedExpenses} is already joined once (on settlement.owed_
+// expense_id, to label cash-settled participants), and joining it a second
+// time (on owed_expense.source_inflow_transaction_id) would fan out against
+// the settlement rows already in the join and inflate sum(settlement.amount_
+// paise). The subquery keeps its own scope, so it can't multiply anything.
 
 type ResidualCreditRow = {
   userId: string;
@@ -74,6 +99,8 @@ type ResidualCreditRow = {
   description: string;
   creditPaise: unknown;
   allocatedPaise: unknown;
+  acknowledgedPaise: unknown;
+  overpaymentPaise: unknown;
   people: string;
 }
 
@@ -85,6 +112,12 @@ const { rows: residualCredits } = await db.execute<ResidualCreditRow>(sql`
     ${schema.transactions.rawDescription} as "description",
     ${schema.transactions.amountPaise} as "creditPaise",
     coalesce(sum(${schema.settlements.amountPaise}), 0) as "allocatedPaise",
+    coalesce(${schema.transactions.residualAcknowledgedPaise}, 0) as "acknowledgedPaise",
+    coalesce(
+      (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+       where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
+      0
+    ) as "overpaymentPaise",
     string_agg(
       distinct coalesce(${schema.splitParticipants.personName}, ${schema.owedExpenses.personName}, '(net event / unattributed)'),
       ', '
@@ -95,17 +128,30 @@ const { rows: residualCredits } = await db.execute<ResidualCreditRow>(sql`
   left join ${schema.splitParticipants} on ${schema.splitParticipants.id} = ${schema.settlements.splitParticipantId}
   left join ${schema.owedExpenses} on ${schema.owedExpenses.id} = ${schema.settlements.owedExpenseId}
   where ${schema.transactions.drCr} = 'credit'
-  group by ${schema.moneyAccounts.userId}, ${schema.transactions.id}, ${schema.transactions.txnDate}, ${schema.transactions.rawDescription}, ${schema.transactions.amountPaise}
-  having coalesce(sum(${schema.settlements.amountPaise}), 0) <> ${schema.transactions.amountPaise}
+  group by ${schema.moneyAccounts.userId}, ${schema.transactions.id}, ${schema.transactions.txnDate}, ${schema.transactions.rawDescription}, ${schema.transactions.amountPaise}, ${schema.transactions.residualAcknowledgedPaise}
+  having (
+    ${schema.transactions.amountPaise}
+    - coalesce(sum(${schema.settlements.amountPaise}), 0)
+    - coalesce(${schema.transactions.residualAcknowledgedPaise}, 0)
+    - coalesce(
+        (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+         where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
+        0
+      )
+  ) <> 0
   order by ${schema.transactions.txnDate}
 `);
 
-const underAllocated = residualCredits.filter(
-  (r) => p(r.allocatedPaise) < p(r.creditPaise),
-);
-const overAllocated = residualCredits.filter(
-  (r) => p(r.allocatedPaise) > p(r.creditPaise),
-);
+// Grouped by the sign of the *unexplained* remainder (not raw allocated vs
+// credit): a row can have allocated === credit exactly and still land here
+// with a non-zero unexplained amount if acknowledged/owed-back double up on
+// an already-allocated credit, so the split has to follow the same value the
+// having clause filtered on or a row would silently vanish from both groups.
+const unexplainedOf = (r: ResidualCreditRow): number =>
+  p(r.creditPaise) - p(r.allocatedPaise) - p(r.acknowledgedPaise) - p(r.overpaymentPaise);
+
+const underAllocated = residualCredits.filter((r) => unexplainedOf(r) > 0);
+const overAllocated = residualCredits.filter((r) => unexplainedOf(r) < 0);
 
 console.log("\n=== 1. Credits with a settlement residual ===");
 if (residualCredits.length === 0) {
@@ -116,12 +162,14 @@ if (residualCredits.length === 0) {
     for (const r of rows) {
       const credit = p(r.creditPaise);
       const allocated = p(r.allocatedPaise);
-      const diff = Math.abs(allocated - credit);
+      const acknowledged = p(r.acknowledgedPaise);
+      const owedBack = p(r.overpaymentPaise);
+      const unexplained = unexplainedOf(r);
       console.log(
         `  txn ${r.txnId}  ${r.txnDate}  "${r.description}"  [${userLabel(r.userId)}]`,
       );
       console.log(
-        `      credit ${rupees(credit)}  allocated ${rupees(allocated)}  ${label === "under-allocated" ? "unaccounted" : "excess"} ${rupees(diff)}  people: ${r.people}`,
+        `      credit ${rupees(credit)}  allocated ${rupees(allocated)}  acknowledged ${rupees(acknowledged)}  owed-back ${rupees(owedBack)}  unexplained ${rupees(unexplained)}  people: ${r.people}`,
       );
     }
   };

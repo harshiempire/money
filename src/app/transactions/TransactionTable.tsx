@@ -9,13 +9,20 @@ import { SplitSettlementStatusLine } from "./SplitDialog";
 import { SplitSettlementLinks } from "./SplitSettlementLinks";
 import type { TransactionListRow } from "./load-table-context";
 import type { ExistingSplit } from "./SplitDialog";
-import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
+import type {
+  CreditResidual,
+  ExistingAllocation,
+  ParticipantOption,
+} from "./SettleDialog";
 import type { ExpenseLink, ReimbursementLink } from "./SplitSettlementLinks";
 import type {
   PayableOption,
   ReceivableOption,
   NetEventByTransaction,
 } from "@/lib/net-events/load-net-settle-data";
+
+// Debit rows never carry a residual, so callers share one frozen fallback.
+const NO_CREDIT_RESIDUAL: CreditResidual = { acknowledgedPaise: 0, disposition: null, overpaymentPayablePaise: 0 };
 
 function ChannelPill({ channel }: { channel: string }) {
   const palette: Record<string, string> = {
@@ -67,6 +74,7 @@ export function TransactionTable({
   openReceivables,
   openPayables,
   netEventsByTxn,
+  creditResidualByTxn,
   emptyMessage,
 }: {
   rows: TransactionListRow[];
@@ -81,6 +89,7 @@ export function TransactionTable({
   openReceivables: ReceivableOption[];
   openPayables: PayableOption[];
   netEventsByTxn: Map<string, NetEventByTransaction>;
+  creditResidualByTxn: Map<string, CreditResidual>;
   emptyMessage: string;
 }) {
   const visibleTxnIds = rows.map((r) => r.id);
@@ -153,6 +162,9 @@ export function TransactionTable({
                       categories={categoryOptions}
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      residual={
+                        creditResidualByTxn.get(r.id) ?? NO_CREDIT_RESIDUAL
+                      }
                       participants={participantOptions}
                       knownPersonNames={knownPersonNames}
                       note={r.note}
@@ -234,6 +246,9 @@ export function TransactionTable({
                   categories={categoryOptions}
                   existingSplit={splitByTxn.get(r.id) ?? null}
                   existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      residual={
+                        creditResidualByTxn.get(r.id) ?? NO_CREDIT_RESIDUAL
+                      }
                   participants={participantOptions}
                   knownPersonNames={knownPersonNames}
                   note={r.note}

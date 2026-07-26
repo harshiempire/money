@@ -143,6 +143,7 @@ export default async function TransactionsPage({
     openReceivables,
     openPayables,
     netEventsByTxn,
+    creditResidualByTxn,
   } = ctx;
 
   const visibleTxnIds = rows.map((r) => r.id);
@@ -330,6 +331,13 @@ export default async function TransactionsPage({
                       categories={categoryOptions}
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      residual={
+                        creditResidualByTxn.get(r.id) ?? {
+                          acknowledgedPaise: 0,
+                          disposition: null,
+                          overpaymentPayablePaise: 0,
+                        }
+                      }
                       participants={participantOptions}
                       knownPersonNames={knownPersonNames}
                       note={r.note}
@@ -428,6 +436,13 @@ export default async function TransactionsPage({
                       categories={categoryOptions}
                       existingSplit={splitByTxn.get(r.id) ?? null}
                       existingSettlement={settlementsByInflow.get(r.id) ?? []}
+                      residual={
+                        creditResidualByTxn.get(r.id) ?? {
+                          acknowledgedPaise: 0,
+                          disposition: null,
+                          overpaymentPayablePaise: 0,
+                        }
+                      }
                       participants={participantOptions}
                       knownPersonNames={knownPersonNames}
                       note={r.note}

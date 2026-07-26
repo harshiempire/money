@@ -19,7 +19,10 @@ import {
   CashSettlementButton,
   type CashSettlement,
 } from "./CashSettlementDialog";
-import { SplitAwaitingItem } from "./SplitAwaitingItem";
+import {
+  SplitAwaitingItem,
+  type WriteoffSettlement,
+} from "./SplitAwaitingItem";
 import { PureOffsetNetSettleButton } from "./PureOffsetNetSettleButton";
 import {
   loadOpenPayablesForUser,
@@ -37,8 +40,10 @@ interface ParticipantRow {
   settledPaise: number;
   bankSettledPaise: number;
   cashSettledPaise: number;
+  writeoffPaise: number;
   outstandingPaise: number;
   cashSettlements: CashSettlement[];
+  writeoffSettlements: WriteoffSettlement[];
   ageDays: number;
   txnDate: string;
   txnDescription: string;
@@ -138,6 +143,11 @@ export default async function ReimbursementsPage({
   const bankSettledByParticipant = new Map<string, number>();
   const cashSettledByParticipant = new Map<string, number>();
   const cashSettlementsByParticipant = new Map<string, CashSettlement[]>();
+  const writeoffSettledByParticipant = new Map<string, number>();
+  const writeoffSettlementsByParticipant = new Map<
+    string,
+    WriteoffSettlement[]
+  >();
   if (participants.length > 0) {
     const sets = await db
       .select({
@@ -175,6 +185,22 @@ export default async function ReimbursementsPage({
           note: s.note,
         });
         cashSettlementsByParticipant.set(s.splitParticipantId, cash);
+      } else if (s.method === "writeoff") {
+        // A forgiven share counts as settled but no money moved — keep it out
+        // of the bank total so the breakdown doesn't claim a payment happened.
+        writeoffSettledByParticipant.set(
+          s.splitParticipantId,
+          (writeoffSettledByParticipant.get(s.splitParticipantId) ?? 0) +
+            Number(s.amountPaise),
+        );
+        const off =
+          writeoffSettlementsByParticipant.get(s.splitParticipantId) ?? [];
+        off.push({
+          id: s.id,
+          amountPaise: Number(s.amountPaise),
+          note: s.note,
+        });
+        writeoffSettlementsByParticipant.set(s.splitParticipantId, off);
       } else {
         bankSettledByParticipant.set(
           s.splitParticipantId,
@@ -205,8 +231,10 @@ export default async function ReimbursementsPage({
       settledPaise: settled,
       bankSettledPaise: bankSettledByParticipant.get(p.id) ?? 0,
       cashSettledPaise: cashSettledByParticipant.get(p.id) ?? 0,
+      writeoffPaise: writeoffSettledByParticipant.get(p.id) ?? 0,
       outstandingPaise: Math.max(0, expected - settled),
       cashSettlements: cashSettlementsByParticipant.get(p.id) ?? [],
+      writeoffSettlements: writeoffSettlementsByParticipant.get(p.id) ?? [],
       ageDays,
       txnDate: meta.txnDate,
       txnDescription: counterpartyLabel(meta.rawDescription),
@@ -359,8 +387,10 @@ export default async function ReimbursementsPage({
                       settledPaise: p.settledPaise,
                       bankSettledPaise: p.bankSettledPaise,
                       cashSettledPaise: p.cashSettledPaise,
+                      writeoffPaise: p.writeoffPaise,
                       outstandingPaise: p.outstandingPaise,
                       cashSettlements: p.cashSettlements,
+                      writeoffSettlements: p.writeoffSettlements,
                     }),
                   )}
                 />

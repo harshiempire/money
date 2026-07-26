@@ -6,18 +6,26 @@ import { db, schema } from "@/db";
  * The single source of truth for "net personal spend" semantics:
  *
  *   net_self =
- *     + (debit amount, or your_share if a split exists)          when !is_transfer
- *     - (credit amount - allocated settlement amount)             when !is_transfer
+ *     + (debit amount, or your_share if a split exists)           when !is_transfer
+ *     - (credit amount - allocated - overpaymentPayables)         when !is_transfer
  *     + 0                                                         otherwise
  *
  * A credit's "allocated" portion is the sum of settlement rows pointing at
  * it — money already accounted for via the related debit's your_share, so
- * counting it again would double-count. Only the *unallocated* remainder of
- * a credit is unexplained incoming money and reduces net spend like any
- * other credit. A credit with no settlement rows has allocated = 0, so this
+ * counting it again would double-count. "overpaymentPayables" is the sum of
+ * owed_expense rows sourced from this credit (residual_disposition =
+ * owed_back): money you're holding for someone else, not yours, so it must
+ * be excluded from net spend exactly like an allocated settlement. What's
+ * left after subtracting both is the *unexplained* remainder of a credit —
+ * unexplained incoming money that reduces net spend like any other credit.
+ * By contrast, a residual explained as 'kept' or 'written_off' is money
+ * that was always yours (you asked for the extra, or you're forgiving small
+ * change) — it is deliberately NOT subtracted here, so it keeps reducing
+ * net spend like the rest of the credit. A credit with no settlement or
+ * owed_expense rows has allocated = overpaymentPayables = 0, so this
  * reduces to the plain "- credit amount" case. Historical over-allocated
- * rows (allocated > amount) are clamped to contribute 0 rather than a
- * negative (i.e. flipping into a debit-like contribution).
+ * rows (allocated + overpaymentPayables > amount) are clamped to contribute
+ * 0 rather than a negative (i.e. flipping into a debit-like contribution).
  */
 export const netSelfExpr = sql<number>`
   case
@@ -33,6 +41,10 @@ export const netSelfExpr = sql<number>`
         ${schema.transactions.amountPaise} - coalesce(
           (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
            where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ) - coalesce(
+          (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+           where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
           0
         ),
         0
@@ -71,6 +83,10 @@ const netCreditExpr = sql<number>`
         ${schema.transactions.amountPaise} - coalesce(
           (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
            where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ) - coalesce(
+          (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+           where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
           0
         ),
         0

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { formatPaise } from "@/lib/format";
 import { clearSettlement, recordSettlement } from "./split-actions";
 
 export interface ParticipantOption {
@@ -17,21 +18,35 @@ export interface ExistingAllocation {
   amountPaise: number;
 }
 
+export interface CreditResidual {
+  /** transaction.residual_acknowledged_paise ?? 0 */
+  acknowledgedPaise: number;
+  /** transaction.residual_disposition */
+  disposition: "kept" | "written_off" | null;
+  /** sum of owed_expense.amount_paise where source_inflow_transaction_id = this credit */
+  overpaymentPayablePaise: number;
+}
+
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
 const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
 
 const outstandingPaise = (p: ParticipantOption) =>
   Math.max(0, p.expectedAmountPaise - p.alreadySettledPaise);
 
+// A round-off small enough that "forget it" is the obvious default.
+const ROUND_OFF_THRESHOLD_PAISE = 500;
+
+type ResidualChoice = "owed_back" | "kept" | "written_off";
+
 type SettlementBadgeStatus = "none" | "partial" | "settled" | "over";
 
 function settlementStatus(
   amountPaise: number,
-  allocatedPaise: number,
+  accountedPaise: number,
 ): SettlementBadgeStatus {
-  if (allocatedPaise <= 0) return "none";
-  if (allocatedPaise < amountPaise) return "partial";
-  if (allocatedPaise > amountPaise) return "over";
+  if (accountedPaise <= 0) return "none";
+  if (accountedPaise < amountPaise) return "partial";
+  if (accountedPaise > amountPaise) return "over";
   return "settled";
 }
 
@@ -64,16 +79,57 @@ function settleButtonClass(status: SettlementBadgeStatus): string {
   }
 }
 
+// How the credit's leftover was explained, for display next to the badge.
+// Only one of these is ever set at a time — recordSettlement clears the
+// other before writing a new disposition.
+function residualExplanation(
+  residual: CreditResidual,
+  singlePersonName: string | null,
+): string | null {
+  if (residual.disposition === "kept" && residual.acknowledgedPaise > 0) {
+    return `₹${paiseToRupeesStr(residual.acknowledgedPaise)} kept`;
+  }
+  if (
+    residual.disposition === "written_off" &&
+    residual.acknowledgedPaise > 0
+  ) {
+    return `₹${paiseToRupeesStr(residual.acknowledgedPaise)} written off`;
+  }
+  if (residual.overpaymentPayablePaise > 0) {
+    const suffix = singlePersonName ? ` to ${singlePersonName}` : "";
+    return `₹${paiseToRupeesStr(residual.overpaymentPayablePaise)} owed back${suffix}`;
+  }
+  return null;
+}
+
+// The single person these allocations point at, if unambiguous — used both
+// to explain an "owed back" residual and to auto-fill the disposition form.
+function singleAllocatedPersonName(
+  participants: ParticipantOption[],
+  existing: ExistingAllocation[],
+): string | null {
+  const nameById = new Map(participants.map((p) => [p.id, p.personName]));
+  const names = new Set(
+    existing
+      .map((e) => nameById.get(e.splitParticipantId))
+      .filter((n): n is string => Boolean(n)),
+  );
+  return names.size === 1 ? [...names][0] : null;
+}
+
 function settleButtonTitle(
   status: SettlementBadgeStatus,
   amountPaise: number,
   allocatedPaise: number,
   remainingPaise: number,
+  explanation: string | null,
 ): string {
   const allocated = `allocated ₹${paiseToRupeesStr(allocatedPaise)} of ₹${paiseToRupeesStr(amountPaise)} credit`;
   switch (status) {
     case "settled":
-      return `Settlement: ${allocated} · fully settled`;
+      return explanation
+        ? `Settlement: ${allocated} · ${explanation} · fully settled`
+        : `Settlement: ${allocated} · fully settled`;
     case "partial":
       return `Settlement: ${allocated} · ₹${paiseToRupeesStr(remainingPaise)} unallocated`;
     case "over":
@@ -114,20 +170,30 @@ export function SettleButton({
   amountPaise,
   participants,
   existing,
+  residual,
 }: {
   inflowTransactionId: string;
   amountPaise: number;
   participants: ParticipantOption[];
   existing: ExistingAllocation[];
+  residual: CreditResidual;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const open = () => dialogRef.current?.showModal();
   const close = () => dialogRef.current?.close();
 
-  const isSettlement = existing.length > 0;
+  const hasResidualDisposition =
+    residual.disposition !== null || residual.overpaymentPayablePaise > 0;
+  const isSettlement = existing.length > 0 || hasResidualDisposition;
   const allocatedPaise = existing.reduce((s, e) => s + e.amountPaise, 0);
-  const remainingPaise = amountPaise - allocatedPaise;
-  const status = settlementStatus(amountPaise, allocatedPaise);
+  const accountedPaise =
+    allocatedPaise + residual.acknowledgedPaise + residual.overpaymentPayablePaise;
+  const remainingPaise = amountPaise - accountedPaise;
+  const status = settlementStatus(amountPaise, accountedPaise);
+  const explanation = residualExplanation(
+    residual,
+    singleAllocatedPersonName(participants, existing),
+  );
 
   return (
     <>
@@ -138,7 +204,13 @@ export function SettleButton({
         title={
           participants.length === 0 && !isSettlement
             ? "No outstanding split participants — record a split on a debit first"
-            : settleButtonTitle(status, amountPaise, allocatedPaise, remainingPaise)
+            : settleButtonTitle(
+                status,
+                amountPaise,
+                allocatedPaise,
+                remainingPaise,
+                explanation,
+              )
         }
         className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${settleButtonClass(status)}`}
       >
@@ -153,6 +225,7 @@ export function SettleButton({
           amountPaise={amountPaise}
           participants={participants}
           existing={existing}
+          residual={residual}
           onClose={close}
         />
       </dialog>
@@ -160,17 +233,25 @@ export function SettleButton({
   );
 }
 
+const DISPOSITION_OPTIONS: Array<{ value: ResidualChoice; label: string }> = [
+  { value: "owed_back", label: "They overpaid — I owe them back" },
+  { value: "kept", label: "Extra was mine — I'd asked for it" },
+  { value: "written_off", label: "Round off — forget it" },
+];
+
 function SettleForm({
   inflowTransactionId,
   amountPaise,
   participants,
   existing,
+  residual,
   onClose,
 }: {
   inflowTransactionId: string;
   amountPaise: number;
   participants: ParticipantOption[];
   existing: ExistingAllocation[];
+  residual: CreditResidual;
   onClose: () => void;
 }) {
   const initialAllocs: Record<string, string> = Object.fromEntries(
@@ -182,6 +263,18 @@ function SettleForm({
   const [personFilter, setPersonFilter] = useState("");
   const [amountFilter, setAmountFilter] = useState("");
   const [pending, startTransition] = useTransition();
+
+  const initialAllocatedPaise = existing.reduce((s, e) => s + e.amountPaise, 0);
+  const initialRemaining = amountPaise - initialAllocatedPaise;
+  const [disposition, setDisposition] = useState<ResidualChoice | null>(() => {
+    if (residual.disposition) return residual.disposition;
+    if (residual.overpaymentPayablePaise > 0) return "owed_back";
+    if (initialRemaining > 0 && initialRemaining <= ROUND_OFF_THRESHOLD_PAISE) {
+      return "written_off";
+    }
+    return null;
+  });
+  const [owedBackPersonName, setOwedBackPersonName] = useState("");
 
   const personSuggestions = useMemo(() => {
     const names = new Set(participants.map((p) => p.personName));
@@ -206,6 +299,24 @@ function SettleForm({
   }, 0);
   const remaining = amountPaise - allocatedPaise;
 
+  const currentAllocations: ExistingAllocation[] = useMemo(
+    () =>
+      Object.entries(allocations)
+        .map(([splitParticipantId, v]) => ({
+          splitParticipantId,
+          amountPaise: rupeesToPaise(v),
+        }))
+        .filter((a) => Number.isFinite(a.amountPaise) && a.amountPaise > 0),
+    [allocations],
+  );
+  const singlePersonName = useMemo(
+    () => singleAllocatedPersonName(participants, currentAllocations),
+    [participants, currentAllocations],
+  );
+  const resolvedOwedBackName = singlePersonName || owedBackPersonName.trim();
+  const needsOwedBackName =
+    disposition === "owed_back" && !resolvedOwedBackName;
+
   const submit = () => {
     const cleaned = Object.entries(allocations)
       .map(([splitParticipantId, rupees]) => ({
@@ -218,6 +329,14 @@ function SettleForm({
         await recordSettlement({
           inflowTransactionId,
           allocations: cleaned,
+          residual: disposition
+            ? {
+                kind: disposition,
+                personName:
+                  disposition === "owed_back" ? resolvedOwedBackName : undefined,
+                note: null,
+              }
+            : null,
         });
         onClose();
       } catch (err) {
@@ -394,8 +513,50 @@ function SettleForm({
         </p>
       )}
 
+      {remaining > 0 && (
+        <fieldset className="mt-3 space-y-1.5 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800">
+          <legend className="px-1 text-[11px] uppercase tracking-wide text-neutral-500">
+            What happened to the {formatPaise(remaining)} left over?
+          </legend>
+          {DISPOSITION_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="residual-disposition"
+                checked={disposition === opt.value}
+                onChange={() => setDisposition(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+          {disposition === "owed_back" &&
+            (singlePersonName ? (
+              <p className="pl-6 text-xs text-neutral-500">
+                I owe{" "}
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  {singlePersonName}
+                </span>{" "}
+                {formatPaise(remaining)}.
+              </p>
+            ) : (
+              <div className="pl-6">
+                <input
+                  type="text"
+                  list="settle-person-suggestions"
+                  value={owedBackPersonName}
+                  onChange={(e) => setOwedBackPersonName(e.target.value)}
+                  placeholder="Who do you owe this to?"
+                  className="mt-1 w-48 rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+                />
+              </div>
+            ))}
+        </fieldset>
+      )}
+
       <footer className="mt-5 flex items-center justify-between">
-        {existing.length > 0 ? (
+        {existing.length > 0 ||
+        residual.disposition !== null ||
+        residual.overpaymentPayablePaise > 0 ? (
           <button
             type="button"
             onClick={remove}
@@ -419,11 +580,13 @@ function SettleForm({
           <button
             type="button"
             onClick={submit}
-            disabled={pending || remaining < 0}
+            disabled={pending || remaining < 0 || needsOwedBackName}
             title={
               remaining < 0
                 ? "Over-allocated — reduce an allocation before saving"
-                : undefined
+                : needsOwedBackName
+                  ? "Enter who you owe the overpayment back to"
+                  : undefined
             }
             className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           >

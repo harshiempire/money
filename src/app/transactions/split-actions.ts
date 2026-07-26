@@ -195,6 +195,11 @@ export async function deleteSplit(input: { transactionId: string }) {
 export async function recordSettlement(input: {
   inflowTransactionId: string;
   allocations: Array<{ splitParticipantId: string; amountPaise: number }>;
+  residual?: {
+    kind: "owed_back" | "kept" | "written_off";
+    personName?: string;
+    note?: string | null;
+  } | null;
 }) {
   const user = await requireCurrentUserAction();
   await assertTransactionOwned(user.id, input.inflowTransactionId);
@@ -211,7 +216,10 @@ export async function recordSettlement(input: {
     .filter((a) => a.amountPaise > 0);
 
   const [inflow] = await db
-    .select({ amountPaise: schema.transactions.amountPaise })
+    .select({
+      amountPaise: schema.transactions.amountPaise,
+      txnDate: schema.transactions.txnDate,
+    })
     .from(schema.transactions)
     .where(eq(schema.transactions.id, input.inflowTransactionId))
     .limit(1);
@@ -303,10 +311,58 @@ export async function recordSettlement(input: {
         })),
       );
     }
+
+    // Clear any previous disposition first so re-saving is idempotent and
+    // switching your answer (e.g. "kept" -> "owed back") doesn't leave a
+    // stale owed_expense or acknowledgement behind.
+    await tx
+      .delete(schema.owedExpenses)
+      .where(
+        eq(
+          schema.owedExpenses.sourceInflowTransactionId,
+          input.inflowTransactionId,
+        ),
+      );
+    await tx
+      .update(schema.transactions)
+      .set({ residualDisposition: null, residualAcknowledgedPaise: null })
+      .where(eq(schema.transactions.id, input.inflowTransactionId));
+
+    const residualPaise = inflowAmountPaise - allocationsSum;
+    if (input.residual && residualPaise > 0) {
+      if (input.residual.kind === "owed_back") {
+        const personName = input.residual.personName?.trim();
+        if (!personName) {
+          throw new Error(
+            "A person name is required to record an overpayment as owed back.",
+          );
+        }
+        const personId = await getOrCreatePerson(user.id, personName, tx);
+        await tx.insert(schema.owedExpenses).values({
+          userId: user.id,
+          personId,
+          personName,
+          incurredDate: inflow?.txnDate ?? new Date().toISOString().slice(0, 10),
+          amountPaise: residualPaise,
+          description: `Overpayment from ${personName}`,
+          note: input.residual.note ?? null,
+          sourceInflowTransactionId: input.inflowTransactionId,
+        });
+      } else {
+        await tx
+          .update(schema.transactions)
+          .set({
+            residualDisposition: input.residual.kind,
+            residualAcknowledgedPaise: residualPaise,
+          })
+          .where(eq(schema.transactions.id, input.inflowTransactionId));
+      }
+    }
   });
 
   revalidatePath("/transactions");
   revalidatePath("/reimbursements");
+  revalidatePath("/people");
   revalidatePath("/");
 }
 
@@ -314,12 +370,31 @@ export async function clearSettlement(input: { inflowTransactionId: string }) {
   const user = await requireCurrentUserAction();
   await assertTransactionOwned(user.id, input.inflowTransactionId);
 
-  await db
-    .delete(schema.settlements)
-    .where(
-      eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
-    );
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(schema.settlements)
+      .where(
+        eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+      );
+    // Clearing the settlement should not leave an orphan overpayment payable
+    // or a stale acknowledged amount behind — the credit goes back to
+    // reading as unexplained.
+    await tx
+      .delete(schema.owedExpenses)
+      .where(
+        eq(
+          schema.owedExpenses.sourceInflowTransactionId,
+          input.inflowTransactionId,
+        ),
+      );
+    await tx
+      .update(schema.transactions)
+      .set({ residualDisposition: null, residualAcknowledgedPaise: null })
+      .where(eq(schema.transactions.id, input.inflowTransactionId));
+  });
+
   revalidatePath("/transactions");
   revalidatePath("/reimbursements");
+  revalidatePath("/people");
   revalidatePath("/");
 }
