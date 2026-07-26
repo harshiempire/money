@@ -138,6 +138,7 @@ export function TransactionTable({
                       expenseLinks={expenseLinks}
                       reimbursementLinks={reimbursementLinks}
                       existingSplit={existingSplit}
+                      residual={creditResidualByTxn.get(r.id)}
                       visibleTxnIds={visibleTxnIds}
                     />
                   </td>
@@ -229,6 +230,7 @@ export function TransactionTable({
                   expenseLinks={expenseLinks}
                   reimbursementLinks={reimbursementLinks}
                   existingSplit={existingSplit}
+                  residual={creditResidualByTxn.get(r.id)}
                   visibleTxnIds={visibleTxnIds}
                 />
               </div>
@@ -284,12 +286,14 @@ function CounterpartyCell({
   expenseLinks,
   reimbursementLinks,
   existingSplit,
+  residual,
   visibleTxnIds,
 }: {
   r: TransactionListRow;
   expenseLinks: ExpenseLink[] | undefined;
   reimbursementLinks: ReimbursementLink[] | undefined;
   existingSplit: ExistingSplit | undefined;
+  residual: CreditResidual | undefined;
   visibleTxnIds: string[];
 }) {
   return (
@@ -304,7 +308,7 @@ function CounterpartyCell({
         <div className="mt-0.5 text-xs italic text-owed-to-me">{r.note}</div>
       )}
       <SplitSettlementLinks
-                      residual={creditResidualByTxn.get(r.id)}
+        residual={residual}
         expenseLinks={expenseLinks}
         reimbursementLinks={reimbursementLinks}
         visibleTxnIds={visibleTxnIds}
