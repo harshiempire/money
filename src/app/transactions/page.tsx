@@ -300,6 +300,7 @@ export default async function TransactionsPage({
                       </div>
                     )}
                     <SplitSettlementLinks
+                      residual={creditResidualByTxn.get(r.id)}
                       expenseLinks={expenseLinks}
                       reimbursementLinks={reimbursementLinks}
                       visibleTxnIds={visibleTxnIds}
@@ -414,6 +415,7 @@ export default async function TransactionsPage({
                       </div>
                     )}
                     <SplitSettlementLinks
+                      residual={creditResidualByTxn.get(r.id)}
                       expenseLinks={expenseLinks}
                       reimbursementLinks={reimbursementLinks}
                       visibleTxnIds={visibleTxnIds}

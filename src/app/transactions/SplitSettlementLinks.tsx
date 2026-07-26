@@ -1,5 +1,6 @@
 import { formatDate, formatPaise, counterpartyLabel } from "@/lib/format";
 import { LinkedTransactionLink } from "./LinkedTransactionLink";
+import type { CreditResidual } from "./SettleDialog";
 
 export type ExpenseLink = {
   expenseTransactionId: string;
@@ -93,18 +94,44 @@ export function buildReimbursementLinks(
   return byExpense;
 }
 
+/** Plain-English account of a credit's leftover, or null when there isn't one. */
+function residualSummary(
+  residual: CreditResidual | undefined,
+  expenseLinks: ExpenseLink[] | undefined,
+): string | null {
+  if (!residual) return null;
+  if (residual.overpaymentPayablePaise > 0) {
+    // CreditResidual carries no name, so borrow one when this credit points at
+    // exactly one person — otherwise stay vague rather than guess wrong.
+    const names = new Set((expenseLinks ?? []).map((l) => l.personName));
+    const who = names.size === 1 ? ` to ${[...names][0]}` : "";
+    return `${formatPaise(residual.overpaymentPayablePaise)} extra — owed back${who}`;
+  }
+  if (residual.acknowledgedPaise > 0) {
+    return residual.disposition === "kept"
+      ? `${formatPaise(residual.acknowledgedPaise)} extra — kept, you'd asked for it`
+      : `${formatPaise(residual.acknowledgedPaise)} extra — rounded off`;
+  }
+  return null;
+}
+
 export function SplitSettlementLinks({
   expenseLinks,
   reimbursementLinks,
+  residual,
   visibleTxnIds,
 }: {
   expenseLinks?: ExpenseLink[];
   reimbursementLinks?: ReimbursementLink[];
+  residual?: CreditResidual;
   visibleTxnIds: readonly string[];
 }) {
+  const residualLine = residualSummary(residual, expenseLinks);
+
   if (
     (!expenseLinks || expenseLinks.length === 0) &&
-    (!reimbursementLinks || reimbursementLinks.length === 0)
+    (!reimbursementLinks || reimbursementLinks.length === 0) &&
+    !residualLine
   ) {
     return null;
   }
@@ -152,6 +179,11 @@ export function SplitSettlementLinks({
               <span className="opacity-70"> from {link.personName}</span>
             </span>
           ))}
+        </div>
+      )}
+      {residualLine && (
+        <div className="text-neutral-600 dark:text-neutral-400">
+          <span className="opacity-70">↳</span> {residualLine}
         </div>
       )}
     </div>

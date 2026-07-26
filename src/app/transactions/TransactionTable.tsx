@@ -304,6 +304,7 @@ function CounterpartyCell({
         <div className="mt-0.5 text-xs italic text-owed-to-me">{r.note}</div>
       )}
       <SplitSettlementLinks
+                      residual={creditResidualByTxn.get(r.id)}
         expenseLinks={expenseLinks}
         reimbursementLinks={reimbursementLinks}
         visibleTxnIds={visibleTxnIds}
