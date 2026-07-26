@@ -102,7 +102,14 @@ export async function createSplit(input: {
           `Cannot remove ${ep.personName} — ${rupees(settled)} has already been settled against them. Clear that settlement first.`,
         );
       }
-      if (kept.expectedAmountPaise < settled) {
+      // Only block edits that make an over-settlement worse. A share that is
+      // already below what was settled (they overpaid) must stay editable —
+      // otherwise one overpayment freezes the whole split, including edits
+      // that move the share back toward what was actually received.
+      if (
+        kept.expectedAmountPaise < settled &&
+        kept.expectedAmountPaise < ep.expectedAmountPaise
+      ) {
         throw new Error(
           `Cannot reduce ${ep.personName}'s share to ${rupees(kept.expectedAmountPaise)} — ${rupees(settled)} is already settled against them.`,
         );
