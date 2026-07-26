@@ -64,6 +64,13 @@
       "when": 1781692475397,
       "tag": "0008_thick_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785056949547,
+      "tag": "0009_living_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }
