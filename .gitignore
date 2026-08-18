@@ -46,3 +46,4 @@ drizzle/migrations/meta/_journal.json.bak
 *.pdf
 *.xlsx
 sample-data/
+.frugal-fable/

@@ -9,7 +9,16 @@ import {
   assertSplitParticipantOwned,
   assertTransactionOwned,
 } from "@/lib/auth/ownership";
-import { settledAmountByParticipantIds } from "@/lib/splits/outstanding";
+import {
+  settledAmountByOwedExpenseIds,
+  settledAmountByParticipantIds,
+} from "@/lib/splits/outstanding";
+import {
+  validateAllocationAmounts,
+  validatePayableReplaceable,
+  validateSettlementSource,
+  validateSplitInput,
+} from "@/lib/splits/validate";
 
 export interface ParticipantInput {
   // Existing participant id — pass back what the dialog was given for rows
@@ -49,13 +58,22 @@ export async function createSplit(input: {
     Math.max(0, totalPaise - participantsSum),
   );
 
-  if (yourSharePaise + participantsSum !== totalPaise) {
-    const unaccounted = Math.abs(
-      totalPaise - (yourSharePaise + participantsSum),
-    );
-    throw new Error(
-      `Split doesn't balance: your share ${rupees(yourSharePaise)} + participants ${rupees(participantsSum)} = ${rupees(yourSharePaise + participantsSum)}, but total is ${rupees(totalPaise)} (${rupees(unaccounted)} unaccounted).`,
-    );
+  const valid = validateSplitInput({
+    totalPaise,
+    yourSharePaise,
+    participants: cleanParticipants,
+  });
+  if (!valid.ok) throw new Error(valid.message);
+
+  // A split divides money you paid out. Splitting an incoming credit would
+  // record a share of a payment that never happened.
+  const [subject] = await db
+    .select({ drCr: schema.transactions.drCr })
+    .from(schema.transactions)
+    .where(eq(schema.transactions.id, input.transactionId))
+    .limit(1);
+  if (subject?.drCr !== "debit") {
+    throw new Error("Only a payment you made can be split.");
   }
 
   const [existingSplit] = await db
@@ -184,12 +202,91 @@ export async function deleteSplit(input: { transactionId: string }) {
     .select({ id: schema.splits.id })
     .from(schema.splits)
     .where(eq(schema.splits.transactionId, input.transactionId));
-  for (const s of existing) {
-    await db.delete(schema.splits).where(eq(schema.splits.id, s.id));
+  if (existing.length === 0) return;
+
+  // Deleting the split cascades its participants and their settlements away.
+  // Any credit that was settling one of them had its leftover measured
+  // against those allocations, so that figure is about to become a claim
+  // about money we can no longer account for — collect the credits now,
+  // while the settlements still exist, and reset them below.
+  const participants = await db
+    .select({ id: schema.splitParticipants.id })
+    .from(schema.splitParticipants)
+    .where(
+      inArray(
+        schema.splitParticipants.splitId,
+        existing.map((s) => s.id),
+      ),
+    );
+
+  let affectedInflowIds: string[] = [];
+  if (participants.length > 0) {
+    const rows = await db
+      .select({ inflowTransactionId: schema.settlements.inflowTransactionId })
+      .from(schema.settlements)
+      .where(
+        inArray(
+          schema.settlements.splitParticipantId,
+          participants.map((p) => p.id),
+        ),
+      );
+    affectedInflowIds = [
+      ...new Set(
+        rows
+          .map((r) => r.inflowTransactionId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
   }
+
+  await db.transaction(async (tx) => {
+    for (const s of existing) {
+      await tx.delete(schema.splits).where(eq(schema.splits.id, s.id));
+    }
+    // The payables stay: money you owe someone doesn't stop being owed
+    // because the split it came from was removed. Only the acknowledgement,
+    // whose amount was derived from the deleted allocations, is reset — the
+    // credit goes back to reading as unexplained so it gets answered again.
+    if (affectedInflowIds.length > 0) {
+      await tx
+        .update(schema.transactions)
+        .set({ residualDisposition: null, residualAcknowledgedPaise: null })
+        .where(inArray(schema.transactions.id, affectedInflowIds));
+    }
+  });
+
   revalidatePath("/transactions");
   revalidatePath("/reimbursements");
+  revalidatePath("/people");
   revalidatePath("/");
+}
+
+/**
+ * Replacing a credit's leftover deletes the payable an overpayment created,
+ * and `settlement.owed_expense_id` cascades — so any record of that payable
+ * being repaid would go with it. Refuse instead, the same way removing a
+ * settled participant is refused.
+ */
+async function assertResidualPayableReplaceable(inflowTransactionId: string) {
+  const payables = await db
+    .select({
+      id: schema.owedExpenses.id,
+      personName: schema.owedExpenses.personName,
+    })
+    .from(schema.owedExpenses)
+    .where(
+      eq(schema.owedExpenses.sourceInflowTransactionId, inflowTransactionId),
+    );
+  if (payables.length === 0) return;
+
+  const settled = await settledAmountByOwedExpenseIds(payables.map((e) => e.id));
+  for (const payable of payables) {
+    const check = validatePayableReplaceable({
+      personName: payable.personName,
+      settledPaise: settled.get(payable.id) ?? 0,
+    });
+    if (!check.ok) throw new Error(check.message);
+  }
 }
 
 export async function recordSettlement(input: {
@@ -215,14 +312,29 @@ export async function recordSettlement(input: {
     }))
     .filter((a) => a.amountPaise > 0);
 
+  const amounts = validateAllocationAmounts(cleanAllocations);
+  if (!amounts.ok) throw new Error(amounts.message);
+
+  // The outstanding/inflow reads below happen before the write transaction and
+  // take no row locks, so two settlements saved at the same instant could each
+  // see the same amount as unspent. Single-user app, one browser session — the
+  // window doesn't arise in practice. Take row locks here if that changes.
+
   const [inflow] = await db
     .select({
       amountPaise: schema.transactions.amountPaise,
       txnDate: schema.transactions.txnDate,
+      drCr: schema.transactions.drCr,
     })
     .from(schema.transactions)
     .where(eq(schema.transactions.id, input.inflowTransactionId))
     .limit(1);
+
+  const source = validateSettlementSource(inflow?.drCr);
+  if (!source.ok) throw new Error(source.message);
+
+  await assertResidualPayableReplaceable(input.inflowTransactionId);
+
   const inflowAmountPaise = inflow ? Number(inflow.amountPaise) : 0;
 
   const allocationsSum = cleanAllocations.reduce(
@@ -369,6 +481,7 @@ export async function recordSettlement(input: {
 export async function clearSettlement(input: { inflowTransactionId: string }) {
   const user = await requireCurrentUserAction();
   await assertTransactionOwned(user.id, input.inflowTransactionId);
+  await assertResidualPayableReplaceable(input.inflowTransactionId);
 
   await db.transaction(async (tx) => {
     await tx

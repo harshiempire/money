@@ -347,7 +347,11 @@ export const owedExpenses = pgTable(
   },
   (t) => [
     index("owed_expense_user_incurred_idx").on(t.userId, t.incurredDate),
-    index("owed_expense_source_inflow_idx").on(t.sourceInflowTransactionId),
+    // At most one overpayment payable per credit — a duplicate would make
+    // the credit look accounted-for twice over.
+    uniqueIndex("owed_expense_source_inflow_uniq").on(
+      t.sourceInflowTransactionId,
+    ),
   ],
 );
 
