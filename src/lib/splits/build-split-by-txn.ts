@@ -1,5 +1,9 @@
 import { summarizeSplitSettlement } from "./settlement-status";
 import type { ExistingSplit } from "@/app/transactions/SplitDialog";
+import {
+  emptySettlementBreakdown,
+  type ParticipantSettlementSummary,
+} from "./settlement-breakdown";
 
 type SplitRow = {
   id: string;
@@ -20,6 +24,10 @@ export function buildSplitByTxn(
   splits: SplitRow[],
   participantsAll: ParticipantRow[],
   settledByParticipant: Map<string, number>,
+  settlementSummaryByParticipant: Map<
+    string,
+    ParticipantSettlementSummary
+  >,
 ): Map<string, ExistingSplit> {
   const splitByTxn = new Map<string, ExistingSplit>();
 
@@ -42,12 +50,26 @@ export function buildSplitByTxn(
       });
 
     const summary = summarizeSplitSettlement(participants);
+    const settlementBreakdown = participants.reduce(
+      (total, participant) => {
+        const breakdown =
+          settlementSummaryByParticipant.get(participant.id)?.breakdown ??
+          emptySettlementBreakdown();
+        total.bankPaise += breakdown.bankPaise;
+        total.cashPaise += breakdown.cashPaise;
+        total.offsetPaise += breakdown.offsetPaise;
+        total.writeoffPaise += breakdown.writeoffPaise;
+        return total;
+      },
+      emptySettlementBreakdown(),
+    );
 
     splitByTxn.set(s.transactionId, {
       totalPaise: Number(s.totalPaise),
       yourSharePaise: Number(s.yourSharePaise),
       note: s.note,
       participants,
+      settlementBreakdown,
       ...summary,
     });
   }

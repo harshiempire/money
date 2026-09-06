@@ -8,6 +8,7 @@ import {
   assertSettlementOwned,
   assertSplitParticipantOwned,
 } from "@/lib/auth/ownership";
+import { participantOutstanding } from "@/lib/splits/outstanding";
 
 const safePaise = (n: number): number =>
   Number.isFinite(n) ? Math.round(n) : 0;
@@ -72,5 +73,64 @@ export async function deleteCashSettlement(input: { settlementId: string }) {
 
   revalidatePath("/reimbursements");
   revalidatePath("/transactions");
+  revalidatePath("/");
+}
+
+// A writeoff is structurally a settlement like cash — it just records that no
+// money moved, so the participant stops reading as outstanding for a shortfall
+// you never intended to chase.
+export async function writeOffParticipantShare(input: {
+  splitParticipantId: string;
+  note: string | null;
+}) {
+  const user = await requireCurrentUserAction();
+  await assertSplitParticipantOwned(user.id, input.splitParticipantId);
+
+  const outstanding = await participantOutstanding(input.splitParticipantId);
+  if (outstanding <= 0) {
+    throw new Error("Nothing outstanding on this share to forgive.");
+  }
+
+  await db.insert(schema.settlements).values({
+    splitParticipantId: input.splitParticipantId,
+    amountPaise: outstanding,
+    method: "writeoff",
+    inflowTransactionId: null,
+    note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
+  });
+
+  revalidatePath("/reimbursements");
+  revalidatePath("/transactions");
+  revalidatePath("/people");
+  revalidatePath("/");
+}
+
+// Reverses a mistaken writeoff. Refuses anything that isn't a writeoff so a
+// misclick here can't quietly delete a real cash settlement.
+export async function undoWriteOff(input: { settlementId: string }) {
+  const user = await requireCurrentUserAction();
+  await assertSettlementOwned(user.id, input.settlementId);
+
+  const [settlement] = await db
+    .select({ method: schema.settlements.method })
+    .from(schema.settlements)
+    .where(eq(schema.settlements.id, input.settlementId))
+    .limit(1);
+  if (!settlement || settlement.method !== "writeoff") {
+    throw new Error("This settlement is not a writeoff and cannot be undone here.");
+  }
+
+  await db
+    .delete(schema.settlements)
+    .where(
+      and(
+        eq(schema.settlements.id, input.settlementId),
+        eq(schema.settlements.method, "writeoff"),
+      ),
+    );
+
+  revalidatePath("/reimbursements");
+  revalidatePath("/transactions");
+  revalidatePath("/people");
   revalidatePath("/");
 }

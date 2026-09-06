@@ -6,30 +6,69 @@ import { db, schema } from "@/db";
  * The single source of truth for "net personal spend" semantics:
  *
  *   net_self =
- *     + (debit amount, or your_share if a split exists)         when !is_transfer
- *     - (credit amount)                                          when !is_transfer && !is_settlement
- *     + 0                                                        otherwise
+ *     + (debit amount, or your_share + forgiven shares if split)  when !is_transfer
+ *     - (credit amount - allocated - overpaymentPayables)         when !is_transfer
+ *     + 0                                                         otherwise
  *
- * "Settlement credits" are credits already accounted for via the related
- * debit's your_share, so counting them again would double-count.
+ * A credit's "allocated" portion is the sum of settlement rows pointing at
+ * it — money already accounted for via the related debit's your_share, so
+ * counting it again would double-count. "overpaymentPayables" is the sum of
+ * owed_expense rows sourced from this credit (residual_disposition =
+ * owed_back): money you're holding for someone else, not yours, so it must
+ * be excluded from net spend exactly like an allocated settlement. What's
+ * left after subtracting both is the *unexplained* remainder of a credit —
+ * unexplained incoming money that reduces net spend like any other credit.
+ * By contrast, a residual explained as 'kept' or 'written_off' is money
+ * that was always yours (you asked for the extra, or you're forgiving small
+ * change) — it is deliberately NOT subtracted here, so it keeps reducing
+ * net spend like the rest of the credit. A credit with no settlement or
+ * owed_expense rows has allocated = overpaymentPayables = 0, so this
+ * reduces to the plain "- credit amount" case. A write-off is different
+ * from a received reimbursement: no money came back, so the forgiven
+ * participant share becomes part of the owner's effective personal spend
+ * for the original debit. Historical over-allocated
+ * rows (allocated + overpaymentPayables > amount) are clamped to contribute
+ * 0 rather than a negative (i.e. flipping into a debit-like contribution).
  */
+const writeoffShareExpr = sql<number>`
+  coalesce(
+    (select sum(${schema.settlements.amountPaise})
+     from ${schema.settlements}
+     inner join ${schema.splitParticipants}
+       on ${schema.settlements.splitParticipantId} = ${schema.splitParticipants.id}
+     inner join ${schema.splits}
+       on ${schema.splitParticipants.splitId} = ${schema.splits.id}
+     where ${schema.splits.transactionId} = ${schema.transactions.id}
+       and ${schema.settlements.method} = 'writeoff'),
+    0
+  )
+`;
+
 export const netSelfExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'debit'
-      then coalesce(
-        (select ${schema.splits.yourSharePaise} from ${schema.splits}
-         where ${schema.splits.transactionId} = ${schema.transactions.id}),
-        ${schema.transactions.amountPaise}
+      then least(
+        ${schema.transactions.amountPaise},
+        coalesce(
+          (select ${schema.splits.yourSharePaise} from ${schema.splits}
+           where ${schema.splits.transactionId} = ${schema.transactions.id}),
+          ${schema.transactions.amountPaise}
+        ) + ${writeoffShareExpr}
       )
     when ${schema.transactions.drCr} = 'credit'
-      and exists (
-        select 1 from ${schema.settlements}
-        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      then -1 * greatest(
+        ${schema.transactions.amountPaise} - coalesce(
+          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+           where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ) - coalesce(
+          (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+           where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
+          0
+        ),
+        0
       )
-      then 0
-    when ${schema.transactions.drCr} = 'credit'
-      then -1 * ${schema.transactions.amountPaise}
     else 0
   end
 `;
@@ -38,10 +77,13 @@ const yourShareDebitExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'debit'
-      then coalesce(
-        (select ${schema.splits.yourSharePaise} from ${schema.splits}
-         where ${schema.splits.transactionId} = ${schema.transactions.id}),
-        ${schema.transactions.amountPaise}
+      then least(
+        ${schema.transactions.amountPaise},
+        coalesce(
+          (select ${schema.splits.yourSharePaise} from ${schema.splits}
+           where ${schema.splits.transactionId} = ${schema.transactions.id}),
+          ${schema.transactions.amountPaise}
+        ) + ${writeoffShareExpr}
       )
     else 0
   end
@@ -60,13 +102,18 @@ const netCreditExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'credit'
-      and exists (
-        select 1 from ${schema.settlements}
-        where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+      then greatest(
+        ${schema.transactions.amountPaise} - coalesce(
+          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+           where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}),
+          0
+        ) - coalesce(
+          (select sum(${schema.owedExpenses.amountPaise}) from ${schema.owedExpenses}
+           where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}),
+          0
+        ),
+        0
       )
-      then 0
-    when ${schema.transactions.drCr} = 'credit'
-      then ${schema.transactions.amountPaise}
     else 0
   end
 `;

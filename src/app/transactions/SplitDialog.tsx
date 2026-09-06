@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
+import {
+  formatSettlementResolution,
+  type SettlementBreakdown,
+} from "@/lib/splits/settlement-breakdown";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 import { createSplit, deleteSplit } from "./split-actions";
 
@@ -16,6 +20,7 @@ export interface ExistingSplit {
     settledAmountPaise: number;
     outstandingAmountPaise: number;
   }>;
+  settlementBreakdown: SettlementBreakdown;
   status: SplitSettlementStatus;
   expectedReimbursePaise: number;
   settledReimbursePaise: number;
@@ -71,10 +76,13 @@ export function SplitSettlementStatusLine({
 }) {
   if (split.status === "none") return null;
 
-  const settledLabel =
-    split.status === "settled"
-      ? "All reimbursements received"
-      : `${split.settledParticipantCount}/${split.totalParticipantCount} settled · ${formatPaise(split.outstandingReimbursePaise)} pending`;
+  const settledLabel = formatSettlementResolution({
+    status: split.status,
+    settledParticipantCount: split.settledParticipantCount,
+    totalParticipantCount: split.totalParticipantCount,
+    outstandingReimbursePaise: split.outstandingReimbursePaise,
+    breakdown: split.settlementBreakdown,
+  });
 
   const tone =
     split.status === "settled"
@@ -139,6 +147,7 @@ export function SplitButton({
 }
 
 interface DraftParticipant {
+  id?: string;
   personName: string;
   expectedRupees: string;
 }
@@ -159,9 +168,8 @@ function SplitForm({
   knownPersonNames: string[];
   onClose: () => void;
 }) {
-  const [total, setTotal] = useState(
-    existing ? paiseToRupeesStr(existing.totalPaise) : paiseToRupeesStr(amountPaise),
-  );
+  // The total is the transaction's amount — the server refuses anything else.
+  const total = paiseToRupeesStr(amountPaise);
   const [yourShare, setYourShare] = useState(
     existing ? paiseToRupeesStr(existing.yourSharePaise) : "",
   );
@@ -169,12 +177,19 @@ function SplitForm({
   const [participants, setParticipants] = useState<DraftParticipant[]>(
     existing && existing.participants.length > 0
       ? existing.participants.map((p) => ({
+          id: p.id,
           personName: p.personName,
           expectedRupees: paiseToRupeesStr(p.expectedAmountPaise),
         }))
       : [{ personName: "", expectedRupees: "" }],
   );
   const [pending, startTransition] = useTransition();
+
+  // Settled amounts by participant id, for the destructive-edit warning below —
+  // the server guard is authoritative, this is just so the user isn't surprised.
+  const settledById = new Map(
+    (existing?.participants ?? []).map((p) => [p.id, p.settledAmountPaise]),
+  );
 
   // Auto-suggest your_share = total / (1 + participants) when both empty.
   useEffect(() => {
@@ -193,25 +208,69 @@ function SplitForm({
   };
   const addParticipant = () =>
     setParticipants((arr) => [...arr, { personName: "", expectedRupees: "" }]);
-  const removeParticipant = (i: number) =>
+  const removeParticipant = (i: number) => {
+    const draft = participants[i];
+    const settled = draft.id ? (settledById.get(draft.id) ?? 0) : 0;
+    if (settled > 0) {
+      const name = draft.personName || "This participant";
+      const ok = window.confirm(
+        `${name} already has ${formatPaise(settled)} settled against them. The server will refuse to remove them unless that settlement is cleared first. Remove anyway?`,
+      );
+      if (!ok) return;
+    }
     setParticipants((arr) => arr.filter((_, j) => j !== i));
+  };
 
   const equalSplit = () => {
-    const t = Number.parseFloat(total);
+    const totalP = rupeesToPaise(total);
     const named = participants.filter((p) => p.personName.trim());
     const n = named.length + 1;
-    if (!Number.isFinite(t) || n <= 1) return;
-    const share = (t / n).toFixed(2);
-    setYourShare(share);
+    if (!Number.isFinite(totalP) || n <= 1) return;
+    // Divide in paise and give the indivisible remainder to your own share, so
+    // the parts always sum back to the total. Splitting ₹1000 three ways as
+    // 333.33 each would leave a paise stranded and trip the balance invariant.
+    const base = Math.floor(totalP / n);
+    const remainder = totalP - base * n;
+    setYourShare(paiseToRupeesStr(base + remainder));
     setParticipants(
-      named.map((p) => ({ personName: p.personName, expectedRupees: share })),
+      named.map((p) => ({
+        id: p.id,
+        personName: p.personName,
+        expectedRupees: paiseToRupeesStr(base),
+      })),
     );
   };
+
+  // Live balance check — mirrors the server's invariant (your share +
+  // participants === total) so the Save button can be disabled before the
+  // round-trip. Blank "your share" auto-computes as total − participants,
+  // same as submit() below, which balances by construction.
+  const totalPaiseLive = rupeesToPaise(total);
+  const totalValid = Number.isFinite(totalPaiseLive);
+  const yourSharePaiseLive =
+    yourShare.trim() === "" ? null : rupeesToPaise(yourShare);
+  const participantsSumLive = participants
+    .filter((p) => p.personName.trim() && p.expectedRupees.trim())
+    .reduce((s, p) => {
+      const v = rupeesToPaise(p.expectedRupees);
+      return s + (Number.isFinite(v) ? v : 0);
+    }, 0);
+  const effectiveYourSharePaise =
+    yourSharePaiseLive != null && Number.isFinite(yourSharePaiseLive)
+      ? yourSharePaiseLive
+      : totalValid
+        ? Math.max(0, totalPaiseLive - participantsSumLive)
+        : 0;
+  const residualPaise = totalValid
+    ? totalPaiseLive - (effectiveYourSharePaise + participantsSumLive)
+    : 0;
+  const isBalanced = totalValid && residualPaise === 0;
 
   const submit = () => {
     const cleaned = participants
       .filter((p) => p.personName.trim() && p.expectedRupees.trim())
       .map((p) => ({
+        id: p.id,
         personName: p.personName.trim(),
         expectedAmountPaise: rupeesToPaise(p.expectedRupees),
       }));
@@ -249,6 +308,26 @@ function SplitForm({
   };
 
   const remove = () => {
+    // Deleting a split cascades to its participants and, through them, to their
+    // settlements. Unlike an edit (which the server now refuses outright), this
+    // is a deliberate act — so spell out exactly what's about to be destroyed
+    // rather than silently dropping records of money already received.
+    const settledParticipants = (existing?.participants ?? []).filter(
+      (p) => p.settledAmountPaise > 0,
+    );
+    const settledTotal = settledParticipants.reduce(
+      (s, p) => s + p.settledAmountPaise,
+      0,
+    );
+    if (settledTotal > 0) {
+      const names = settledParticipants
+        .map((p) => `${p.personName} (${formatPaise(p.settledAmountPaise)})`)
+        .join(", ");
+      const ok = window.confirm(
+        `Removing this split will also delete ${formatPaise(settledTotal)} of recorded settlements — ${names}. This cannot be undone. Remove anyway?`,
+      );
+      if (!ok) return;
+    }
     startTransition(async () => {
       try {
         await deleteSplit({ transactionId });
@@ -281,8 +360,9 @@ function SplitForm({
           <input
             inputMode="decimal"
             value={total}
-            onChange={(e) => setTotal(e.target.value)}
-            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+            readOnly
+            title="The split total is always the transaction amount"
+            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-neutral-500 dark:border-neutral-700"
           />
         </label>
         <label className="flex flex-col">
@@ -327,35 +407,45 @@ function SplitForm({
           ))}
         </datalist>
         <div className="mt-2 space-y-2">
-          {participants.map((p, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm">
-              <input
-                placeholder="Name"
-                list="person-names"
-                value={p.personName}
-                onChange={(e) =>
-                  updateParticipant(i, { personName: e.target.value })
-                }
-                className="flex-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-              />
-              <input
-                inputMode="decimal"
-                placeholder="₹"
-                value={p.expectedRupees}
-                onChange={(e) =>
-                  updateParticipant(i, { expectedRupees: e.target.value })
-                }
-                className="w-24 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-              />
-              <button
-                type="button"
-                onClick={() => removeParticipant(i)}
-                className="text-xs text-neutral-500 hover:text-red-600"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
+          {participants.map((p, i) => {
+            const settled = p.id ? (settledById.get(p.id) ?? 0) : 0;
+            return (
+              <div key={i}>
+                <div className="flex items-center gap-2 text-sm">
+                  <input
+                    placeholder="Name"
+                    list="person-names"
+                    value={p.personName}
+                    onChange={(e) =>
+                      updateParticipant(i, { personName: e.target.value })
+                    }
+                    className="flex-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+                  />
+                  <input
+                    inputMode="decimal"
+                    placeholder="₹"
+                    value={p.expectedRupees}
+                    onChange={(e) =>
+                      updateParticipant(i, { expectedRupees: e.target.value })
+                    }
+                    className="w-24 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeParticipant(i)}
+                    className="text-xs text-neutral-500 hover:text-red-600"
+                  >
+                    ✕
+                  </button>
+                </div>
+                {settled > 0 && (
+                  <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                    {formatPaise(settled)} already settled — editing this row is limited.
+                  </span>
+                )}
+              </div>
+            );
+          })}
           <button
             type="button"
             onClick={addParticipant}
@@ -364,6 +454,18 @@ function SplitForm({
             + Add participant
           </button>
         </div>
+      </div>
+
+      <div className="mt-3 text-xs text-neutral-500">
+        Total {formatPaise(totalValid ? totalPaiseLive : 0)} = your share{" "}
+        {formatPaise(effectiveYourSharePaise)} + participants{" "}
+        {formatPaise(participantsSumLive)}
+        {!isBalanced && (
+          <span className="ml-1 font-medium text-red-600">
+            ({residualPaise >= 0 || !totalValid ? "unaccounted" : "over by"}{" "}
+            {formatPaise(Math.abs(residualPaise))})
+          </span>
+        )}
       </div>
 
       <footer className="mt-5 flex items-center justify-between">
@@ -391,7 +493,7 @@ function SplitForm({
           <button
             type="button"
             onClick={submit}
-            disabled={pending}
+            disabled={pending || !isBalanced}
             className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           >
             {pending ? "Saving…" : "Save"}

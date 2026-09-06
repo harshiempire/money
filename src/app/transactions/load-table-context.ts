@@ -16,7 +16,11 @@ import {
   buildReimbursementLinks,
 } from "./SplitSettlementLinks";
 import type { CategoryOption } from "./RowActions";
-import type { ExistingAllocation, ParticipantOption } from "./SettleDialog";
+import type {
+  CreditResidual,
+  ExistingAllocation,
+  ParticipantOption,
+} from "./SettleDialog";
 import {
   loadNetEventsByTransactionIds,
   loadOpenPayablesForUser,
@@ -127,6 +131,9 @@ export async function loadTransactionTableContext(
           isTransfer: schema.transactions.isTransfer,
           needsReview: schema.transactions.needsReview,
           note: schema.transactions.note,
+          residualDisposition: schema.transactions.residualDisposition,
+          residualAcknowledgedPaise:
+            schema.transactions.residualAcknowledgedPaise,
         })
         .from(schema.transactions)
         .leftJoin(
@@ -147,24 +154,51 @@ export async function loadTransactionTableContext(
 
   const txnIds = rows.map((r) => r.id);
 
-  const [splits, settlementsForRows, categories, personRows, netEventsByTxn] =
-    await Promise.all([
-      txnIds.length
-        ? db
-            .select()
-            .from(schema.splits)
-            .where(inArray(schema.splits.transactionId, txnIds))
-        : Promise.resolve([] as (typeof schema.splits.$inferSelect)[]),
-      txnIds.length
-        ? db
-            .select()
-            .from(schema.settlements)
-            .where(inArray(schema.settlements.inflowTransactionId, txnIds))
-        : Promise.resolve([] as (typeof schema.settlements.$inferSelect)[]),
-      categoriesPromise,
-      personsPromise,
-      loadNetEventsByTransactionIds(txnIds),
-    ]);
+  const [
+    splits,
+    settlementsForRows,
+    categories,
+    personRows,
+    netEventsByTxn,
+    overpaymentPayablesByInflow,
+  ] = await Promise.all([
+    txnIds.length
+      ? db
+          .select()
+          .from(schema.splits)
+          .where(inArray(schema.splits.transactionId, txnIds))
+      : Promise.resolve([] as (typeof schema.splits.$inferSelect)[]),
+    txnIds.length
+      ? db
+          .select()
+          .from(schema.settlements)
+          .where(inArray(schema.settlements.inflowTransactionId, txnIds))
+      : Promise.resolve([] as (typeof schema.settlements.$inferSelect)[]),
+    categoriesPromise,
+    personsPromise,
+    loadNetEventsByTransactionIds(txnIds),
+    // Overpayment payables spun off from a credit's leftover (owed_expense
+    // rows created because the sender sent more than they owed). Summed per
+    // source credit so a partial writeoff/kept + payable mix still adds up.
+    txnIds.length
+      ? db
+          .select({
+            sourceInflowTransactionId:
+              schema.owedExpenses.sourceInflowTransactionId,
+            totalPaise: sql<number>`coalesce(sum(${schema.owedExpenses.amountPaise}), 0)::bigint`,
+          })
+          .from(schema.owedExpenses)
+          .where(
+            inArray(schema.owedExpenses.sourceInflowTransactionId, txnIds),
+          )
+          .groupBy(schema.owedExpenses.sourceInflowTransactionId)
+      : Promise.resolve(
+          [] as {
+            sourceInflowTransactionId: string | null;
+            totalPaise: number;
+          }[],
+        ),
+  ]);
 
   const splitIds = splits.map((s) => s.id);
   const inflowSettlementIds = settlementsForRows
@@ -255,9 +289,22 @@ export async function loadTransactionTableContext(
   const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
   const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
 
+  // The Settle dialog edits only the plain rows on a credit. A row with a
+  // net_event_id was written by Net Settle: it is shown as a reserved amount,
+  // never as an editable allocation — otherwise the dialog would re-submit it
+  // and the credit would be counted twice.
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
+  const netSettledByInflow = new Map<string, number>();
   for (const st of settlementsForRows) {
     if (!st.inflowTransactionId || !st.splitParticipantId) continue;
+    if (st.netEventId) {
+      netSettledByInflow.set(
+        st.inflowTransactionId,
+        (netSettledByInflow.get(st.inflowTransactionId) ?? 0) +
+          Number(st.amountPaise),
+      );
+      continue;
+    }
     const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
     arr.push({
       splitParticipantId: st.splitParticipantId,
@@ -270,7 +317,26 @@ export async function loadTransactionTableContext(
     splits,
     participantsAll,
     ledger.settledByParticipant,
+    ledger.settlementSummaryByParticipant,
   );
+
+  const overpaymentByInflow = new Map<string, number>();
+  for (const r of overpaymentPayablesByInflow) {
+    if (!r.sourceInflowTransactionId) continue;
+    overpaymentByInflow.set(r.sourceInflowTransactionId, Number(r.totalPaise));
+  }
+
+  // Only credits get an entry, so callers fall back to this for debit rows.
+  const creditResidualByTxn = new Map<string, CreditResidual>();
+  for (const r of rows) {
+    if (r.drCr !== "credit") continue;
+    creditResidualByTxn.set(r.id, {
+      acknowledgedPaise: Number(r.residualAcknowledgedPaise ?? 0),
+      disposition: r.residualDisposition,
+      overpaymentPayablePaise: overpaymentByInflow.get(r.id) ?? 0,
+      netSettledPaise: netSettledByInflow.get(r.id) ?? 0,
+    });
+  }
 
   const participantOptions: ParticipantOption[] =
     buildParticipantOptions(ledger);
@@ -290,5 +356,6 @@ export async function loadTransactionTableContext(
     openReceivables,
     openPayables,
     netEventsByTxn,
+    creditResidualByTxn,
   };
 }

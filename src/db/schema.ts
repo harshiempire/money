@@ -51,6 +51,19 @@ export const settlementMethodEnum = pgEnum("settlement_method", [
   "bank",
   "cash",
   "offset",
+  // A share you chose to forgive rather than chase. Counts as settled so the
+  // participant stops showing as outstanding, but no money actually moved.
+  "writeoff",
+]);
+
+// What the unallocated remainder of an incoming credit turned out to be, once
+// you told us. Both values mean "the money is mine, stop flagging it" — they
+// differ only in intent, which is worth keeping for when you look back.
+export const residualDispositionEnum = pgEnum("residual_disposition", [
+  // You'd asked for the extra, so it was always yours.
+  "kept",
+  // Small change you decided not to return.
+  "written_off",
 ]);
 
 // ─── Auth tables (Auth.js drizzle adapter expects these exact names) ─────────
@@ -218,6 +231,13 @@ export const transactions = pgTable(
     needsReview: boolean("needs_review").default(false).notNull(),
     balancePaise: bigint("balance_paise", { mode: "number" }),
     note: text("note"),
+    // Credits only: the part of this credit that settled nothing but is still
+    // yours (see residualDispositionEnum). Kept separate from settlements
+    // because no debt was paid — it just stops the remainder reading as a hole.
+    residualDisposition: residualDispositionEnum("residual_disposition"),
+    residualAcknowledgedPaise: bigint("residual_acknowledged_paise", {
+      mode: "number",
+    }),
     sourceImportId: text("source_import_id").references(() => imports.id, {
       onDelete: "set null",
     }),
@@ -314,11 +334,25 @@ export const owedExpenses = pgTable(
     description: text("description").notNull(),
     categoryId: text("category_id").references(() => categories.id),
     note: text("note"),
+    // Set when this payable was created from an overpayment — they sent more
+    // than they owed on this credit, so the excess is money you hold for them.
+    // Lets the credit account for itself without inventing a settlement.
+    sourceInflowTransactionId: text("source_inflow_transaction_id").references(
+      () => transactions.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [index("owed_expense_user_incurred_idx").on(t.userId, t.incurredDate)],
+  (t) => [
+    index("owed_expense_user_incurred_idx").on(t.userId, t.incurredDate),
+    // At most one overpayment payable per credit — a duplicate would make
+    // the credit look accounted-for twice over.
+    uniqueIndex("owed_expense_source_inflow_uniq").on(
+      t.sourceInflowTransactionId,
+    ),
+  ],
 );
 
 export const netEvents = pgTable("net_event", {

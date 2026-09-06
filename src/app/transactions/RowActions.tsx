@@ -9,6 +9,7 @@ import {
 import { SplitButton, type ExistingSplit } from "./SplitDialog";
 import {
   SettleButton,
+  type CreditResidual,
   type ExistingAllocation,
   type ParticipantOption,
 } from "./SettleDialog";
@@ -44,6 +45,7 @@ export function RowActions({
   existingSplit,
   existingSettlement,
   participants,
+  residual,
   knownPersonNames,
   note,
   needsReview,
@@ -66,6 +68,7 @@ export function RowActions({
   existingSplit: ExistingSplit | null;
   existingSettlement: ExistingAllocation[];
   participants: ParticipantOption[];
+  residual: CreditResidual;
   knownPersonNames: string[];
   note: string | null;
   needsReview: boolean;
@@ -158,6 +161,7 @@ export function RowActions({
             amountPaise={amountPaise}
             participants={participants}
             existing={existingSettlement}
+            residual={residual}
           />
           <NetSettleButton
             eventDate={txnDate}

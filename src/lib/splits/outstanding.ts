@@ -1,6 +1,27 @@
 import "server-only";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
+import {
+  summarizeParticipantSettlements,
+  type ParticipantSettlementSummary,
+} from "@/lib/splits/settlement-breakdown";
+
+export async function settlementSummaryByParticipantIds(
+  participantIds: string[],
+): Promise<Map<string, ParticipantSettlementSummary>> {
+  if (participantIds.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      splitParticipantId: schema.settlements.splitParticipantId,
+      amountPaise: schema.settlements.amountPaise,
+      method: schema.settlements.method,
+    })
+    .from(schema.settlements)
+    .where(inArray(schema.settlements.splitParticipantId, participantIds));
+
+  return summarizeParticipantSettlements(rows);
+}
 
 export async function settledAmountByParticipantIds(
   participantIds: string[],

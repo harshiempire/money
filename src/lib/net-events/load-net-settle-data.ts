@@ -118,21 +118,28 @@ export async function loadNetEventsByTransactionIds(
     const eventSettlements = settlements.filter(
       (s) => s.netEventId === event.id,
     );
-    const legs = eventSettlements.map((s) => {
+    const legs = eventSettlements.flatMap((s): NetEventByTransaction["legs"] => {
+      // A forgiven share is never part of a net event — writeoffs carry no
+      // netEventId — so this only narrows the method type for the legs below.
+      if (s.method === "writeoff") return [];
       if (s.splitParticipantId) {
-        return {
-          kind: "receivable" as const,
-          targetId: s.splitParticipantId,
+        return [
+          {
+            kind: "receivable" as const,
+            targetId: s.splitParticipantId,
+            amountPaise: Number(s.amountPaise),
+            method: s.method,
+          },
+        ];
+      }
+      return [
+        {
+          kind: "payable" as const,
+          targetId: s.owedExpenseId!,
           amountPaise: Number(s.amountPaise),
           method: s.method,
-        };
-      }
-      return {
-        kind: "payable" as const,
-        targetId: s.owedExpenseId!,
-        amountPaise: Number(s.amountPaise),
-        method: s.method,
-      };
+        },
+      ];
     });
 
     const payload: NetEventByTransaction = {

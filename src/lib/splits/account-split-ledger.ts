@@ -4,7 +4,8 @@ import { cache } from "react";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { counterpartyLabel, formatDate } from "@/lib/format";
-import { settledAmountByParticipantIds } from "@/lib/splits/outstanding";
+import { settlementSummaryByParticipantIds } from "@/lib/splits/outstanding";
+import type { ParticipantSettlementSummary } from "@/lib/splits/settlement-breakdown";
 import type { ParticipantOption } from "@/app/transactions/SettleDialog";
 import type { ReceivableOption } from "@/lib/net-events/load-net-settle-data";
 
@@ -17,6 +18,7 @@ export interface AccountSplitLedger {
   }>;
   participants: (typeof schema.splitParticipants.$inferSelect)[];
   settledByParticipant: Map<string, number>;
+  settlementSummaryByParticipant: Map<string, ParticipantSettlementSummary>;
 }
 
 async function loadAccountSplitLedgerImpl(
@@ -37,7 +39,12 @@ async function loadAccountSplitLedgerImpl(
     .where(eq(schema.transactions.accountId, accountId));
 
   if (splits.length === 0) {
-    return { splits: [], participants: [], settledByParticipant: new Map() };
+    return {
+      splits: [],
+      participants: [],
+      settledByParticipant: new Map(),
+      settlementSummaryByParticipant: new Map(),
+    };
   }
 
   const participants = await db
@@ -50,11 +57,22 @@ async function loadAccountSplitLedgerImpl(
       ),
     );
 
-  const settledByParticipant = await settledAmountByParticipantIds(
+  const settlementSummaryByParticipant = await settlementSummaryByParticipantIds(
     participants.map((p) => p.id),
   );
+  const settledByParticipant = new Map(
+    [...settlementSummaryByParticipant].map(([participantId, summary]) => [
+      participantId,
+      summary.totalPaise,
+    ]),
+  );
 
-  return { splits, participants, settledByParticipant };
+  return {
+    splits,
+    participants,
+    settledByParticipant,
+    settlementSummaryByParticipant,
+  };
 }
 
 export function buildParticipantOptions(
