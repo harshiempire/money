@@ -237,3 +237,13 @@ bun run db:studio
 - Auth added: JWT Credentials, open registration, in-place bootstrap on `SEED_USER_ID` to preserve finance FKs, ownership checks on 13 server actions, tenant-scoped pages.
 
 When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server action**, **scope every query by the current user's account**.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
