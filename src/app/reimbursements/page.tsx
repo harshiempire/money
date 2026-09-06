@@ -67,6 +67,13 @@ interface SplitSummaryRow {
   writeoffReimbursePaise: number;
 }
 
+const FORGIVEN_ON = new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "Asia/Kolkata",
+});
+
 const today = new Date();
 const ageBucket = (days: number): string => {
   if (days <= 7) return "0–7 days";
@@ -490,7 +497,10 @@ export default async function ReimbursementsPage({
           personName: row.personName,
           amountPaise: Number(row.amountPaise),
           note: row.note,
-          forgivenAt: row.forgivenAt.toISOString(),
+          // Formatted here, in a fixed zone, so the client never builds a
+          // Date: a UTC server and an IST browser would otherwise disagree
+          // on the day for anything recorded before 05:30 IST.
+          forgivenOn: FORGIVEN_ON.format(row.forgivenAt),
           txnId: row.txnId,
           txnDate: row.txnDate,
           txnDescription: counterpartyLabel(row.rawDescription),

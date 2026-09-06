@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
+import { parseAllocationInputs } from "@/lib/splits/allocation-input";
 import { clearSettlement, recordSettlement } from "./split-actions";
 
 export interface ParticipantOption {
@@ -303,22 +304,23 @@ function SettleForm({
     });
   }, [participants, personFilter, amountFilter, allocations]);
 
-  const allocatedPaise = Object.values(allocations).reduce((s, v) => {
-    const n = Number.parseFloat(v);
-    return s + (Number.isFinite(n) ? Math.round(n * 100) : 0);
-  }, 0);
-  const remaining = amountPaise - netSettledPaise - allocatedPaise;
-
-  const currentAllocations: ExistingAllocation[] = useMemo(
-    () =>
-      Object.entries(allocations)
-        .map(([splitParticipantId, v]) => ({
-          splitParticipantId,
-          amountPaise: rupeesToPaise(v),
-        }))
-        .filter((a) => Number.isFinite(a.amountPaise) && a.amountPaise > 0),
-    [allocations],
+  // One parse feeds the live totals, the Save gate and the submission, so
+  // what the screen adds up is exactly what gets sent. A bad entry blocks
+  // Save rather than being dropped on the way out.
+  const parsed = useMemo(() => {
+    const nameById = new Map(participants.map((p) => [p.id, p.personName]));
+    return parseAllocationInputs(
+      allocations,
+      (id) => nameById.get(id) ?? "This participant",
+    );
+  }, [allocations, participants]);
+  const currentAllocations: ExistingAllocation[] = parsed.allocations;
+  const allocatedPaise = currentAllocations.reduce(
+    (s, a) => s + a.amountPaise,
+    0,
   );
+  const remaining = amountPaise - netSettledPaise - allocatedPaise;
+  const inputProblem = parsed.problems[0]?.message ?? null;
   const singlePersonName = useMemo(
     () => singleAllocatedPersonName(participants, currentAllocations),
     [participants, currentAllocations],
@@ -328,17 +330,12 @@ function SettleForm({
     disposition === "owed_back" && !resolvedOwedBackName;
 
   const submit = () => {
-    const cleaned = Object.entries(allocations)
-      .map(([splitParticipantId, rupees]) => ({
-        splitParticipantId,
-        amountPaise: rupeesToPaise(rupees),
-      }))
-      .filter((a) => Number.isFinite(a.amountPaise) && a.amountPaise > 0);
+    if (!parsed.ok) return;
     startTransition(async () => {
       try {
         await recordSettlement({
           inflowTransactionId,
-          allocations: cleaned,
+          allocations: currentAllocations,
           residual: disposition
             ? {
                 kind: disposition,
@@ -510,6 +507,12 @@ function SettleForm({
         </div>
       )}
 
+      {inputProblem && (
+        <p className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {inputProblem}
+        </p>
+      )}
+
       {remaining === 0 ? (
         <p className="mt-3 text-xs text-neutral-500">
           Allocated ₹{paiseToRupeesStr(allocatedPaise)} · fully settled
@@ -597,13 +600,17 @@ function SettleForm({
           <button
             type="button"
             onClick={submit}
-            disabled={pending || remaining < 0 || needsOwedBackName}
+            disabled={
+              pending || !parsed.ok || remaining < 0 || needsOwedBackName
+            }
             title={
-              remaining < 0
-                ? "Over-allocated — reduce an allocation before saving"
-                : needsOwedBackName
-                  ? "Enter who you owe the overpayment back to"
-                  : undefined
+              inputProblem
+                ? inputProblem
+                : remaining < 0
+                  ? "Over-allocated — reduce an allocation before saving"
+                  : needsOwedBackName
+                    ? "Enter who you owe the overpayment back to"
+                    : undefined
             }
             className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           >

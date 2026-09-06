@@ -22,8 +22,10 @@ export type Validation = { ok: true } | { ok: false; message: string };
 const OK: Validation = { ok: true };
 const rupees = (paise: number): string => `₹${(paise / 100).toFixed(2)}`;
 
+// Safe integer, not merely integer: paise land in a bigint column, and a
+// number past 2^53 has already lost precision by the time it gets here.
 const isWholeNonNegative = (n: number): boolean =>
-  Number.isFinite(n) && Number.isInteger(n) && n >= 0;
+  Number.isSafeInteger(n) && n >= 0;
 
 /**
  * Money is stored as unsigned paise. A negative share still satisfies the

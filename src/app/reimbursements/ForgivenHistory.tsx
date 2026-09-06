@@ -11,7 +11,8 @@ export interface ForgivenHistoryItem {
   personName: string;
   amountPaise: number;
   note: string | null;
-  forgivenAt: string;
+  /** Already formatted on the server (dd/mm/yyyy, Asia/Kolkata). */
+  forgivenOn: string;
   txnId: string;
   txnDate: string;
   txnDescription: string;
@@ -107,7 +108,7 @@ export function ForgivenHistory({
                           {formatDate(item.txnDate)} · {item.txnDescription}
                         </div>
                         <div className="mt-0.5 text-[10px] text-neutral-500">
-                          Recorded {new Date(item.forgivenAt).toLocaleDateString("en-IN")}
+                          Recorded {item.forgivenOn}
                         </div>
                         {item.note && (
                           <div className="mt-1 text-xs italic text-neutral-700 dark:text-neutral-300">

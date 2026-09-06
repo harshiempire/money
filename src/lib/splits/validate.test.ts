@@ -382,3 +382,21 @@ describe("validateInflowCapacity (review: ordinary Settle deleted Net Settle's r
     ).toBe(true);
   });
 });
+
+describe("validateAllocationAmounts (review dialogue: safe-integer guard)", () => {
+  test("rejects an amount past the safe-integer range", () => {
+    expect(
+      validateAllocationAmounts([
+        { splitParticipantId: "a", amountPaise: Number.MAX_SAFE_INTEGER + 2 },
+      ]).ok,
+    ).toBe(false);
+  });
+
+  test("still accepts the largest safe integer", () => {
+    expect(
+      validateAllocationAmounts([
+        { splitParticipantId: "a", amountPaise: Number.MAX_SAFE_INTEGER },
+      ]).ok,
+    ).toBe(true);
+  });
+});
