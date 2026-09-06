@@ -225,27 +225,31 @@ const ESTATEMENT_PERIOD_RE =
   /(?:Statement Period from|for the period)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+(?:to|-)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})/;
 
 const MONTH_TO_NUM: Record<string, string> = {
-  January: "01",
-  February: "02",
-  March: "03",
-  April: "04",
-  May: "05",
-  June: "06",
-  July: "07",
-  August: "08",
-  September: "09",
-  October: "10",
-  November: "11",
-  December: "12",
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
 };
 
-const monthDayYearToIso = (month: string, day: string, year: string): string => {
-  const m = MONTH_TO_NUM[month];
-  if (!m) return `${year}-00-00`;
+const monthDayYearToIso = (
+  month: string,
+  day: string,
+  year: string,
+): string | null => {
+  const m = MONTH_TO_NUM[month.toLowerCase().slice(0, 3)];
+  if (!m) return null;
   return `${year}-${m}-${day.padStart(2, "0")}`;
 };
 
-const extractPeriod = (pages: string[]) => {
+export const extractPeriod = (pages: string[]) => {
   const blob = pages.join("\n");
   const bobWorld = blob.match(PERIOD_RE);
   if (bobWorld) {
@@ -253,9 +257,19 @@ const extractPeriod = (pages: string[]) => {
   }
   const eStatement = blob.match(ESTATEMENT_PERIOD_RE);
   if (eStatement) {
+    const periodStart = monthDayYearToIso(
+      eStatement[1],
+      eStatement[2],
+      eStatement[3],
+    );
+    const periodEnd = monthDayYearToIso(
+      eStatement[4],
+      eStatement[5],
+      eStatement[6],
+    );
     return {
-      periodStart: monthDayYearToIso(eStatement[1], eStatement[2], eStatement[3]),
-      periodEnd: monthDayYearToIso(eStatement[4], eStatement[5], eStatement[6]),
+      periodStart,
+      periodEnd,
     };
   }
   return { periodStart: null, periodEnd: null };
