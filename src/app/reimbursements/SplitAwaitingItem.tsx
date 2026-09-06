@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
@@ -23,6 +23,7 @@ export interface SplitParticipantDetail {
   settledPaise: number;
   bankSettledPaise: number;
   cashSettledPaise: number;
+  offsetSettledPaise: number;
   writeoffPaise: number;
   outstandingPaise: number;
   cashSettlements: CashSettlement[];
@@ -47,7 +48,7 @@ export interface SplitAwaitingItemProps {
 function splitStatusLabel(status: SplitSettlementStatus): string {
   switch (status) {
     case "settled":
-      return "All settled";
+      return "All resolved";
     case "partial":
       return "Partially settled";
     case "open":
@@ -84,6 +85,10 @@ export function SplitAwaitingItem({
   participants,
 }: SplitAwaitingItemProps) {
   const [pending, startTransition] = useTransition();
+  const forgiveDialogRef = useRef<HTMLDialogElement>(null);
+  const [participantToForgive, setParticipantToForgive] =
+    useState<SplitParticipantDetail | null>(null);
+  const [forgiveReason, setForgiveReason] = useState("");
 
   const sorted = [...participants].sort((a, b) => {
     if (a.outstandingPaise > 0 !== b.outstandingPaise > 0) {
@@ -93,16 +98,26 @@ export function SplitAwaitingItem({
   });
 
   const forgetIt = (p: SplitParticipantDetail) => {
-    const ok = window.confirm(
-      `Forgive the remaining ${formatPaise(p.outstandingPaise)} from ${p.personName}? This marks their share settled without any money changing hands.`,
-    );
-    if (!ok) return;
+    setParticipantToForgive(p);
+    setForgiveReason("");
+    forgiveDialogRef.current?.showModal();
+  };
+
+  const closeForgiveDialog = () => {
+    forgiveDialogRef.current?.close();
+    setParticipantToForgive(null);
+    setForgiveReason("");
+  };
+
+  const confirmForgive = () => {
+    if (!participantToForgive) return;
     startTransition(async () => {
       try {
         await writeOffParticipantShare({
-          splitParticipantId: p.participantId,
-          note: null,
+          splitParticipantId: participantToForgive.participantId,
+          note: forgiveReason,
         });
+        closeForgiveDialog();
       } catch (err) {
         const msg =
           err instanceof Error ? err.message : "Failed to forgive share";
@@ -126,8 +141,9 @@ export function SplitAwaitingItem({
   };
 
   return (
-    <details className="group rounded border border-neutral-200 dark:border-neutral-800">
-      <summary className="cursor-pointer list-none px-3 py-2 [&::-webkit-details-marker]:hidden">
+    <>
+      <details className="group rounded border border-neutral-200 dark:border-neutral-800">
+        <summary className="cursor-pointer list-none px-3 py-2 [&::-webkit-details-marker]:hidden">
         <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
           <div className="min-w-0 flex-1">
             <div className="font-medium">
@@ -142,7 +158,7 @@ export function SplitAwaitingItem({
               className={`mt-0.5 text-xs ${splitStatusTone(status)}`}
             >
               {splitStatusLabel(status)} · {settledParticipantCount}/
-              {totalParticipantCount} paid ·{" "}
+              {totalParticipantCount} resolved ·{" "}
               <span className="text-neutral-500 group-open:hidden">
                 Tap for who owes what
               </span>
@@ -154,11 +170,11 @@ export function SplitAwaitingItem({
             </div>
             <div className="text-[10px] font-sans text-neutral-500">
               {formatPaise(settledReimbursePaise)} of{" "}
-              {formatPaise(expectedReimbursePaise)} received
+              {formatPaise(expectedReimbursePaise)} resolved
             </div>
           </div>
         </div>
-      </summary>
+        </summary>
 
       <div className="border-t border-neutral-200 px-3 py-2 dark:border-neutral-800">
         <div className="mb-2 flex items-center justify-between gap-2 text-xs">
@@ -182,9 +198,10 @@ export function SplitAwaitingItem({
                   <div className="font-medium">{p.personName}</div>
                   <div className="mt-0.5 font-mono text-[11px] text-neutral-500">
                     {formatPaise(p.settledPaise)} of{" "}
-                    {formatPaise(p.expectedPaise)} received
+                    {formatPaise(p.expectedPaise)} resolved
                     {(p.bankSettledPaise > 0 ||
                       p.cashSettledPaise > 0 ||
+                      p.offsetSettledPaise > 0 ||
                       p.writeoffPaise > 0) && (
                       <span className="font-sans">
                         {" "}
@@ -192,11 +209,18 @@ export function SplitAwaitingItem({
                         {p.bankSettledPaise > 0 &&
                           `${formatPaise(p.bankSettledPaise)} bank`}
                         {p.bankSettledPaise > 0 &&
-                          (p.cashSettledPaise > 0 || p.writeoffPaise > 0) &&
+                          (p.cashSettledPaise > 0 ||
+                            p.offsetSettledPaise > 0 ||
+                            p.writeoffPaise > 0) &&
                           " · "}
                         {p.cashSettledPaise > 0 &&
                           `${formatPaise(p.cashSettledPaise)} cash`}
                         {p.cashSettledPaise > 0 &&
+                          (p.offsetSettledPaise > 0 || p.writeoffPaise > 0) &&
+                          " · "}
+                        {p.offsetSettledPaise > 0 &&
+                          `${formatPaise(p.offsetSettledPaise)} offset`}
+                        {p.offsetSettledPaise > 0 &&
                           p.writeoffPaise > 0 &&
                           " · "}
                         {p.writeoffPaise > 0 &&
@@ -212,7 +236,10 @@ export function SplitAwaitingItem({
                           key={w.id}
                           className="flex items-center gap-2 text-[10px] text-amber-800 dark:text-amber-400"
                         >
-                          <span>{formatPaise(w.amountPaise)} forgiven</span>
+                          <span>
+                            {formatPaise(w.amountPaise)} forgiven
+                            {w.note ? ` · ${w.note}` : ""}
+                          </span>
                           <button
                             type="button"
                             onClick={() => undo(w.id)}
@@ -228,9 +255,7 @@ export function SplitAwaitingItem({
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {paid ? (
-                    <span className="text-xs text-inflow">
-                      Paid
-                    </span>
+                    <span className="text-xs text-inflow">Resolved</span>
                   ) : (
                     <>
                       <span className="font-mono text-xs text-owed-to-me">
@@ -258,6 +283,69 @@ export function SplitAwaitingItem({
           })}
         </ul>
       </div>
-    </details>
+      </details>
+
+      <dialog
+        ref={forgiveDialogRef}
+        onCancel={closeForgiveDialog}
+        aria-labelledby="forgive-dialog-title"
+        className="w-[min(28rem,calc(100%-2rem))] rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+      >
+        <form
+          className="p-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            confirmForgive();
+          }}
+        >
+          <h3 id="forgive-dialog-title" className="text-base font-semibold">
+            Forget this amount?
+          </h3>
+          {participantToForgive && (
+            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              Resolve {formatPaise(participantToForgive.outstandingPaise)} from{" "}
+              {participantToForgive.personName} as forgiven. No money will be
+              recorded as received.
+            </p>
+          )}
+          <label
+            htmlFor={`forgive-reason-${participantToForgive?.participantId ?? "none"}`}
+            className="mt-4 block text-xs font-medium text-neutral-700 dark:text-neutral-300"
+          >
+            Reason (optional)
+          </label>
+          <textarea
+            id={`forgive-reason-${participantToForgive?.participantId ?? "none"}`}
+            value={forgiveReason}
+            onChange={(event) => setForgiveReason(event.target.value)}
+            maxLength={200}
+            rows={3}
+            autoFocus
+            placeholder="For example: They bought me coffee, so we called it even."
+            className="mt-1 w-full rounded border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-500 dark:border-neutral-700 dark:bg-neutral-950"
+          />
+          <p className="mt-1 text-right text-[10px] text-neutral-500">
+            {forgiveReason.length}/200
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeForgiveDialog}
+              disabled={pending}
+              className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={pending || participantToForgive == null}
+              className="rounded bg-amber-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {pending ? "Saving…" : "Forgive amount"}
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </>
   );
 }

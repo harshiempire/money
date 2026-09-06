@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
+import {
+  formatSettlementResolution,
+  type SettlementBreakdown,
+} from "@/lib/splits/settlement-breakdown";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 import { createSplit, deleteSplit } from "./split-actions";
 
@@ -16,6 +20,7 @@ export interface ExistingSplit {
     settledAmountPaise: number;
     outstandingAmountPaise: number;
   }>;
+  settlementBreakdown: SettlementBreakdown;
   status: SplitSettlementStatus;
   expectedReimbursePaise: number;
   settledReimbursePaise: number;
@@ -71,10 +76,13 @@ export function SplitSettlementStatusLine({
 }) {
   if (split.status === "none") return null;
 
-  const settledLabel =
-    split.status === "settled"
-      ? "All reimbursements received"
-      : `${split.settledParticipantCount}/${split.totalParticipantCount} settled · ${formatPaise(split.outstandingReimbursePaise)} pending`;
+  const settledLabel = formatSettlementResolution({
+    status: split.status,
+    settledParticipantCount: split.settledParticipantCount,
+    totalParticipantCount: split.totalParticipantCount,
+    outstandingReimbursePaise: split.outstandingReimbursePaise,
+    breakdown: split.settlementBreakdown,
+  });
 
   const tone =
     split.status === "settled"

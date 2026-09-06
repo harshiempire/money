@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getBobAccount, getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
@@ -23,6 +23,7 @@ import {
   SplitAwaitingItem,
   type WriteoffSettlement,
 } from "./SplitAwaitingItem";
+import { ForgivenHistory } from "./ForgivenHistory";
 import { PureOffsetNetSettleButton } from "./PureOffsetNetSettleButton";
 import {
   loadOpenPayablesForUser,
@@ -40,6 +41,7 @@ interface ParticipantRow {
   settledPaise: number;
   bankSettledPaise: number;
   cashSettledPaise: number;
+  offsetSettledPaise: number;
   writeoffPaise: number;
   outstandingPaise: number;
   cashSettlements: CashSettlement[];
@@ -62,6 +64,7 @@ interface SplitSummaryRow {
   outstandingReimbursePaise: number;
   settledParticipantCount: number;
   totalParticipantCount: number;
+  writeoffReimbursePaise: number;
 }
 
 const today = new Date();
@@ -87,7 +90,7 @@ export default async function ReimbursementsPage({
   ]);
   const { period } = resolved;
 
-  const [openReceivables, openPayables, categories, personRows] =
+  const [openReceivables, openPayables, categories, personRows, forgivenRows] =
     await Promise.all([
     loadOpenReceivablesForAccount(account.id),
     loadOpenPayablesForUser(user.id),
@@ -105,6 +108,41 @@ export default async function ReimbursementsPage({
       .from(schema.persons)
       .where(eq(schema.persons.userId, user.id))
       .orderBy(asc(schema.persons.name)),
+    db
+      .select({
+        settlementId: schema.settlements.id,
+        amountPaise: schema.settlements.amountPaise,
+        note: schema.settlements.note,
+        forgivenAt: schema.settlements.createdAt,
+        personId: schema.splitParticipants.personId,
+        personName: schema.splitParticipants.personName,
+        txnId: schema.transactions.id,
+        txnDate: schema.transactions.txnDate,
+        rawDescription: schema.transactions.rawDescription,
+      })
+      .from(schema.settlements)
+      .innerJoin(
+        schema.splitParticipants,
+        eq(
+          schema.settlements.splitParticipantId,
+          schema.splitParticipants.id,
+        ),
+      )
+      .innerJoin(
+        schema.splits,
+        eq(schema.splitParticipants.splitId, schema.splits.id),
+      )
+      .innerJoin(
+        schema.transactions,
+        eq(schema.splits.transactionId, schema.transactions.id),
+      )
+      .where(
+        and(
+          eq(schema.settlements.method, "writeoff"),
+          eq(schema.transactions.accountId, account.id),
+        ),
+      )
+      .orderBy(desc(schema.settlements.createdAt)),
   ]);
 
   const categoryOptions = categories;
@@ -142,6 +180,7 @@ export default async function ReimbursementsPage({
   const settlementsByParticipant = new Map<string, number>();
   const bankSettledByParticipant = new Map<string, number>();
   const cashSettledByParticipant = new Map<string, number>();
+  const offsetSettledByParticipant = new Map<string, number>();
   const cashSettlementsByParticipant = new Map<string, CashSettlement[]>();
   const writeoffSettledByParticipant = new Map<string, number>();
   const writeoffSettlementsByParticipant = new Map<
@@ -201,6 +240,12 @@ export default async function ReimbursementsPage({
           note: s.note,
         });
         writeoffSettlementsByParticipant.set(s.splitParticipantId, off);
+      } else if (s.method === "offset") {
+        offsetSettledByParticipant.set(
+          s.splitParticipantId,
+          (offsetSettledByParticipant.get(s.splitParticipantId) ?? 0) +
+            Number(s.amountPaise),
+        );
       } else {
         bankSettledByParticipant.set(
           s.splitParticipantId,
@@ -231,6 +276,7 @@ export default async function ReimbursementsPage({
       settledPaise: settled,
       bankSettledPaise: bankSettledByParticipant.get(p.id) ?? 0,
       cashSettledPaise: cashSettledByParticipant.get(p.id) ?? 0,
+      offsetSettledPaise: offsetSettledByParticipant.get(p.id) ?? 0,
       writeoffPaise: writeoffSettledByParticipant.get(p.id) ?? 0,
       outstandingPaise: Math.max(0, expected - settled),
       cashSettlements: cashSettlementsByParticipant.get(p.id) ?? [],
@@ -285,26 +331,30 @@ export default async function ReimbursementsPage({
     participantsBySplit.set(r.splitId, group);
   }
 
-  const splitSummaries: SplitSummaryRow[] = [...participantsBySplit.entries()]
-    .map(([splitId, parts]) => {
-      const meta = splitMeta.get(splitId)!;
-      const summary = summarizeSplitSettlement(
-        parts.map((p) => ({
-          expectedAmountPaise: p.expectedPaise,
-          settledAmountPaise: p.settledPaise,
-        })),
-      );
-      return {
-        splitId,
-        txnDate: meta.txnDate,
-        txnDescription: counterpartyLabel(meta.rawDescription),
-        txnId: meta.transactionId,
-        txnNote: meta.txnNote,
-        ...summary,
-      };
-    })
-    .filter((s) => s.status !== "none")
-    .sort((a, b) => a.txnDate.localeCompare(b.txnDate));
+  const splitSummaries: SplitSummaryRow[] = [];
+  for (const [splitId, parts] of participantsBySplit) {
+    const meta = splitMeta.get(splitId)!;
+    const summary = summarizeSplitSettlement(
+      parts.map((p) => ({
+        expectedAmountPaise: p.expectedPaise,
+        settledAmountPaise: p.settledPaise,
+      })),
+    );
+    if (summary.status === "none") continue;
+    splitSummaries.push({
+      splitId,
+      txnDate: meta.txnDate,
+      txnDescription: counterpartyLabel(meta.rawDescription),
+      txnId: meta.transactionId,
+      txnNote: meta.txnNote,
+      writeoffReimbursePaise: parts.reduce(
+        (sum, participant) => sum + participant.writeoffPaise,
+        0,
+      ),
+      ...summary,
+    });
+  }
+  splitSummaries.sort((a, b) => a.txnDate.localeCompare(b.txnDate));
 
   const openSplits = splitSummaries.filter(
     (s) => s.status === "open" || s.status === "partial",
@@ -387,6 +437,7 @@ export default async function ReimbursementsPage({
                       settledPaise: p.settledPaise,
                       bankSettledPaise: p.bankSettledPaise,
                       cashSettledPaise: p.cashSettledPaise,
+                      offsetSettledPaise: p.offsetSettledPaise,
                       writeoffPaise: p.writeoffPaise,
                       outstandingPaise: p.outstandingPaise,
                       cashSettlements: p.cashSettlements,
@@ -403,7 +454,7 @@ export default async function ReimbursementsPage({
       {settledSplits.length > 0 && (
         <section className="mt-6">
           <h2 className="text-sm font-semibold text-neutral-500">
-            Fully settled splits ({settledSplits.length})
+            Resolved splits ({settledSplits.length})
           </h2>
           <ul className="mt-2 space-y-1 text-xs text-neutral-500">
             {settledSplits.map((s) => (
@@ -416,6 +467,9 @@ export default async function ReimbursementsPage({
                   {formatPaise(s.expectedReimbursePaise)} ·{" "}
                   {s.totalParticipantCount} participant
                   {s.totalParticipantCount === 1 ? "" : "s"}
+                  {s.writeoffReimbursePaise > 0 && (
+                    <> · {formatPaise(s.writeoffReimbursePaise)} forgiven</>
+                  )}
                 </span>
                 <a
                   href={transactionHref(s.txnId)}
@@ -428,6 +482,20 @@ export default async function ReimbursementsPage({
           </ul>
         </section>
       )}
+
+      <ForgivenHistory
+        items={forgivenRows.map((row) => ({
+          settlementId: row.settlementId,
+          personId: row.personId,
+          personName: row.personName,
+          amountPaise: Number(row.amountPaise),
+          note: row.note,
+          forgivenAt: row.forgivenAt.toISOString(),
+          txnId: row.txnId,
+          txnDate: row.txnDate,
+          txnDescription: counterpartyLabel(row.rawDescription),
+        }))}
+      />
 
       {byPerson.length > 0 && (
         <section className="mt-6">

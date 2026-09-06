@@ -6,7 +6,7 @@ import { db, schema } from "@/db";
  * The single source of truth for "net personal spend" semantics:
  *
  *   net_self =
- *     + (debit amount, or your_share if a split exists)           when !is_transfer
+ *     + (debit amount, or your_share + forgiven shares if split)  when !is_transfer
  *     - (credit amount - allocated - overpaymentPayables)         when !is_transfer
  *     + 0                                                         otherwise
  *
@@ -23,18 +23,38 @@ import { db, schema } from "@/db";
  * change) — it is deliberately NOT subtracted here, so it keeps reducing
  * net spend like the rest of the credit. A credit with no settlement or
  * owed_expense rows has allocated = overpaymentPayables = 0, so this
- * reduces to the plain "- credit amount" case. Historical over-allocated
+ * reduces to the plain "- credit amount" case. A write-off is different
+ * from a received reimbursement: no money came back, so the forgiven
+ * participant share becomes part of the owner's effective personal spend
+ * for the original debit. Historical over-allocated
  * rows (allocated + overpaymentPayables > amount) are clamped to contribute
  * 0 rather than a negative (i.e. flipping into a debit-like contribution).
  */
+const writeoffShareExpr = sql<number>`
+  coalesce(
+    (select sum(${schema.settlements.amountPaise})
+     from ${schema.settlements}
+     inner join ${schema.splitParticipants}
+       on ${schema.settlements.splitParticipantId} = ${schema.splitParticipants.id}
+     inner join ${schema.splits}
+       on ${schema.splitParticipants.splitId} = ${schema.splits.id}
+     where ${schema.splits.transactionId} = ${schema.transactions.id}
+       and ${schema.settlements.method} = 'writeoff'),
+    0
+  )
+`;
+
 export const netSelfExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'debit'
-      then coalesce(
-        (select ${schema.splits.yourSharePaise} from ${schema.splits}
-         where ${schema.splits.transactionId} = ${schema.transactions.id}),
-        ${schema.transactions.amountPaise}
+      then least(
+        ${schema.transactions.amountPaise},
+        coalesce(
+          (select ${schema.splits.yourSharePaise} from ${schema.splits}
+           where ${schema.splits.transactionId} = ${schema.transactions.id}),
+          ${schema.transactions.amountPaise}
+        ) + ${writeoffShareExpr}
       )
     when ${schema.transactions.drCr} = 'credit'
       then -1 * greatest(
@@ -57,10 +77,13 @@ const yourShareDebitExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
     when ${schema.transactions.drCr} = 'debit'
-      then coalesce(
-        (select ${schema.splits.yourSharePaise} from ${schema.splits}
-         where ${schema.splits.transactionId} = ${schema.transactions.id}),
-        ${schema.transactions.amountPaise}
+      then least(
+        ${schema.transactions.amountPaise},
+        coalesce(
+          (select ${schema.splits.yourSharePaise} from ${schema.splits}
+           where ${schema.splits.transactionId} = ${schema.transactions.id}),
+          ${schema.transactions.amountPaise}
+        ) + ${writeoffShareExpr}
       )
     else 0
   end

@@ -304,6 +304,7 @@ export async function loadTransactionTableContext(
     splits,
     participantsAll,
     ledger.settledByParticipant,
+    ledger.settlementSummaryByParticipant,
   );
 
   const overpaymentByInflow = new Map<string, number>();
