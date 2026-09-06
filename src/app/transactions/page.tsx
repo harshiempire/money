@@ -337,6 +337,7 @@ export default async function TransactionsPage({
                           acknowledgedPaise: 0,
                           disposition: null,
                           overpaymentPayablePaise: 0,
+                          netSettledPaise: 0,
                         }
                       }
                       participants={participantOptions}
@@ -443,6 +444,7 @@ export default async function TransactionsPage({
                           acknowledgedPaise: 0,
                           disposition: null,
                           overpaymentPayablePaise: 0,
+                          netSettledPaise: 0,
                         }
                       }
                       participants={participantOptions}

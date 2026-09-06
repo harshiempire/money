@@ -22,7 +22,12 @@ import type {
 } from "@/lib/net-events/load-net-settle-data";
 
 // Debit rows never carry a residual, so callers share one frozen fallback.
-const NO_CREDIT_RESIDUAL: CreditResidual = { acknowledgedPaise: 0, disposition: null, overpaymentPayablePaise: 0 };
+const NO_CREDIT_RESIDUAL: CreditResidual = {
+  acknowledgedPaise: 0,
+  disposition: null,
+  overpaymentPayablePaise: 0,
+  netSettledPaise: 0,
+};
 
 function ChannelPill({ channel }: { channel: string }) {
   const palette: Record<string, string> = {

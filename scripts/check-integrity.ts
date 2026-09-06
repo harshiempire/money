@@ -500,6 +500,58 @@ if (danglingOwedExpenses.length === 0) {
 section("6a. Split participants with dangling person link", danglingParticipants.length);
 section("6b. Owed expenses with dangling person link", danglingOwedExpenses.length);
 
+// ─── 7. Reimbursement credits with nothing recorded against them ─────────────
+// Check 1 starts from settlement rows, so a credit filed under a
+// "reimbursement" category that never got a settlement, a leftover decision,
+// or an overpayment payable is invisible to it. Surface those here.
+
+type UnsettledReimbursementRow = {
+  userId: string;
+  txnId: string;
+  txnDate: string;
+  description: string;
+  creditPaise: unknown;
+  categoryName: string;
+};
+
+const { rows: unsettledReimbursements } = await db.execute<UnsettledReimbursementRow>(sql`
+  select
+    ${schema.moneyAccounts.userId} as "userId",
+    ${schema.transactions.id} as "txnId",
+    ${schema.transactions.txnDate} as "txnDate",
+    ${schema.transactions.rawDescription} as "description",
+    ${schema.transactions.amountPaise} as "creditPaise",
+    ${schema.categories.name} as "categoryName"
+  from ${schema.transactions}
+  join ${schema.moneyAccounts} on ${schema.moneyAccounts.id} = ${schema.transactions.accountId}
+  join ${schema.categories} on ${schema.categories.id} = ${schema.transactions.categoryId}
+  where ${schema.transactions.drCr} = 'credit'
+    and ${schema.transactions.isTransfer} = false
+    and ${schema.categories.kind} = 'reimbursement'
+    and ${schema.transactions.residualDisposition} is null
+    and not exists (
+      select 1 from ${schema.settlements}
+      where ${schema.settlements.inflowTransactionId} = ${schema.transactions.id}
+    )
+    and not exists (
+      select 1 from ${schema.owedExpenses}
+      where ${schema.owedExpenses.sourceInflowTransactionId} = ${schema.transactions.id}
+    )
+  order by ${schema.transactions.txnDate}
+`);
+
+console.log("\n=== 7. Reimbursement-category credits with no settlement recorded ===");
+if (unsettledReimbursements.length === 0) {
+  console.log("  none");
+} else {
+  for (const r of unsettledReimbursements) {
+    console.log(
+      `  txn ${r.txnId}  ${r.txnDate}  "${r.description}"  credit ${rupees(r.creditPaise)}  category=${r.categoryName}  [${userLabel(r.userId)}]`,
+    );
+  }
+}
+section("7. Reimbursement-category credits with no settlement", unsettledReimbursements.length);
+
 // ─── Summary ──────────────────────────────────────────────────────────────
 
 console.log("\n=== SUMMARY ===");

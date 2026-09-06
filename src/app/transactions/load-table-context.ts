@@ -289,9 +289,22 @@ export async function loadTransactionTableContext(
   const expenseLinksByInflow = buildExpenseLinks(settlementExpenseRows);
   const reimbursementsByExpense = buildReimbursementLinks(reimbursementRows);
 
+  // The Settle dialog edits only the plain rows on a credit. A row with a
+  // net_event_id was written by Net Settle: it is shown as a reserved amount,
+  // never as an editable allocation — otherwise the dialog would re-submit it
+  // and the credit would be counted twice.
   const settlementsByInflow = new Map<string, ExistingAllocation[]>();
+  const netSettledByInflow = new Map<string, number>();
   for (const st of settlementsForRows) {
     if (!st.inflowTransactionId || !st.splitParticipantId) continue;
+    if (st.netEventId) {
+      netSettledByInflow.set(
+        st.inflowTransactionId,
+        (netSettledByInflow.get(st.inflowTransactionId) ?? 0) +
+          Number(st.amountPaise),
+      );
+      continue;
+    }
     const arr = settlementsByInflow.get(st.inflowTransactionId) ?? [];
     arr.push({
       splitParticipantId: st.splitParticipantId,
@@ -321,6 +334,7 @@ export async function loadTransactionTableContext(
       acknowledgedPaise: Number(r.residualAcknowledgedPaise ?? 0),
       disposition: r.residualDisposition,
       overpaymentPayablePaise: overpaymentByInflow.get(r.id) ?? 0,
+      netSettledPaise: netSettledByInflow.get(r.id) ?? 0,
     });
   }
 

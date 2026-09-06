@@ -168,9 +168,8 @@ function SplitForm({
   knownPersonNames: string[];
   onClose: () => void;
 }) {
-  const [total, setTotal] = useState(
-    existing ? paiseToRupeesStr(existing.totalPaise) : paiseToRupeesStr(amountPaise),
-  );
+  // The total is the transaction's amount — the server refuses anything else.
+  const total = paiseToRupeesStr(amountPaise);
   const [yourShare, setYourShare] = useState(
     existing ? paiseToRupeesStr(existing.yourSharePaise) : "",
   );
@@ -361,8 +360,9 @@ function SplitForm({
           <input
             inputMode="decimal"
             value={total}
-            onChange={(e) => setTotal(e.target.value)}
-            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+            readOnly
+            title="The split total is always the transaction amount"
+            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-neutral-500 dark:border-neutral-700"
           />
         </label>
         <label className="flex flex-col">

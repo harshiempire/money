@@ -25,6 +25,11 @@ export interface CreditResidual {
   disposition: "kept" | "written_off" | null;
   /** sum of owed_expense.amount_paise where source_inflow_transaction_id = this credit */
   overpaymentPayablePaise: number;
+  /**
+   * Sum of settlement rows on this credit that belong to a Net Settle event.
+   * Those rows are not editable here — they only reduce what's left to allocate.
+   */
+  netSettledPaise: number;
 }
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
@@ -184,8 +189,10 @@ export function SettleButton({
 
   const hasResidualDisposition =
     residual.disposition !== null || residual.overpaymentPayablePaise > 0;
-  const isSettlement = existing.length > 0 || hasResidualDisposition;
-  const allocatedPaise = existing.reduce((s, e) => s + e.amountPaise, 0);
+  const isSettlement =
+    existing.length > 0 || hasResidualDisposition || residual.netSettledPaise > 0;
+  const allocatedPaise =
+    existing.reduce((s, e) => s + e.amountPaise, 0) + residual.netSettledPaise;
   const accountedPaise =
     allocatedPaise + residual.acknowledgedPaise + residual.overpaymentPayablePaise;
   const remainingPaise = amountPaise - accountedPaise;
@@ -264,8 +271,11 @@ function SettleForm({
   const [amountFilter, setAmountFilter] = useState("");
   const [pending, startTransition] = useTransition();
 
+  // Net Settle's rows on this credit are fixed: they come off the top and are
+  // never part of the editable allocations below.
+  const netSettledPaise = residual.netSettledPaise;
   const initialAllocatedPaise = existing.reduce((s, e) => s + e.amountPaise, 0);
-  const initialRemaining = amountPaise - initialAllocatedPaise;
+  const initialRemaining = amountPaise - netSettledPaise - initialAllocatedPaise;
   const [disposition, setDisposition] = useState<ResidualChoice | null>(() => {
     if (residual.disposition) return residual.disposition;
     if (residual.overpaymentPayablePaise > 0) return "owed_back";
@@ -297,7 +307,7 @@ function SettleForm({
     const n = Number.parseFloat(v);
     return s + (Number.isFinite(n) ? Math.round(n * 100) : 0);
   }, 0);
-  const remaining = amountPaise - allocatedPaise;
+  const remaining = amountPaise - netSettledPaise - allocatedPaise;
 
   const currentAllocations: ExistingAllocation[] = useMemo(
     () =>
@@ -387,6 +397,13 @@ function SettleForm({
         </a>
         .
       </p>
+      {netSettledPaise > 0 && (
+        <p className="mt-2 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+          ₹{paiseToRupeesStr(netSettledPaise)} of this credit is already used by
+          a Net Settle. That part isn&apos;t editable here — saving or clearing
+          below leaves it untouched.
+        </p>
+      )}
 
       {participants.length > 0 && (
         <div className="mt-4 flex flex-wrap items-end gap-2 rounded border border-neutral-200 p-2 dark:border-neutral-800">
@@ -506,7 +523,7 @@ function SettleForm({
           }`}
         >
           Allocated ₹{paiseToRupeesStr(allocatedPaise)} of ₹
-          {paiseToRupeesStr(amountPaise)}
+          {paiseToRupeesStr(amountPaise - netSettledPaise)}
           {remaining < 0
             ? ` · over-allocated by ₹${paiseToRupeesStr(-remaining)} — reduce an allocation to save`
             : ` · ₹${paiseToRupeesStr(remaining)} remaining unallocated`}

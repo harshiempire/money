@@ -187,3 +187,198 @@ describe("validatePayableReplaceable — repaid overpayment (finding 1)", () => 
     ).toBe(true);
   });
 });
+
+// ── Codex merge-readiness review (thread 01a039f6), 2026-08-26 ──────────────
+
+import {
+  cleanAllocations,
+  validateInflowCapacity,
+  validateParticipantIdsBelongToSplit,
+  validateSettledParticipantEdit,
+  validateSplitTotalMatchesTransaction,
+} from "./validate";
+
+describe("validateSplitTotalMatchesTransaction (review: split total trusted the browser)", () => {
+  test("rejects a balanced ₹200 split posted against a ₹100 transaction", () => {
+    // The parts add up, so the balance check alone would pass this.
+    expect(
+      validateSplitBalances({
+        totalPaise: 20000,
+        yourSharePaise: 10000,
+        participants: [p(10000, "Aryan")],
+      }).ok,
+    ).toBe(true);
+    const r = validateSplitTotalMatchesTransaction({
+      totalPaise: 20000,
+      transactionAmountPaise: 10000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("₹200.00");
+    expect(r.ok === false && r.message).toContain("₹100.00");
+  });
+
+  test("accepts the transaction's own amount", () => {
+    expect(
+      validateSplitTotalMatchesTransaction({
+        totalPaise: 116403,
+        transactionAmountPaise: 116403,
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+describe("validateParticipantIdsBelongToSplit (review: participant ids not pinned to the split)", () => {
+  const existing = new Set(["p-nitin", "p-rishith"]);
+
+  test("rejects an id from some other split instead of treating it as a new row", () => {
+    const r = validateParticipantIdsBelongToSplit(
+      [p(100, "Nitin", "p-nitin"), p(100, "Bob", "p-from-elsewhere")],
+      existing,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("Bob");
+  });
+
+  test("rejects any id when the split doesn't exist yet", () => {
+    expect(
+      validateParticipantIdsBelongToSplit([p(100, "Nitin", "p-nitin")], new Set())
+        .ok,
+    ).toBe(false);
+  });
+
+  test("accepts rows without an id (new participants) and rows on this split", () => {
+    expect(
+      validateParticipantIdsBelongToSplit(
+        [p(100, "Nitin", "p-nitin"), p(50, "Newcomer")],
+        existing,
+      ).ok,
+    ).toBe(true);
+  });
+});
+
+describe("validateSettledParticipantEdit (review: settled payments could be reassigned by rename)", () => {
+  const aryan = { personName: "Aryan", expectedAmountPaise: 5000 };
+
+  test("refuses to rename a participant who has money settled against them", () => {
+    const r = validateSettledParticipantEdit({
+      existing: aryan,
+      kept: { personName: "Bob", expectedAmountPaise: 5000 },
+      settledPaise: 5000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("rename Aryan to Bob");
+  });
+
+  test("treats a case or whitespace change as the same person", () => {
+    expect(
+      validateSettledParticipantEdit({
+        existing: aryan,
+        kept: { personName: "  aryan ", expectedAmountPaise: 5000 },
+        settledPaise: 5000,
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("renaming is free when nothing has been settled", () => {
+    expect(
+      validateSettledParticipantEdit({
+        existing: aryan,
+        kept: { personName: "Bob", expectedAmountPaise: 5000 },
+        settledPaise: 0,
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("still refuses removal of a settled participant", () => {
+    const r = validateSettledParticipantEdit({
+      existing: aryan,
+      kept: undefined,
+      settledPaise: 100,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("Cannot remove Aryan");
+  });
+
+  test("blocks cutting a share below what was settled", () => {
+    const r = validateSettledParticipantEdit({
+      existing: aryan,
+      kept: { personName: "Aryan", expectedAmountPaise: 4000 },
+      settledPaise: 5000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("Cannot reduce Aryan's share");
+  });
+
+  test("keeps an existing overpayment editable when the edit doesn't worsen it", () => {
+    // Share already below settled (they overpaid). Raising it toward what was
+    // received must be allowed — commit 71d8397's rule, preserved here.
+    expect(
+      validateSettledParticipantEdit({
+        existing: { personName: "Rishith", expectedAmountPaise: 121634 },
+        kept: { personName: "Rishith", expectedAmountPaise: 121700 },
+        settledPaise: 122000,
+      }).ok,
+    ).toBe(true);
+  });
+});
+
+describe("cleanAllocations (review: negative allocations were dropped before validation)", () => {
+  test("a negative amount fails the request instead of vanishing", () => {
+    const r = cleanAllocations([
+      { splitParticipantId: "a", amountPaise: 1000 },
+      { splitParticipantId: "b", amountPaise: -1000 },
+    ]);
+    expect(r.ok).toBe(false);
+  });
+
+  test("a NaN amount is rejected, not treated as zero", () => {
+    expect(
+      cleanAllocations([{ splitParticipantId: "a", amountPaise: Number.NaN }])
+        .ok,
+    ).toBe(false);
+  });
+
+  test("zero rows are dropped only after every amount has passed", () => {
+    const r = cleanAllocations([
+      { splitParticipantId: "a", amountPaise: 0 },
+      { splitParticipantId: "b", amountPaise: 250 },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.allocations).toEqual([
+      { splitParticipantId: "b", amountPaise: 250 },
+    ]);
+  });
+});
+
+describe("validateInflowCapacity (review: ordinary Settle deleted Net Settle's rows)", () => {
+  test("only what Net Settle left over can be allocated", () => {
+    const r = validateInflowCapacity({
+      inflowAmountPaise: 10000,
+      reservedByNetSettlePaise: 6000,
+      allocationsSumPaise: 5000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("₹40.00 available");
+    expect(r.ok === false && r.message).toContain("Net Settle");
+  });
+
+  test("the full credit is available when nothing is reserved", () => {
+    expect(
+      validateInflowCapacity({
+        inflowAmountPaise: 10000,
+        reservedByNetSettlePaise: 0,
+        allocationsSumPaise: 10000,
+      }).ok,
+    ).toBe(true);
+  });
+
+  test("exactly filling the leftover is allowed", () => {
+    expect(
+      validateInflowCapacity({
+        inflowAmountPaise: 10000,
+        reservedByNetSettlePaise: 6000,
+        allocationsSumPaise: 4000,
+      }).ok,
+    ).toBe(true);
+  });
+});

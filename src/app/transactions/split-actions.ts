@@ -1,6 +1,6 @@
 "use server";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
 import { getOrCreatePerson } from "@/db/person";
@@ -14,10 +14,14 @@ import {
   settledAmountByParticipantIds,
 } from "@/lib/splits/outstanding";
 import {
-  validateAllocationAmounts,
+  cleanAllocations,
+  validateInflowCapacity,
+  validateParticipantIdsBelongToSplit,
   validatePayableReplaceable,
+  validateSettledParticipantEdit,
   validateSettlementSource,
   validateSplitInput,
+  validateSplitTotalMatchesTransaction,
 } from "@/lib/splits/validate";
 
 export interface ParticipantInput {
@@ -68,13 +72,23 @@ export async function createSplit(input: {
   // A split divides money you paid out. Splitting an incoming credit would
   // record a share of a payment that never happened.
   const [subject] = await db
-    .select({ drCr: schema.transactions.drCr })
+    .select({
+      drCr: schema.transactions.drCr,
+      amountPaise: schema.transactions.amountPaise,
+    })
     .from(schema.transactions)
     .where(eq(schema.transactions.id, input.transactionId))
     .limit(1);
   if (subject?.drCr !== "debit") {
     throw new Error("Only a payment you made can be split.");
   }
+
+  // The total isn't the client's to decide — it is the transaction's amount.
+  const totalMatches = validateSplitTotalMatchesTransaction({
+    totalPaise,
+    transactionAmountPaise: Number(subject.amountPaise),
+  });
+  if (!totalMatches.ok) throw new Error(totalMatches.message);
 
   const [existingSplit] = await db
     .select({ id: schema.splits.id })
@@ -101,7 +115,18 @@ export async function createSplit(input: {
         .from(schema.splitParticipants)
         .where(eq(schema.splitParticipants.splitId, existingSplit.id))
     ).map((p) => ({ ...p, expectedAmountPaise: Number(p.expectedAmountPaise) }));
+  }
 
+  // Every id the client sent back must be a row on this split. Ownership of
+  // the transaction is already established; this pins the participant rows
+  // to it too, instead of quietly treating a foreign id as a brand-new row.
+  const belongs = validateParticipantIdsBelongToSplit(
+    cleanParticipants,
+    new Set(existingParticipants.map((p) => p.id)),
+  );
+  if (!belongs.ok) throw new Error(belongs.message);
+
+  if (existingParticipants.length > 0) {
     const settledByParticipant = await settledAmountByParticipantIds(
       existingParticipants.map((p) => p.id),
     );
@@ -112,26 +137,12 @@ export async function createSplit(input: {
     );
 
     for (const ep of existingParticipants) {
-      const settled = settledByParticipant.get(ep.id) ?? 0;
-      if (settled <= 0) continue;
-      const kept = keptById.get(ep.id);
-      if (!kept) {
-        throw new Error(
-          `Cannot remove ${ep.personName} — ${rupees(settled)} has already been settled against them. Clear that settlement first.`,
-        );
-      }
-      // Only block edits that make an over-settlement worse. A share that is
-      // already below what was settled (they overpaid) must stay editable —
-      // otherwise one overpayment freezes the whole split, including edits
-      // that move the share back toward what was actually received.
-      if (
-        kept.expectedAmountPaise < settled &&
-        kept.expectedAmountPaise < ep.expectedAmountPaise
-      ) {
-        throw new Error(
-          `Cannot reduce ${ep.personName}'s share to ${rupees(kept.expectedAmountPaise)} — ${rupees(settled)} is already settled against them.`,
-        );
-      }
+      const check = validateSettledParticipantEdit({
+        existing: ep,
+        kept: keptById.get(ep.id),
+        settledPaise: settledByParticipant.get(ep.id) ?? 0,
+      });
+      if (!check.ok) throw new Error(check.message);
     }
   }
 
@@ -305,15 +316,17 @@ export async function recordSettlement(input: {
     await assertSplitParticipantOwned(user.id, a.splitParticipantId);
   }
 
-  const cleanAllocations = input.allocations
-    .map((a) => ({
+  // Validate the raw amounts before any row is dropped — a negative or
+  // non-numeric amount must fail the request, not vanish and leave an empty
+  // list that then wipes the credit's existing allocations.
+  const cleaned = cleanAllocations(
+    input.allocations.map((a) => ({
       splitParticipantId: a.splitParticipantId,
-      amountPaise: safePaise(a.amountPaise),
-    }))
-    .filter((a) => a.amountPaise > 0);
-
-  const amounts = validateAllocationAmounts(cleanAllocations);
-  if (!amounts.ok) throw new Error(amounts.message);
+      amountPaise: a.amountPaise,
+    })),
+  );
+  if (!cleaned.ok) throw new Error(cleaned.message);
+  const allocations = cleaned.allocations;
 
   // The outstanding/inflow reads below happen before the write transaction and
   // take no row locks, so two settlements saved at the same instant could each
@@ -337,19 +350,35 @@ export async function recordSettlement(input: {
 
   const inflowAmountPaise = inflow ? Number(inflow.amountPaise) : 0;
 
-  const allocationsSum = cleanAllocations.reduce(
-    (s, a) => s + a.amountPaise,
+  // A Net Settle can spend part of this same credit through a bank leg. Those
+  // rows carry a net_event_id and belong to the net event, not to this
+  // dialog: this action never deletes them, and can only allocate what they
+  // left over.
+  const netRowsOnInflow = await db
+    .select({ amountPaise: schema.settlements.amountPaise })
+    .from(schema.settlements)
+    .where(
+      and(
+        eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+        isNotNull(schema.settlements.netEventId),
+      ),
+    );
+  const reservedByNetSettlePaise = netRowsOnInflow.reduce(
+    (s, r) => s + Number(r.amountPaise),
     0,
   );
-  if (allocationsSum > inflowAmountPaise) {
-    throw new Error(
-      `Allocations total ${rupees(allocationsSum)}, which exceeds the inflow amount of ${rupees(inflowAmountPaise)}.`,
-    );
-  }
 
-  if (cleanAllocations.length > 0) {
+  const allocationsSum = allocations.reduce((s, a) => s + a.amountPaise, 0);
+  const capacity = validateInflowCapacity({
+    inflowAmountPaise,
+    reservedByNetSettlePaise,
+    allocationsSumPaise: allocationsSum,
+  });
+  if (!capacity.ok) throw new Error(capacity.message);
+
+  if (allocations.length > 0) {
     const participantIds = [
-      ...new Set(cleanAllocations.map((a) => a.splitParticipantId)),
+      ...new Set(allocations.map((a) => a.splitParticipantId)),
     ];
     const participants = await db
       .select({
@@ -361,21 +390,27 @@ export async function recordSettlement(input: {
       .where(inArray(schema.splitParticipants.id, participantIds));
     const participantById = new Map(participants.map((p) => [p.id, p]));
 
-    // Settled totals against these participants, excluding this same inflow's
-    // own rows — this action deletes and reinserts that inflow's settlements,
-    // so its own prior rows must not count against the outstanding balance.
+    // Settled totals against these participants, excluding the rows this
+    // action is about to replace: this inflow's own plain settlements. Net
+    // Settle rows on this inflow stay put, so they still count.
     const settledExcludingThisInflow = new Map<string, number>();
     const priorSettlements = await db
       .select({
         splitParticipantId: schema.settlements.splitParticipantId,
         amountPaise: schema.settlements.amountPaise,
         inflowTransactionId: schema.settlements.inflowTransactionId,
+        netEventId: schema.settlements.netEventId,
       })
       .from(schema.settlements)
       .where(inArray(schema.settlements.splitParticipantId, participantIds));
     for (const row of priorSettlements) {
       if (!row.splitParticipantId) continue;
-      if (row.inflowTransactionId === input.inflowTransactionId) continue;
+      if (
+        row.inflowTransactionId === input.inflowTransactionId &&
+        row.netEventId === null
+      ) {
+        continue;
+      }
       settledExcludingThisInflow.set(
         row.splitParticipantId,
         (settledExcludingThisInflow.get(row.splitParticipantId) ?? 0) +
@@ -384,7 +419,7 @@ export async function recordSettlement(input: {
     }
 
     const allocationByParticipant = new Map<string, number>();
-    for (const a of cleanAllocations) {
+    for (const a of allocations) {
       allocationByParticipant.set(
         a.splitParticipantId,
         (allocationByParticipant.get(a.splitParticipantId) ?? 0) +
@@ -407,15 +442,20 @@ export async function recordSettlement(input: {
   }
 
   await db.transaction(async (tx) => {
+    // Only this dialog's own rows. A row with a net_event_id was written by
+    // Net Settle and is deleted only through that event.
     await tx
       .delete(schema.settlements)
       .where(
-        eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+        and(
+          eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+          isNull(schema.settlements.netEventId),
+        ),
       );
 
-    if (cleanAllocations.length > 0) {
+    if (allocations.length > 0) {
       await tx.insert(schema.settlements).values(
-        cleanAllocations.map((a) => ({
+        allocations.map((a) => ({
           inflowTransactionId: input.inflowTransactionId,
           splitParticipantId: a.splitParticipantId,
           amountPaise: a.amountPaise,
@@ -440,7 +480,8 @@ export async function recordSettlement(input: {
       .set({ residualDisposition: null, residualAcknowledgedPaise: null })
       .where(eq(schema.transactions.id, input.inflowTransactionId));
 
-    const residualPaise = inflowAmountPaise - allocationsSum;
+    const residualPaise =
+      inflowAmountPaise - reservedByNetSettlePaise - allocationsSum;
     if (input.residual && residualPaise > 0) {
       if (input.residual.kind === "owed_back") {
         const personName = input.residual.personName?.trim();
@@ -484,10 +525,15 @@ export async function clearSettlement(input: { inflowTransactionId: string }) {
   await assertResidualPayableReplaceable(input.inflowTransactionId);
 
   await db.transaction(async (tx) => {
+    // Same scope as recordSettlement: Net Settle's rows on this credit are
+    // not this dialog's to clear.
     await tx
       .delete(schema.settlements)
       .where(
-        eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+        and(
+          eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
+          isNull(schema.settlements.netEventId),
+        ),
       );
     // Clearing the settlement should not leave an orphan overpayment payable
     // or a stale acknowledged amount behind — the credit goes back to
