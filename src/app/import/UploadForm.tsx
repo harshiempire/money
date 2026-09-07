@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { uploadStatement, type ImportResult } from "./actions";
 
@@ -15,8 +16,15 @@ export function UploadForm() {
         const fd = new FormData(e.currentTarget);
         startTransition(async () => {
           setResult(null);
-          const r = await uploadStatement(fd);
-          setResult(r);
+          try {
+            const r = await uploadStatement(fd);
+            setResult(r);
+          } catch {
+            setResult({
+              ok: false,
+              error: "We couldn't complete that upload. Please try again.",
+            });
+          }
         });
       }}
     >
@@ -65,7 +73,14 @@ function ResultPanel({ result }: { result: ImportResult }) {
       </div>
     );
   }
-  const { summary, bank } = result;
+  const {
+    summary,
+    bank,
+    categorizedCount,
+    needsAttentionCount,
+    reviewHref,
+    statementHref,
+  } = result;
   return (
     <div className="rounded border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
       <p className="font-medium">Import complete · {bank}</p>
@@ -80,7 +95,21 @@ function ResultPanel({ result }: { result: ImportResult }) {
           rows already known:{" "}
           <strong>{summary.rowsDuplicate}</strong>
         </li>
+        <li>
+          new categorized: <strong>{categorizedCount}</strong>
+        </li>
+        <li>
+          new needing attention: <strong>{needsAttentionCount}</strong>
+        </li>
       </ul>
+      <div className="mt-3 flex flex-wrap gap-3 font-medium">
+        <Link className="underline" href={reviewHref}>
+          Review these transactions
+        </Link>
+        <Link className="underline" href={statementHref}>
+          View this statement
+        </Link>
+      </div>
     </div>
   );
 }

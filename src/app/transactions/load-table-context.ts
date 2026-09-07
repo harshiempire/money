@@ -82,7 +82,7 @@ export async function loadTransactionTableContext(
   accountId: string,
   userId: string,
   where: SQL | undefined,
-  options?: { limit?: number },
+  options?: { limit?: number; offset?: number },
 ) {
   const limit = options?.limit ?? 1000;
 
@@ -145,8 +145,10 @@ export async function loadTransactionTableContext(
           desc(schema.transactions.txnDate),
           desc(schema.transactions.createdAt),
           sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`,
+          desc(schema.transactions.id),
         )
-        .limit(limit),
+        .limit(limit)
+        .offset(options?.offset ?? 0),
       ledgerPromise,
       payablesPromise,
       hintsPromise,

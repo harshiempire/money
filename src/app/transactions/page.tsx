@@ -1,4 +1,4 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, lte, isNull, or, sql, desc } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { AppShell } from "@/components/AppShell";
 import {
@@ -47,6 +47,10 @@ interface PageSearchParams {
   channel?: string;
   all?: string;
   txn?: string;
+  q?: string;
+  page?: string;
+  import?: string;
+  attention?: string;
 }
 
 const isChannel = (s: unknown): s is Channel =>
@@ -66,6 +70,9 @@ export default async function TransactionsPage({
   // and used to add a full-account scan on every navigation.
   await ensureTenantDefaults();
 
+  const query = (sp.q ?? "").trim().slice(0, 200);
+  const pageSize = 100;
+  let currentPage = Math.max(1, Math.min(1000000, Number.parseInt(sp.page ?? "1", 10) || 1));
   const showAllTime = sp.all === "1";
   const highlightTxnId = sp.txn?.trim() || null;
   let effectiveFrom = sp.from;
@@ -123,10 +130,59 @@ export default async function TransactionsPage({
   if (isChannel(sp.channel))
     filters.push(eq(schema.transactions.channel, sp.channel));
 
+  if (sp.import) filters.push(eq(schema.transactions.sourceImportId, sp.import));
+  if (sp.attention === "1") {
+    filters.push(or(isNull(schema.transactions.categoryId), eq(schema.transactions.needsReview, true))!);
+  }
+  if (query) {
+    // Literal substring matching: %, _ and backslashes are not search wildcards.
+    const textMatch = sql<boolean>`(
+      strpos(lower(${schema.transactions.rawDescription}), lower(${query})) > 0
+      or strpos(lower(coalesce(${schema.transactions.note}, '')), lower(${query})) > 0
+      or strpos(lower(coalesce(${schema.transactions.parsedPurpose}, '')), lower(${query})) > 0
+      or exists (select 1 from ${schema.counterparties}
+        where ${schema.counterparties.id} = ${schema.transactions.counterpartyId}
+        and ${schema.counterparties.userId} = ${userId}
+        and strpos(lower(${schema.counterparties.displayName}), lower(${query})) > 0)
+    )`;
+    const amountText = query.replace(/^(?:₹|rs\.?|inr)\s*/i, "").replace(/,/g, "").trim();
+    const amount = /^\d+(?:\.\d{1,2})?$/.test(amountText)
+      ? Math.round(Number(amountText) * 100) : NaN;
+    filters.push(Number.isSafeInteger(amount)
+      ? or(textMatch, eq(schema.transactions.amountPaise, amount))!
+      : textMatch);
+  }
   const where = and(...filters);
+  // Deep links must locate their transaction even beyond the first page.
+  if (highlightTxnId && !sp.page) {
+    const ordered = await db.select({ id: schema.transactions.id })
+      .from(schema.transactions).where(where)
+      .orderBy(desc(schema.transactions.txnDate), desc(schema.transactions.createdAt),
+        sql`(${schema.transactions.rawPayload}->>'serial')::int desc nulls last`, desc(schema.transactions.id));
+    const index = ordered.findIndex((row) => row.id === highlightTxnId);
+    if (index >= 0) currentPage = Math.floor(index / pageSize) + 1;
+  }
+  const offset = (currentPage - 1) * pageSize;
+  const periodHref = (allTime: boolean) => {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (isChannel(sp.channel)) params.set("channel", sp.channel);
+    if (sp.import) params.set("import", sp.import);
+    if (sp.attention === "1") params.set("attention", "1");
+    if (allTime) params.set("all", "1");
+    return `/transactions${params.size ? `?${params.toString()}` : ""}`;
+  };
+  const pageHref = (page: number) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries({ ...sp, from: effectiveFrom, to: effectiveTo })) {
+      if (value) params.set(key, value);
+    }
+    params.set("page", String(page));
+    return `/transactions?${params.toString()}`;
+  };
 
   const [ctx, totals] = await Promise.all([
-    loadTransactionTableContext(account.id, userId, where),
+    loadTransactionTableContext(account.id, userId, where, { limit: pageSize, offset }),
     loadPeriodTxnTotals(where),
   ]);
 
@@ -171,7 +227,18 @@ export default async function TransactionsPage({
         from={effectiveFrom}
         to={effectiveTo}
         channel={sp.channel}
+        query={query}
+        showAllTime={showAllTime}
+        importId={sp.import}
+        attention={sp.attention}
       />
+
+      {(sp.import || sp.attention === "1") && (
+        <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+          {sp.import ? "Transactions newly added by this import" : "Transactions"}
+          {sp.attention === "1" ? " · uncategorized or flagged for review" : ""}
+        </p>
+      )}
 
       {periodLabel && (
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
@@ -181,14 +248,14 @@ export default async function TransactionsPage({
           </span>
           {showAllTime ? (
             <a
-              href="/transactions"
+              href={periodHref(false)}
               className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
             >
               Latest statement
             </a>
           ) : (
             <a
-              href="/transactions?all=1"
+              href={periodHref(true)}
               className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
             >
               Show all time
@@ -238,7 +305,7 @@ export default async function TransactionsPage({
       </section>
 
       <p className="mt-3 text-xs text-neutral-500">
-        Showing {rows.length} of {totals.count} transaction
+        Showing {rows.length ? offset + 1 : 0}–{rows.length ? offset + rows.length : 0} of {totals.count} transaction
         {totals.count === 1 ? "" : "s"}.
       </p>
 
@@ -475,6 +542,13 @@ export default async function TransactionsPage({
           </ul>
         </div>
       )}
+      {(currentPage > 1 || offset + rows.length < totals.count) && (
+        <nav aria-label="Transaction pages" className="mt-5 flex items-center justify-between gap-3 text-sm">
+          {currentPage > 1 ? <a className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage - 1)}>← Previous</a> : <span />}
+          <span className="text-neutral-500">Page {currentPage} of {Math.max(1, Math.ceil(totals.count / pageSize))}</span>
+          {offset + rows.length < totals.count && <a className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage + 1)}>Load more →</a>}
+        </nav>
+      )}
     </AppShell>
   );
 }
@@ -530,16 +604,33 @@ function FiltersBar({
   from,
   to,
   channel,
+  query,
+  showAllTime,
+  importId,
+  attention,
 }: {
   from?: string;
   to?: string;
   channel?: string;
+  query: string;
+  showAllTime: boolean;
+  importId?: string;
+  attention?: string;
 }) {
   return (
     <form
       method="get"
       className="mt-5 flex flex-wrap items-end gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
     >
+      {showAllTime && <input type="hidden" name="all" value="1" />}
+      {importId && <input type="hidden" name="import" value={importId} />}
+      {attention && <input type="hidden" name="attention" value={attention} />}
+      <label className="flex min-w-48 flex-1 flex-col">
+        <span className="text-xs uppercase text-neutral-500">Search</span>
+        <input type="search" name="q" defaultValue={query} maxLength={200}
+          placeholder="Name, UPI ID, note or amount"
+          className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700" />
+      </label>
       <label className="flex flex-col">
         <span className="text-xs uppercase text-neutral-500">From</span>
         <input

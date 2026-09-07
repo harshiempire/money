@@ -2,8 +2,13 @@ import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
-import { getPersonDetail } from "@/lib/people/ledger";
+import {
+  getPersonDetail,
+  type PersonPayableRow,
+  type PersonReceivableRow,
+} from "@/lib/people/ledger";
 import { transactionHref } from "@/lib/transactions/href";
+import { CopyBalanceSummary } from "./CopyBalanceSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +21,7 @@ export default async function PersonDetailPage({
   const user = await getCurrentUser();
   const detail = await getPersonDetail(user.id, id);
   if (!detail) notFound();
+  const balanceSummary = buildBalanceSummary(detail);
 
   return (
     <AppShell title={detail.personName}>
@@ -39,6 +45,8 @@ export default async function PersonDetailPage({
           value={`${formatPaise(Math.abs(detail.netPaise))}${detail.netPaise < 0 ? " (you owe)" : ""}`}
         />
       </section>
+
+      <CopyBalanceSummary summary={balanceSummary} />
 
       {detail.receivables.length > 0 && (
         <section className="mt-8">
@@ -134,6 +142,60 @@ export default async function PersonDetailPage({
       )}
     </AppShell>
   );
+}
+
+function buildBalanceSummary(detail: {
+  personName: string;
+  receivables: PersonReceivableRow[];
+  payables: PersonPayableRow[];
+  receivableOutstandingPaise: number;
+  payableOutstandingPaise: number;
+  netPaise: number;
+}): string {
+  const lines = [`Balance summary for ${detail.personName}`, "", "They owe me:"];
+
+  if (detail.receivables.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const r of detail.receivables) {
+      const label =
+        r.counterpartyDisplayName ?? counterpartyLabel(r.txnDescription);
+      const detailLabel = [r.parsedPurpose, r.txnNote]
+        .filter(Boolean)
+        .join(" · ");
+      lines.push(
+        `- ${formatDate(r.txnDate)} · ${label}${detailLabel ? ` · ${detailLabel}` : ""} — ${formatPaise(r.outstandingPaise)}`,
+      );
+    }
+  }
+
+  lines.push("", "I owe them:");
+  if (detail.payables.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const p of detail.payables) {
+      lines.push(
+        `- ${formatDate(p.incurredDate)} · ${p.description}${p.categoryName ? ` (${p.categoryName})` : ""} — ${formatPaise(p.outstandingPaise)}`,
+      );
+    }
+  }
+
+  lines.push(
+    "",
+    `They owe me: ${formatPaise(detail.receivableOutstandingPaise)}`,
+    `I owe them: ${formatPaise(detail.payableOutstandingPaise)}`,
+    detail.netPaise === 0 &&
+      detail.receivableOutstandingPaise === 0 &&
+      detail.payableOutstandingPaise === 0
+      ? `Net: ${formatPaise(0)} (fully settled)`
+      : detail.netPaise === 0
+        ? `Net: ${formatPaise(0)} (offsetting open items)`
+      : detail.netPaise > 0
+        ? `Net: ${formatPaise(detail.netPaise)} (they owe me)`
+        : `Net: ${formatPaise(Math.abs(detail.netPaise))} (I owe them)`,
+  );
+
+  return lines.join("\n");
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
