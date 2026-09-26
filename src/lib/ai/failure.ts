@@ -9,6 +9,8 @@ export type AiFailure =
   | { kind: "disabled" }
   | { kind: "not_connected" }
   | { kind: "auth_expired" }
+  | { kind: "auth_unreadable" }
+  | { kind: "misconfigured" }
   | { kind: "limit_reached"; resetsAt: string | null; plan: string | null }
   | { kind: "plan_not_eligible" }
   | { kind: "rate_limited" }
@@ -38,6 +40,10 @@ export function describeFailure(f: AiFailure): string {
       return "AI reading isn't turned on for this account.";
     case "not_connected":
       return "ChatGPT isn't connected yet. Run `bun run connect-chatgpt`.";
+    case "auth_unreadable":
+      return "The stored ChatGPT sign-in can't be decrypted (the encryption key changed). Reconnect with `bun run connect-chatgpt`.";
+    case "misconfigured":
+      return "AI_TOKEN_ENCRYPTION_KEY isn't set to a 32-byte base64 key on this server.";
     case "auth_expired":
       return "The ChatGPT sign-in expired or was revoked. Reconnect with `bun run connect-chatgpt`.";
     case "limit_reached":

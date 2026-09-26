@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { open, seal } from "@/lib/crypto/secret-box";
+import { loadSecretKey, open, seal } from "@/lib/crypto/secret-box";
 import type { AiFailure } from "@/lib/ai/failure";
 import {
   accessTokenExpiry,
@@ -60,9 +60,42 @@ export async function getChatgptConnectionStatus(
  * are single-use, so without the lock two concurrent requests could both
  * spend the same one and the loser would kill the connection.
  */
+/** Thrown when a stored token can't be decrypted — the key was rotated or is wrong. */
+class UnreadableSecret extends Error {}
+
+function unseal(sealed: string, context: string): string {
+  try {
+    return open(sealed, context);
+  } catch {
+    throw new UnreadableSecret();
+  }
+}
+
+/**
+ * Like getChatgptAccessUnchecked, but a missing encryption key or tokens that
+ * no longer decrypt (e.g. AI_TOKEN_ENCRYPTION_KEY rotated) become a failure the
+ * panel can explain, instead of an exception.
+ */
 export async function getChatgptAccess(
   userId: string,
   opts: { force?: boolean } = {},
+): Promise<ChatgptAccess> {
+  try {
+    loadSecretKey();
+  } catch {
+    return { ok: false, failure: { kind: "misconfigured" } };
+  }
+  try {
+    return await getChatgptAccessUnchecked(userId, opts);
+  } catch (err) {
+    if (err instanceof UnreadableSecret) return { ok: false, failure: { kind: "auth_unreadable" } };
+    throw err;
+  }
+}
+
+async function getChatgptAccessUnchecked(
+  userId: string,
+  opts: { force?: boolean },
 ): Promise<ChatgptAccess> {
   const context = sealContext(userId);
   const [row] = await db.select().from(schema.aiConnections).where(connectionWhere(userId)).limit(1);
@@ -72,7 +105,7 @@ export async function getChatgptAccess(
   if (!opts.force && !needsRefresh(row)) {
     return {
       ok: true,
-      accessToken: open(row.accessTokenSealed, context),
+      accessToken: unseal(row.accessTokenSealed, context),
       accountId: row.providerAccountId,
     };
   }
@@ -90,15 +123,15 @@ export async function getChatgptAccess(
     if (locked.updatedAt.getTime() > row.updatedAt.getTime() && !needsRefresh(locked)) {
       return {
         ok: true,
-        accessToken: open(locked.accessTokenSealed, context),
+        accessToken: unseal(locked.accessTokenSealed, context),
         accountId: locked.providerAccountId,
       };
     }
 
     try {
       const next = await refreshChatgptTokens({
-        accessToken: open(locked.accessTokenSealed, context),
-        refreshToken: open(locked.refreshTokenSealed, context),
+        accessToken: unseal(locked.accessTokenSealed, context),
+        refreshToken: unseal(locked.refreshTokenSealed, context),
         idToken: "",
       });
       let planType = locked.planType;
