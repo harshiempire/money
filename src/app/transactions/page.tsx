@@ -21,6 +21,8 @@ import {
   getStatementPeriodForDate,
 } from "@/lib/spend/period";
 import { ScrollToTransaction } from "./ScrollToTransaction";
+import { transactionTextMatch } from "@/lib/transactions/search";
+import { parseAmountToPaise } from "@/lib/money/parse-amount";
 import {
   loadPeriodTxnTotals,
   loadTransactionTableContext,
@@ -135,20 +137,9 @@ export default async function TransactionsPage({
     filters.push(or(isNull(schema.transactions.categoryId), eq(schema.transactions.needsReview, true))!);
   }
   if (query) {
-    // Literal substring matching: %, _ and backslashes are not search wildcards.
-    const textMatch = sql<boolean>`(
-      strpos(lower(${schema.transactions.rawDescription}), lower(${query})) > 0
-      or strpos(lower(coalesce(${schema.transactions.note}, '')), lower(${query})) > 0
-      or strpos(lower(coalesce(${schema.transactions.parsedPurpose}, '')), lower(${query})) > 0
-      or exists (select 1 from ${schema.counterparties}
-        where ${schema.counterparties.id} = ${schema.transactions.counterpartyId}
-        and ${schema.counterparties.userId} = ${userId}
-        and strpos(lower(${schema.counterparties.displayName}), lower(${query})) > 0)
-    )`;
-    const amountText = query.replace(/^(?:₹|rs\.?|inr)\s*/i, "").replace(/,/g, "").trim();
-    const amount = /^\d+(?:\.\d{1,2})?$/.test(amountText)
-      ? Math.round(Number(amountText) * 100) : NaN;
-    filters.push(Number.isSafeInteger(amount)
+    const textMatch = transactionTextMatch(query, userId);
+    const amount = parseAmountToPaise(query);
+    filters.push(amount !== null
       ? or(textMatch, eq(schema.transactions.amountPaise, amount))!
       : textMatch);
   }

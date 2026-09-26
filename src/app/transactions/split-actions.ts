@@ -43,6 +43,8 @@ export async function createSplit(input: {
   yourSharePaise: number;
   note: string | null;
   participants: ParticipantInput[];
+  /** Refuse instead of editing when a split already exists (assistant cards). */
+  expectNoExistingSplit?: boolean;
 }) {
   const user = await requireCurrentUserAction();
   await assertTransactionOwned(user.id, input.transactionId);
@@ -95,6 +97,11 @@ export async function createSplit(input: {
     .from(schema.splits)
     .where(eq(schema.splits.transactionId, input.transactionId))
     .limit(1);
+  if (existingSplit && input.expectNoExistingSplit) {
+    throw new Error(
+      "This payment already has a split. Edit it from the Split button in the table so settlements aren't lost.",
+    );
+  }
 
   // Read-only guard against destroying settled money. Must run before the
   // write transaction opens — settledAmountByParticipantIds queries the
@@ -205,7 +212,11 @@ export async function createSplit(input: {
   revalidatePath("/");
 }
 
-export async function deleteSplit(input: { transactionId: string }) {
+export async function deleteSplit(input: {
+  transactionId: string;
+  /** Refuse if any money was settled against the split (assistant Undo). */
+  expectNoSettlements?: boolean;
+}) {
   const user = await requireCurrentUserAction();
   await assertTransactionOwned(user.id, input.transactionId);
 
@@ -241,6 +252,9 @@ export async function deleteSplit(input: { transactionId: string }) {
           participants.map((p) => p.id),
         ),
       );
+    if (input.expectNoSettlements && rows.length > 0) {
+      throw new Error("Money was settled against this split since. Remove it from the table instead.");
+    }
     affectedInflowIds = [
       ...new Set(
         rows

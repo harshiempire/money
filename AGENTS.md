@@ -98,6 +98,7 @@ const account = await getOrCreateAccountForBank(user.id, "bob");
 | [`src/app/transactions/actions.ts`](src/app/transactions/actions.ts) | 8 (category, counterparty, transfer, note, candidates, bulk note, autoDetectTransfers) |
 | [`src/app/transactions/split-actions.ts`](src/app/transactions/split-actions.ts) | 4 (createSplit, deleteSplit, recordSettlement, clearSettlement) |
 | [`src/app/auth/actions.ts`](src/app/auth/actions.ts) | `registerUser` |
+| [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) | 5, all read-only (bootstrap, turn, card data, blank card, apply-to-all preview) — see Ask Money below |
 
 **Middleware does not protect server actions** — each action must authenticate and authorize itself.
 
@@ -156,6 +157,9 @@ Copy [`.env.example`](.env.example).
 | `UPSTASH_REDIS_REST_URL` | Prod recommended | Rate limits |
 | `UPSTASH_REDIS_REST_TOKEN` | Prod recommended | Rate limits |
 | `SKIP_AUTH_BOOTSTRAP_CHECK` | Optional | Skip prod instrumentation gate |
+| `AI_ALLOWED_USER_IDS` | Optional | Comma-separated user ids allowed AI in the Ask Money panel (empty = off) |
+| `AI_TOKEN_ENCRYPTION_KEY` | With AI | 32-byte base64 key sealing ChatGPT tokens; same value locally and in Vercel |
+| `MONEY_AI_MODEL` | Optional | Model slug on the ChatGPT Codex backend (default `gpt-6-luna`) |
 
 ---
 
@@ -200,6 +204,27 @@ bun run db:studio
 ```
 
 ---
+
+## Ask Money assistant (floating panel, ⌘/Ctrl+J)
+
+Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assistant/`](src/components/assistant/). Server entry points: [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) (`assistantTurn`, `getAssistantBootstrap`, `loadAssistantTxns`, `prepareAssistantOp`, `prepareApplyToAll`). Agent: [`src/lib/assistant/agent.ts`](src/lib/assistant/agent.ts).
+
+**Agent contract — do not weaken:**
+- **Read tools run; write tools only propose.** `search_transactions` / `get_open_balances` execute against the session user's account. `propose_note|split|category|net_settle` return a draft rendered as a pending card; nothing is written until the user presses Apply, which calls the **existing** server actions (`setTransactionNote`, `createSplit`, `setTransactionCategory`, `saveNetEvent`) with the user's edited values. Never give the model a tool that writes.
+- **Preview everything.** Every change — including the card's category dropdown and "apply to all from this payee" — opens a pending card first. The panel never writes on a single click.
+- **Refs, not ids.** The model sees transactions as `T1…`/`CURRENT` handed out by the server in that turn. `CURRENT` (the focus id from the browser) is re-checked against the account every turn. A ref from a search with several matches is refused until the user picks.
+- **Ask, don't guess.** Split participants and the net-settle person must be names the user actually wrote in the chat ([`namedByUser`](src/lib/assistant/find-intent.ts)); otherwise the tool returns an error and the model asks.
+- **What the model sees** ([`model-view.ts`](src/lib/assistant/model-view.ts)): date, amount, direction, a payee name (display name → purpose → bank payee name; never a UPI handle or any part of one, nothing with 5+ digits), the user's notes, category names, split status, known person names, and open amounts owed between the user and a named person. Never raw bank descriptions, ref ids, account balances or DB ids.
+- **Exact money.** Amounts/dates the model passes are re-read by the server ([`groundIntent`](src/lib/assistant/find-intent.ts)): anything not in the user's own words is dropped (small models invent years). Card math is integer paise ([`card-math.ts`](src/lib/assistant/card-math.ts)); equal-split remainder paise go to the user.
+- **Stale/duplicate safety.** Apply passes guards: `createSplit({ expectNoExistingSplit })`, `setTransactionNote({ expectedCurrentNote })`, `setTransactionCategory({ expectedCurrentCategoryId })`; `saveNetEvent` refuses a second event on the same transaction and returns `{ netEventId }` for Undo; `deleteSplit({ expectNoSettlements })` for split Undo. The panel blocks double-clicks per card and flags a reload mid-save instead of retrying.
+- **Undo** reverses through existing actions (`deleteSplit` only when nothing was settled since, `deleteNetEvent`, previous note/category).
+- **Data vs inference.** Trace lines ("Looked up in your Money data"), cards and "why it matched" reasons are Money data; the reply text carries an "✦ AI" or "Built-in" tag.
+
+**Model access** is the owner's own ChatGPT plan via the Codex "Sign in with ChatGPT" OAuth flow — not an API key. Unofficial and undocumented; it can break at any time. Every failure degrades to the AI-free reader ([`rules-intent.ts`](src/lib/assistant/rules-intent.ts), find-only) with the reason from [`src/lib/ai/failure.ts`](src/lib/ai/failure.ts). Wire format mirrors codex-rs: `store: false`, output items replayed verbatim, `include: ["reasoning.encrypted_content"]` ([`responses.ts`](src/lib/ai/chatgpt/responses.ts)).
+
+- **Never** run one user's requests on another user's ChatGPT connection. Access = listed in `AI_ALLOWED_USER_IDS` **and** has their own `ai_connection` row.
+- **Tokens**: `ai_connection` stores AES-GCM–sealed tokens bound to `${userId}:chatgpt`. Refresh tokens are single-use — refresh only inside [`getChatgptAccess`](src/lib/ai/chatgpt/token-store.ts) (row lock). Never log tokens or send them to the browser.
+- **Connect / disconnect**: `bun run connect-chatgpt [--email …] [--disconnect]` on your machine (needs a browser and port 1455). Don't copy `~/.codex/auth.json` — shared refresh tokens log each other out.
 
 ## Domain / ingest (unchanged by auth)
 

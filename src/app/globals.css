@@ -27,6 +27,18 @@
   --color-owed-to-me: oklch(55.5% 0.163 48.998); /* amber-700 */
   --color-i-owe: oklch(50% 0.134 242.749); /* sky-700 */
   --color-split: oklch(49.1% 0.27 292.581); /* violet-700 */
+
+  /* Ask Money assistant: messages fade/slide in; "thinking" pulses. */
+  --animate-ai-in: ai-in 180ms ease-out;
+  --animate-ai-pulse: ai-pulse 1.1s ease-in-out infinite;
+  @keyframes ai-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes ai-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+  }
 }
 
 :root[data-theme="dark"] {

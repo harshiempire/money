@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, or, type SQL } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
 import { getOrCreatePerson } from "@/db/person";
@@ -174,6 +174,32 @@ export async function saveNetEvent(input: {
   }
   await Promise.all(ownershipChecks);
 
+  // A new event on a transaction that already has one would spend its bank
+  // amount twice. Editing goes through netEventId; this only guards creation
+  // (e.g. a stale assistant card, or a double-submitted form).
+  if (!input.netEventId) {
+    const linked: SQL[] = [];
+    if (input.inflowTransactionId) {
+      linked.push(eq(schema.netEvents.inflowTransactionId, input.inflowTransactionId));
+    }
+    if (input.outflowTransactionId) {
+      linked.push(eq(schema.netEvents.outflowTransactionId, input.outflowTransactionId));
+    }
+    if (linked.length > 0) {
+      const [existing] = await db
+        .select({ id: schema.netEvents.id })
+        .from(schema.netEvents)
+        .where(or(...linked))
+        .limit(1);
+      if (existing) {
+        throw new NetEventValidationError(
+          "INVALID_LEG",
+          "This transaction is already net settled. Open Net ✓ to change it.",
+        );
+      }
+    }
+  }
+
   const [inflowAmount, outflowAmount] = await Promise.all([
     input.inflowTransactionId
       ? fetchTransactionAmount(user.id, input.inflowTransactionId)
@@ -220,6 +246,7 @@ export async function saveNetEvent(input: {
     }),
   );
 
+  let savedEventId = "";
   try {
   await db.transaction(async (tx) => {
     if (input.netEventId) {
@@ -241,6 +268,7 @@ export async function saveNetEvent(input: {
         note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
       })
       .returning({ id: schema.netEvents.id });
+    savedEventId = event.id;
 
     const settlementRows = [];
     for (const leg of cleanLegs) {
@@ -305,6 +333,7 @@ export async function saveNetEvent(input: {
   }
 
   revalidateAll();
+  return { netEventId: savedEventId };
 }
 
 export async function deleteNetEvent(input: { netEventId: string }) {
