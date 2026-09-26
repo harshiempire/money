@@ -25,6 +25,52 @@ export function equalShares(totalPaise: number, people: number): { yours: number
   return { yours: totalPaise - each * people, each };
 }
 
+/** Stands for the user in an item's list of sharers. */
+export const YOU = -1;
+
+export interface BillItem {
+  pricePaise: number;
+  qty: number;
+  /** Participant indexes and/or YOU; empty = everyone. */
+  sharers: number[];
+}
+
+/**
+ * Shares of an itemised bill. Items with the same sharers are pooled and
+ * divided once, so "pizza + pasta ÷ 3" rounds like one ₹ amount ÷ 3. Remainder
+ * paise go to you when you're in the pool (as equalShares does), otherwise to
+ * the first person listed — every paisa of every item lands on someone.
+ */
+export function itemizedShares(
+  items: BillItem[],
+  people: number,
+): { yours: number; each: number[]; itemsTotal: number } {
+  const everyone = [YOU, ...Array.from({ length: people }, (_, i) => i)];
+  const pools = new Map<string, { sharers: number[]; paise: number }>();
+  let itemsTotal = 0;
+  for (const item of items) {
+    const paise = item.pricePaise * item.qty;
+    itemsTotal += paise;
+    const sharers = [...new Set(item.sharers.length ? item.sharers : everyone)].sort((a, b) => a - b);
+    const key = sharers.join(",");
+    const pool = pools.get(key) ?? { sharers, paise: 0 };
+    pool.paise += paise;
+    pools.set(key, pool);
+  }
+  const each = Array.from({ length: people }, () => 0);
+  let yours = 0;
+  for (const { sharers, paise } of pools.values()) {
+    const per = Math.floor(paise / sharers.length);
+    const odd = sharers.includes(YOU) ? YOU : sharers[0];
+    for (const s of sharers) {
+      const share = per + (s === odd ? paise - per * sharers.length : 0);
+      if (s === YOU) yours += share;
+      else each[s] += share;
+    }
+  }
+  return { yours, each, itemsTotal };
+}
+
 export interface SplitBalance {
   participantsPaise: number;
   yourSharePaise: number;

@@ -151,6 +151,92 @@ export function groundIntent(
   return { amountPaise, date, text, direction: intent.direction, dropped, unreadable };
 }
 
+const QTY_WORDS: Record<number, string[]> = {
+  2: ["two", "twice", "double"],
+  3: ["three", "thrice", "triple"],
+  4: ["four"],
+  5: ["five"],
+  6: ["six"],
+  7: ["seven"],
+  8: ["eight"],
+  9: ["nine"],
+  10: ["ten"],
+};
+
+/** Did the user say this count ("two times", "x2", "3 plates")? Prices and dates don't count. */
+export function quantityInText(qty: number, userText: string): boolean {
+  const text = stripDateSpans(userText)
+    .toLowerCase()
+    .replace(/\d[\d,]*\.\d+|\d{1,3}(?:,\d{2,3})+/g, " ");
+  if (new RegExp(`(?<![\\d.])${qty}(?![\\d.])`).test(text)) return true;
+  return (QTY_WORDS[qty] ?? []).some((w) => new RegExp(`\\b${w}\\b`).test(text));
+}
+
+export interface BillItemIntent {
+  label: string;
+  pricePaise: number;
+  qty: number;
+  everyone: boolean;
+  you: boolean;
+  /** Other people who had it, as the user named them. */
+  names: string[];
+}
+
+const EVERYONE = /^(?:everyone|everybody|all|all of us|us|we|both of us|the group|group)$/i;
+const SELF_WORDS = /^(?:me|i|myself|you|self|mine)$/i;
+
+/**
+ * Checks an itemised bill the model read from the chat. Every price must be
+ * one the user wrote — the model never totals, multiplies or divides; a count
+ * above one must have been said; everyone on an item must have been named by
+ * the user. Anything off goes back to the model to ask about, not repaired.
+ */
+export function groundBillItems(
+  raw: unknown,
+  userText: string,
+): { ok: true; items: BillItemIntent[] } | { ok: false; error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, error: "No items given. Ask the user to list the items and their prices." };
+  }
+  if (raw.length > 30) return { ok: false, error: "Too many items for one card. Ask the user to group some." };
+  const written = amountsIn(userText);
+  const items: BillItemIntent[] = [];
+  for (const [i, entry] of raw.entries()) {
+    const r = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const label = (typeof r.label === "string" && r.label.trim() ? r.label.trim() : `Item ${i + 1}`).slice(0, 40);
+    const amountText = typeof r.amount_text === "string" ? r.amount_text : "";
+    const pricePaise = parseAmountToPaise(amountText);
+    if (pricePaise === null || pricePaise <= 0) {
+      return { ok: false, error: `Couldn't read the price of ${label} ("${amountText}"). Ask the user.` };
+    }
+    if (!written.has(pricePaise)) {
+      return {
+        ok: false,
+        error: `${label}: "${amountText}" isn't a price the user wrote. Copy each price exactly as written — never add, multiply or divide.`,
+      };
+    }
+    const qty = typeof r.quantity === "number" && Number.isInteger(r.quantity) ? r.quantity : 1;
+    if (qty < 1 || qty > 99) return { ok: false, error: `${label}: a count of ${qty} isn't possible. Ask how many.` };
+    if (qty > 1 && !quantityInText(qty, userText)) {
+      return { ok: false, error: `The user never said ${label} counts ${qty} times. Ask how many.` };
+    }
+    const who = Array.isArray(r.shared_by)
+      ? r.shared_by.filter((w): w is string => typeof w === "string" && w.trim() !== "").map((w) => w.trim())
+      : [];
+    let everyone = who.length === 0;
+    let you = false;
+    const names: string[] = [];
+    for (const w of who) {
+      if (EVERYONE.test(w)) everyone = true;
+      else if (SELF_WORDS.test(w)) you = true;
+      else if (namedByUser(w, userText)) names.push(w);
+      else return { ok: false, error: `The user never named "${w}". Ask who had ${label}.` };
+    }
+    items.push({ label, pricePaise, qty, everyone, you, names });
+  }
+  return { ok: true, items };
+}
+
 /**
  * Did the user actually name this person, now or earlier in the chat? The
  * model resolves "him" / "the person I mentioned" from history; a name that

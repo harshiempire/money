@@ -18,11 +18,18 @@ import { dateWindows } from "@/lib/dates/partial-date";
 import { parseAmountToPaise } from "@/lib/money/parse-amount";
 import { findTransactionCandidates, yearsWithData } from "@/lib/transactions/search";
 import { counterpartyLabel } from "@/lib/format";
-import { groundIntent, namedByUser, type Direction, type GroundedCriteria } from "./find-intent";
+import { groundBillItems, groundIntent, namedByUser, type Direction, type GroundedCriteria } from "./find-intent";
 import { rankCandidates } from "./rank";
 import { rulesIntent } from "./rules-intent";
 import { MONTH_ABBR, modelAmount, modelDate, modelSafePayee } from "./model-view";
-import { proposeCategory, proposeNetSettle, proposeNote, proposeSplit, type Proposal } from "./proposals";
+import {
+  proposeCategory,
+  proposeItemizedSplit,
+  proposeNetSettle,
+  proposeNote,
+  proposeSplit,
+  type Proposal,
+} from "./proposals";
 import { loadOpenLinesForPerson, loadTxnCards } from "./data";
 import { resolvePerson } from "./card-math";
 import type { CategoryLite, HistoryTurn, OpDraft, TurnMessage, TxnCardData } from "./types";
@@ -114,6 +121,40 @@ export const AGENT_TOOLS: FunctionTool[] = [
   },
   {
     type: "function",
+    name: "propose_itemized_split",
+    description:
+      "Show a pending card splitting a payment item by item, when the user lists prices (dishes, tax, tip) and who had what. Copy every price exactly as the user wrote it and never add, multiply or divide — the app works out each person's share and checks the items against the payment.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["txn_ref", "people", "items"],
+      properties: {
+        txn_ref: str("T1, T2… from a search, or CURRENT."),
+        people: { type: "array", items: { type: "string" }, description: "Everyone else in the split, by name. Never the user." },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["label", "amount_text", "quantity", "shared_by"],
+            properties: {
+              label: str('What it is, e.g. "pizza" or "tax".'),
+              amount_text: str('The price exactly as the user wrote it, e.g. "645" or "53.5".'),
+              quantity: { type: "integer", description: 'How many times that price counts ("two times" → 2); otherwise 1.' },
+              shared_by: {
+                type: "array",
+                items: { type: "string" },
+                description: '["everyone"] when the whole group shares it; otherwise who had it — names, or "me" for the user.',
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
     name: "propose_category",
     description: "Show a pending card to set a transaction's category (one of the user's categories).",
     strict: true,
@@ -169,6 +210,8 @@ interface TurnState {
   txnIds: Set<string>;
   focus: string | null;
   proposed: OpDraft["op"] | null;
+  /** The proposal's own explanation (e.g. items that don't add up), used as the reply. */
+  say: string | null;
 }
 
 function describeTxnForModel(card: TxnCardData, categories: CategoryLite[]): string {
@@ -199,6 +242,7 @@ Rules:
 - "it", "this", "that one" mean CURRENT when there is one.
 - If a search finds several and the user wants to change one, don't choose — say the list is shown and ask them to pick.
 - Splits: "half each" / "between us" → equal; "I paid for him/her" → paid_for_them; stated amounts → custom with amount_text copied. The user is never a participant.
+- Itemised bills (item prices, tax, "X had the Y", an amount one person covers) → propose_itemized_split with every item the user listed in this chat. Don't total or divide anything yourself.
 - People: use names the user gave, now or earlier in this chat. If you can't tell who "him"/"her"/"them" is, ask.
 - If something needed is missing or ambiguous, ask one short question instead of guessing.
 - Keep replies to one or two short sentences. Only state amounts that came from a tool result.
@@ -398,6 +442,21 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
       return { error: `The user never named "${unsaid.name}". Ask who the split is with.` };
     }
     proposal = proposeSplit(card, { mode, participants }, ctx.knownPeople);
+  } else if (call.name === "propose_itemized_split") {
+    const grounded = groundBillItems(args.items, groundingText);
+    if (!grounded.ok) {
+      state.trace.push(`prepare_split(${ref}, items) → needs a check with you`);
+      return { error: grounded.error };
+    }
+    const people = (Array.isArray(args.people) ? args.people : [])
+      .filter((p): p is string => typeof p === "string")
+      .slice(0, 10);
+    const unsaid = people.find((p) => !namedByUser(p, groundingText) && !/^(?:me|i|myself|you)$/i.test(p.trim()));
+    if (unsaid) {
+      state.trace.push(`resolve_person("${unsaid}") → not named by you`);
+      return { error: `The user never named "${unsaid}". Ask who shared the bill.` };
+    }
+    proposal = proposeItemizedSplit(card, { people, items: grounded.items }, ctx.knownPeople);
   } else if (call.name === "propose_category") {
     proposal = proposeCategory(card, s("category_name") ?? "", ctx.categories);
   } else if (call.name === "propose_net_settle") {
@@ -421,6 +480,7 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
   state.trace.push(...proposal.trace);
   state.artifacts.push({ kind: "op", draft: proposal.draft });
   state.proposed = proposal.draft.op;
+  state.say = proposal.say ?? null;
   return { status: "card_shown", next: "The user reviews and applies it. Reply in one short sentence." };
 }
 
@@ -454,7 +514,7 @@ function assemble(state: TurnState, text: string, notice?: string): TurnMessage[
 }
 
 export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
-  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null };
+  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null, say: null };
   const groundingText = [...ctx.history.filter((h) => h.role === "user").map((h) => h.text), ctx.message].join("\n");
 
   let access = await getChatgptAccess(ctx.userId);
@@ -515,7 +575,7 @@ export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
     }
     // A card is the answer; skip another model round-trip just to say so.
     if (state.proposed) {
-      text = text || PROPOSED_TEXT[state.proposed];
+      text = state.say ?? (text || PROPOSED_TEXT[state.proposed]);
       break;
     }
     if (step === MAX_STEPS - 1) text = text || "I couldn't finish that. Try asking a different way.";
@@ -532,7 +592,7 @@ export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
 
 /** AI-free turn: find only. Used when AI is off, disconnected, or failing. */
 export async function runRulesTurn(ctx: TurnContext, notice: string): Promise<TurnOutput> {
-  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null };
+  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null, say: null };
   const wantsChange = /\b(split|note|categor|settle|mark|tag)\w*/i.test(ctx.message);
   const intent = rulesIntent(ctx.message, ctx.today);
   if (intent.kind !== "find_transactions") {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { groundIntent, namedByUser, readFindIntent, type FindIntent } from "./find-intent";
+import { groundBillItems, groundIntent, namedByUser, quantityInText, readFindIntent, type FindIntent } from "./find-intent";
 
 const TODAY = "2026-09-25";
 
@@ -110,4 +110,57 @@ test("namedByUser: only people the user actually named", () => {
   expect(namedByUser("Rahul", said)).toBe(false);
   expect(namedByUser("Nitin", "split with nit")).toBe(true);
   expect(namedByUser("", said)).toBe(false);
+});
+
+const ETSI_CHAT = [
+  "So I have a transaction on 6th August, which is of 2,247 rupees.",
+  "It is between three people: me, Nitin, and Abhinav.",
+  "Wait, it is not Abhinav. It is Sai Abhinav.",
+  "So, there is a pizza and it is of 645 rupees. We have a white sauce chicken pasta, which is of 525 rupees. There is a chocolate puddle cake of 475 rupees. And we have a tax of 53.5 into two times. All these things are going to be divided among us by three.",
+  "But there is one transaction which is of 495, which is fully paid by Nitin.",
+].join("\n");
+
+const item = (amount_text: string, shared_by: string[] = ["everyone"], quantity = 1, label = "item") => ({
+  label,
+  amount_text,
+  quantity,
+  shared_by,
+});
+
+describe("groundBillItems", () => {
+  test("accepts the prices the user wrote", () => {
+    const g = groundBillItems(
+      [item("645"), item("525"), item("475"), item("53.5", ["everyone"], 2, "tax"), item("495", ["Nitin"])],
+      ETSI_CHAT,
+    );
+    expect(g.ok).toBe(true);
+    if (!g.ok) return;
+    expect(g.items.map((i) => [i.pricePaise, i.qty, i.everyone, i.names])).toEqual([
+      [64500, 1, true, []],
+      [52500, 1, true, []],
+      [47500, 1, true, []],
+      [5350, 2, true, []],
+      [49500, 1, false, ["Nitin"]],
+    ]);
+  });
+  test("refuses a total or share the model worked out itself", () => {
+    expect(groundBillItems([item("1752")], ETSI_CHAT)).toMatchObject({ ok: false });
+    expect(groundBillItems([item("107", ["everyone"], 1, "tax")], ETSI_CHAT)).toMatchObject({ ok: false });
+  });
+  test("a count above one must have been said", () => {
+    expect(groundBillItems([item("645", ["everyone"], 4)], ETSI_CHAT)).toMatchObject({ ok: false });
+  });
+  test("everyone on an item must be named by the user; me is the user", () => {
+    expect(groundBillItems([item("495", ["Ravi"])], ETSI_CHAT)).toMatchObject({ ok: false });
+    const g = groundBillItems([item("495", ["me"])], ETSI_CHAT);
+    expect(g.ok && g.items[0]).toMatchObject({ you: true, everyone: false, names: [] });
+  });
+});
+
+test("quantityInText: said counts only, not digits of prices or dates", () => {
+  expect(quantityInText(2, "tax of 53.5 into two times")).toBe(true);
+  expect(quantityInText(3, "3 plates of momos")).toBe(true);
+  expect(quantityInText(2, "a transaction of 2,247 rupees")).toBe(false);
+  expect(quantityInText(2, "tax of 53.25")).toBe(false);
+  expect(quantityInText(2, "on 2 Aug")).toBe(false);
 });
