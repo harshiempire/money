@@ -189,10 +189,21 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 
 ---
 
+## Supply-chain security (do not weaken)
+
+On 2026-09-25 a config-injection worm force-pushed an obfuscated payload into every branch and Vercel built it (see [`docs/security/2026-09-25-polinrider-incident.md`](docs/security/2026-09-25-polinrider-incident.md)).
+
+- [`scripts/security/preflight.mjs`](scripts/security/preflight.mjs) runs **before** `next dev` / `next build` (`package.json`, `vercel.json`) and in CI ([`.github/workflows/security-preflight.yml`](.github/workflows/security-preflight.yml)). Keep `dev`/`build` starting with `node scripts/security/preflight.mjs &&` — the guard itself fails if they don't.
+- It blocks: payload markers / heavy obfuscation in code, hidden or overlong lines and process/eval APIs in `*.config.*`, fonts or images that are really JavaScript, `.vscode` tasks that run on folder open, `temp_auto_push.bat`, a `.gitignore` that stops ignoring `.env*` / statements / `.vscode`, and new install hooks.
+- If it fails: **do not** open the folder in an editor with automatic tasks, and do not "fix" it by editing the guard. Compare against the last known-good commit.
+- Never commit `.vscode/tasks.json` with `runOn: folderOpen`. Config files stay short and declarative.
+- The guard file must not contain the literal campaign marker strings (public scanners search for them) — write patterns as regexes.
+
 ## Common commands
 
 ```bash
 bun run dev
+bun run security:check   # supply-chain preflight (also runs before dev/build)
 bun run typecheck
 bun run build
 bun run db:generate    # after schema.ts changes
