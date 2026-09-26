@@ -12,6 +12,7 @@ import type {
   ReceivableOption,
 } from "@/lib/net-events/load-net-settle-data";
 import { balanceAllocationsToExpectedNet } from "@/lib/net-events/validate";
+import { buildNetLegs } from "@/lib/net-events/build-legs";
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
 const rupeesToPaise = (r: string) => {
@@ -63,69 +64,26 @@ function buildLegs(
   inflowTransactionId: string | undefined,
   inflowAmountPaise: number,
 ): NetEventLeg[] {
-  const legs: NetEventLeg[] = [];
-  let bankRemaining = inflowAmountPaise;
-
-  for (const r of receivables) {
-    const alloc = receivableAllocs[r.id];
-    if (!alloc?.trim()) continue;
-    let amountPaise = rupeesToPaise(alloc);
-    if (amountPaise <= 0) continue;
-
-    if (bankRemaining > 0 && inflowTransactionId) {
-      const bankPart = Math.min(amountPaise, bankRemaining);
-      legs.push({
-        kind: "receivable",
-        splitParticipantId: r.id,
-        amountPaise: bankPart,
-        method: "bank",
-      });
-      bankRemaining -= bankPart;
-      amountPaise -= bankPart;
-    }
-    if (amountPaise > 0) {
-      legs.push({
-        kind: "receivable",
-        splitParticipantId: r.id,
-        amountPaise,
-        method: "offset",
-      });
-    }
-  }
-
-  for (const p of payables) {
-    const alloc = payableAllocs[p.id];
-    if (!alloc?.trim()) continue;
-    const amountPaise = rupeesToPaise(alloc);
-    if (amountPaise <= 0) continue;
-    legs.push({
-      kind: "payable",
-      owedExpenseId: p.id,
-      amountPaise,
-      method: "offset",
-    });
-  }
-
-  for (const p of localPayables) {
-    const alloc = payableAllocs[p.id];
-    if (!alloc?.trim()) continue;
-    const amountPaise = rupeesToPaise(alloc);
-    if (amountPaise <= 0) continue;
-    legs.push({
-      kind: "payable",
-      newPayable: {
+  const allocated = (allocs: Record<string, string>, id: string) => {
+    const raw = allocs[id];
+    return raw?.trim() ? rupeesToPaise(raw) : 0;
+  };
+  return buildNetLegs({
+    receivables: receivables.map((r) => ({ id: r.id, paise: allocated(receivableAllocs, r.id) })),
+    payables: payables.map((p) => ({ id: p.id, paise: allocated(payableAllocs, p.id) })),
+    newPayables: localPayables.map((p) => ({
+      spec: {
         personName: p.personName,
         incurredDate: p.incurredDate,
         amountPaise: p.amountPaise,
         description: p.description,
         categoryId: p.categoryId,
       },
-      amountPaise,
-      method: "offset",
-    });
-  }
-
-  return legs;
+      paise: allocated(payableAllocs, p.id),
+    })),
+    inflowTransactionId,
+    inflowAmountPaise,
+  });
 }
 
 export function NetSettleButton({

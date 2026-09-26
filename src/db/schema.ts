@@ -463,3 +463,34 @@ export const transactionTags = pgTable(
   },
   (t) => [primaryKey({ columns: [t.transactionId, t.tagId] })],
 );
+
+// ChatGPT (or future provider) sign-in used to power the assistant. Tokens
+// are AES-GCM sealed with AI_TOKEN_ENCRYPTION_KEY (src/lib/crypto/secret-box)
+// and never leave the server. Refresh tokens are single-use, so rows are
+// updated under SELECT … FOR UPDATE (src/lib/ai/chatgpt/token-store.ts).
+export const aiConnections = pgTable(
+  "ai_connection",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(), // "chatgpt"
+    providerAccountId: text("provider_account_id").notNull(),
+    planType: text("plan_type"),
+    accessTokenSealed: text("access_token_sealed").notNull(),
+    refreshTokenSealed: text("refresh_token_sealed").notNull(),
+    accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }),
+    // "active" | "reauth_required" — the latter once a refresh is refused.
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("ai_connection_user_provider_uniq").on(t.userId, t.provider)],
+);

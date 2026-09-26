@@ -78,6 +78,13 @@
       "when": 1787080142177,
       "tag": "0010_amusing_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790314191294,
+      "tag": "0011_ai_connection",
+      "breakpoints": true
     }
   ]
 }

@@ -19,12 +19,24 @@ import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 export async function setTransactionCategory(input: {
   transactionId: string;
   categoryId: string;
+  /** The category the caller last saw (null = none); a changed one isn't overwritten. */
+  expectedCurrentCategoryId?: string | null;
 }) {
   const user = await requireCurrentUserAction();
   const { accountId } = await assertTransactionOwned(
     user.id,
     input.transactionId,
   );
+  if (input.expectedCurrentCategoryId !== undefined) {
+    const [current] = await db
+      .select({ categoryId: schema.transactions.categoryId })
+      .from(schema.transactions)
+      .where(eq(schema.transactions.id, input.transactionId))
+      .limit(1);
+    if ((current?.categoryId ?? null) !== (input.expectedCurrentCategoryId || null)) {
+      throw new Error("The category changed since this card was made. Ask again to get a fresh card.");
+    }
+  }
   const newCategoryId = input.categoryId === "" ? null : input.categoryId;
   if (newCategoryId) {
     await assertCategoryOwned(user.id, newCategoryId);
@@ -64,7 +76,7 @@ export async function applyCategoryToCounterparty(input: {
     .from(schema.transactions)
     .where(eq(schema.transactions.id, input.transactionId))
     .limit(1);
-  if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0 };
+  if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0, ids: [] as string[] };
 
   const isTransfer = await categoryIsTransfer(txn.categoryId, user.id);
 
@@ -94,7 +106,7 @@ export async function applyCategoryToCounterparty(input: {
 
   revalidatePath("/transactions");
   revalidatePath("/");
-  return { updated: updated.length };
+  return { updated: updated.length, ids: updated.map((r) => r.id) };
 }
 
 async function categoryIsTransfer(
@@ -163,12 +175,27 @@ export async function setTransactionNeedsReview(input: {
 export async function setTransactionNote(input: {
   transactionId: string;
   note: string;
+  /**
+   * The note the caller last saw. When given, a note that has changed since
+   * is not overwritten — the assistant's cards can sit open for a while.
+   */
+  expectedCurrentNote?: string | null;
 }) {
   const user = await requireCurrentUserAction();
   const { accountId } = await assertTransactionOwned(
     user.id,
     input.transactionId,
   );
+  if (input.expectedCurrentNote !== undefined) {
+    const [current] = await db
+      .select({ note: schema.transactions.note })
+      .from(schema.transactions)
+      .where(eq(schema.transactions.id, input.transactionId))
+      .limit(1);
+    if ((current?.note ?? "").trim() !== (input.expectedCurrentNote ?? "").trim()) {
+      throw new Error("The note changed since this card was made. Ask again to get a fresh card.");
+    }
+  }
   const cleaned = input.note.trim();
   await db
     .update(schema.transactions)
