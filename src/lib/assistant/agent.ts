@@ -30,11 +30,16 @@ import {
   proposeSplit,
   type Proposal,
 } from "./proposals";
-import { loadOpenLinesForPerson, loadTxnCards } from "./data";
+import { loadOpenLinesForPerson, loadQueryData, loadTxnCards } from "./data";
 import { resolvePerson } from "./card-math";
+import { QUERY_TABLES, buildQueryTables, describeTable, formatQueryResult, queryBrief } from "./query-tables";
+import { createQuerySandbox, type QuerySandbox } from "./query-sandbox";
 import type { CategoryLite, HistoryTurn, OpDraft, TurnMessage, TxnCardData } from "./types";
 
-const MAX_STEPS = 5;
+/** Enough for a few queries that fail and get fixed; the time budget stops it sooner. */
+const MAX_STEPS = 12;
+const TURN_BUDGET_MS = 120_000;
+const STEP_TIMEOUT_MS = 30_000;
 const MAX_SHOWN = 8;
 
 const str = (description: string) => ({ type: "string", description });
@@ -62,6 +67,44 @@ export const AGENT_TOOLS: FunctionTool[] = [
           description: '"act" when the user wants to change the transaction (note, split, category, settle); otherwise "show".',
         },
       },
+    },
+  },
+  {
+    type: "function",
+    name: "query",
+    description:
+      "Answer a question from the user's Money data with one read-only SQLite SELECT on the tables in your instructions: totals, counts, lists, biggest, by month, by person. Money columns whose names end in _paise come back in rupees. On an error, fix the SQL and try again.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["sql"],
+      properties: { sql: str("One SELECT (or WITH … SELECT) statement.") },
+    },
+  },
+  {
+    type: "function",
+    name: "describe_table",
+    description: "What each column of a table means and how it joins to the others.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["table"],
+      properties: { table: { type: "string", enum: QUERY_TABLES.map((t) => t.name) } },
+    },
+  },
+  {
+    type: "function",
+    name: "show_transactions",
+    description:
+      "Show the user transactions from a query or search as cards, by ref (T1, T2…). Use it when they want to see them. Nothing changes.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["refs"],
+      properties: { refs: { type: "array", items: { type: "string" }, description: `Up to ${MAX_SHOWN} refs.` } },
     },
   },
   {
@@ -189,6 +232,8 @@ export interface TurnContext {
   focusTxnId: string | null;
   /** The user picked CURRENT from a list to continue this request. */
   resumedAfterPick: boolean;
+  /** CURRENT is a transaction the user picked from a list themselves (not one the assistant chose). */
+  focusPicked: boolean;
   categories: CategoryLite[];
   knownPeople: string[];
 }
@@ -202,9 +247,19 @@ export interface TurnOutput {
 }
 
 interface TurnState {
+  /** ref → txn id, and back. One ref per transaction for the whole turn. */
   refs: Map<string, string>;
+  refByTxn: Map<string, string>;
   /** Refs from a search that matched several rows — the user must pick first. */
   unpickedRefs: Set<string>;
+  /**
+   * Refs a proposal may use: the single match of a search, whose amount and
+   * date were checked against the user's words. Refs from a query can only be
+   * shown — the SQL isn't checked that way.
+   */
+  actionable: Set<string>;
+  /** Started on the first query, closed when the turn ends. */
+  sandbox: QuerySandbox | null;
   trace: string[];
   artifacts: TurnMessage[];
   txnIds: Set<string>;
@@ -213,6 +268,37 @@ interface TurnState {
   /** The proposal's own explanation (e.g. items that don't add up), used as the reply. */
   say: string | null;
 }
+
+function newTurnState(focus: string | null): TurnState {
+  return {
+    refs: new Map(),
+    refByTxn: new Map(),
+    unpickedRefs: new Set(),
+    actionable: new Set(),
+    sandbox: null,
+    trace: [],
+    artifacts: [],
+    txnIds: new Set(),
+    focus,
+    proposed: null,
+    say: null,
+  };
+}
+
+function refFor(state: TurnState, txnId: string): string {
+  let ref = state.refByTxn.get(txnId);
+  if (!ref) {
+    ref = `T${state.refs.size + 1}`;
+    state.refs.set(ref, txnId);
+    state.refByTxn.set(txnId, ref);
+  }
+  return ref;
+}
+
+const oneLine = (s: string, max: number) => {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
 
 function describeTxnForModel(card: TxnCardData, categories: CategoryLite[]): string {
   const category = categories.find((c) => c.id === card.categoryId)?.name ?? "none";
@@ -237,23 +323,34 @@ function instructions(ctx: TurnContext, current: TxnCardData | null): string {
 You can find transactions and PROPOSE changes: notes, splits, categories and net settlements. You never change anything yourself — propose_* tools show the user an editable card, and only their Apply button saves it.
 
 Rules:
-- Use search_transactions to find transactions. Copy amounts and dates exactly as the user wrote them. Never add a year they didn't say. Never compute amounts.
+- Use search_transactions to find a transaction the user describes, above all one they want to change. Copy amounts and dates exactly as the user wrote them. Never add a year they didn't say. Never compute amounts.
 - Refer to transactions only by refs from tools (T1, T2…) or CURRENT. Never invent refs, amounts, dates or names.
-- "it", "this", "that one" mean CURRENT when there is one.
+- Questions about their money (totals, counts, lists, biggest, by month, who owes what) → query, one SQLite SELECT on the tables below. describe_table explains the columns. If a query fails, read the error, fix it and try again.
+- Money in the tables is whole paise (₹1 = 100). Add and compare paise in SQL and name money columns ending in _paise; the results come back in rupees. Never add, subtract or divide amounts yourself.
+- Spending means direction = 'paid' and is_transfer = 0. If the user gives a month or day without a year, use the most recent one that has passed and say which year you used.
+- To let the user see transactions from a query, call show_transactions with their refs. A ref from a query can only be shown: to change a transaction it must be CURRENT or the single match of search_transactions.
+- "it", "this", "that one", "the one I picked" mean CURRENT when there is one. If CURRENT is the transaction they mean, use it — don't search for it again.
 - If a search finds several and the user wants to change one, don't choose — say the list is shown and ask them to pick.
 - Splits: "half each" / "between us" → equal; "I paid for him/her" → paid_for_them; stated amounts → custom with amount_text copied. The user is never a participant.
 - Itemised bills (item prices, tax, "X had the Y", an amount one person covers) → propose_itemized_split with every item the user listed in this chat. Don't total or divide anything yourself.
 - People: use names the user gave, now or earlier in this chat. If you can't tell who "him"/"her"/"them" is, ask.
 - If something needed is missing or ambiguous, ask one short question instead of guessing.
-- Keep replies to one or two short sentences. Only state amounts that came from a tool result.
+- Keep replies short: one or two sentences, or a short list when they asked for one. Only state amounts that came from a tool result.
 - You can't delete transactions, move money, or change anything besides notes, splits, categories and net settlements.
+
+Today is ${ctx.today}.
+Tables for query (this user's data only):
+${queryBrief()}
+Join on txn_ref = txn.ref.
 
 The user's categories: ${ctx.categories.map((c) => c.name).join(", ") || "none yet"}.
 People they've split with before: ${ctx.knownPeople.slice(0, 40).join(", ") || "none yet"}.
 CURRENT: ${current ? describeTxnForModel(current, ctx.categories) : "none"}${
     ctx.resumedAfterPick && current
       ? "\nThe user just picked CURRENT from the list for the request below. Use CURRENT; don't search again."
-      : ""
+      : ctx.focusPicked && current
+        ? "\nThe user picked CURRENT themselves from a list. When they refer to the one they picked or selected, use CURRENT; don't search for it again."
+        : ""
   }`;
 }
 
@@ -322,9 +419,9 @@ async function runSearch(
   state.trace.push(`→ ${ranked.length} match${ranked.length === 1 ? "" : "es"}`);
 
   const results = shown.map((r) => {
-    const ref = `T${state.refs.size + 1}`;
-    state.refs.set(ref, r.row.id);
+    const ref = refFor(state, r.row.id);
     if (ranked.length > 1) state.unpickedRefs.add(ref);
+    else state.actionable.add(ref);
     state.txnIds.add(r.row.id);
     return {
       ref,
@@ -402,6 +499,59 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
     };
   }
 
+  if (call.name === "query") {
+    const sqlText = s("sql") ?? "";
+    state.sandbox ??= createQuerySandbox(async () =>
+      buildQueryTables(await loadQueryData(ctx.accountId, ctx.userId), (id) => refFor(state, id)),
+    );
+    const result = await state.sandbox.run(sqlText);
+    if (!result.ok) {
+      state.trace.push(`query: ${oneLine(sqlText, 160)} → refused: ${oneLine(result.error, 80)}`);
+      return { error: result.error };
+    }
+    const n = result.rows.length;
+    state.trace.push(`query: ${oneLine(sqlText, 160)} → ${n}${result.truncated ? "+" : ""} row${n === 1 ? "" : "s"}`);
+    return formatQueryResult(result);
+  }
+
+  if (call.name === "describe_table") {
+    const name = s("table") ?? "";
+    state.trace.push(`describe_table(${name})`);
+    return describeTable(name) ?? { error: `No table "${name}". Tables: ${QUERY_TABLES.map((t) => t.name).join(", ")}.` };
+  }
+
+  if (call.name === "show_transactions") {
+    const asked = (Array.isArray(args.refs) ? args.refs : [])
+      .filter((r): r is string => typeof r === "string")
+      .map((r) => r.trim().toUpperCase());
+    const known = [...new Set(asked.map((r) => (r === "CURRENT" ? ctx.focusTxnId : state.refs.get(r))).filter((id): id is string => !!id))];
+    if (known.length === 0) {
+      state.trace.push(`show_transactions(${asked.join(", ") || "—"}) → nothing to show`);
+      return { error: "None of those refs came from a query or search in this turn." };
+    }
+    // A search already put its matches on screen; don't list them twice.
+    const onScreen = new Set(state.artifacts.flatMap((a) => (a.kind === "txn" ? [a.txnId] : a.kind === "pick" ? a.txnIds : [])));
+    const ids = known.filter((id) => !onScreen.has(id));
+    if (ids.length === 0) {
+      state.trace.push(`show_transactions(${asked.join(", ")}) → already shown`);
+      return { status: "already_shown", next: "They're already on screen. Don't show them again." };
+    }
+    const shown = ids.slice(0, MAX_SHOWN);
+    for (const id of shown) state.txnIds.add(id);
+    if (shown.length === 1) {
+      state.artifacts.push({ kind: "txn", txnId: shown[0] });
+      state.focus = shown[0];
+    } else {
+      state.artifacts.push({ kind: "pick", txnIds: shown, total: ids.length, then: "show" });
+    }
+    state.trace.push(`show_transactions(${shown.map((id) => state.refByTxn.get(id) ?? "CURRENT").join(", ")}) → shown`);
+    return {
+      status: "shown",
+      shown: shown.length,
+      ...(ids.length > shown.length ? { next: `Only the first ${MAX_SHOWN} are shown.` } : {}),
+    };
+  }
+
   const ref = (s("txn_ref") ?? "").trim().toUpperCase();
   const txnId = ref === "CURRENT" ? ctx.focusTxnId : state.refs.get(ref) ?? null;
   if (!txnId) {
@@ -411,6 +561,13 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
   if (state.unpickedRefs.has(ref)) {
     state.trace.push(`${call.name}(${ref}) → waiting for you to pick`);
     return { error: "Several transactions matched. The user must pick one from the list first — ask them to." };
+  }
+  if (ref !== "CURRENT" && !state.actionable.has(ref)) {
+    state.trace.push(`${call.name}(${ref}) → only found by a query`);
+    return {
+      error:
+        "That transaction came from a query, so the user hasn't confirmed it. Show it with show_transactions; once they've seen it they can ask for the change. Or find it with search_transactions from their words.",
+    };
   }
   const [card] = await loadTxnCards(ctx.accountId, ctx.userId, [txnId]);
   if (!card) return { error: "That transaction isn't available." };
@@ -514,7 +671,15 @@ function assemble(state: TurnState, text: string, notice?: string): TurnMessage[
 }
 
 export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
-  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null, say: null };
+  const state = newTurnState(ctx.focusTxnId);
+  try {
+    return await agentLoop(ctx, state);
+  } finally {
+    state.sandbox?.close();
+  }
+}
+
+async function agentLoop(ctx: TurnContext, state: TurnState): Promise<TurnOutput> {
   const groundingText = [...ctx.history.filter((h) => h.role === "user").map((h) => h.text), ctx.message].join("\n");
 
   let access = await getChatgptAccess(ctx.userId);
@@ -528,11 +693,17 @@ export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
     { type: "message", role: "user", content: [{ type: "input_text", text: ctx.message }] },
   ];
   const sessionId = crypto.randomUUID();
+  const deadline = Date.now() + TURN_BUDGET_MS;
 
   let limits: AiLimits | null = null;
   let text = "";
   let retried = false;
   for (let step = 0; step < MAX_STEPS; step++) {
+    const left = deadline - Date.now();
+    if (left < 5_000) {
+      text = text || "That took too long to work out. Try a narrower question.";
+      break;
+    }
     const result = await callAgentStep({
       accessToken: access.accessToken,
       accountId: access.accountId,
@@ -541,6 +712,7 @@ export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
       input: items,
       tools: AGENT_TOOLS,
       sessionId,
+      timeoutMs: Math.min(STEP_TIMEOUT_MS, left),
     });
     limits = result.limits;
     if (!result.ok) {
@@ -592,7 +764,7 @@ export async function runAgentTurn(ctx: TurnContext): Promise<TurnOutput> {
 
 /** AI-free turn: find only. Used when AI is off, disconnected, or failing. */
 export async function runRulesTurn(ctx: TurnContext, notice: string): Promise<TurnOutput> {
-  const state: TurnState = { refs: new Map(), unpickedRefs: new Set(), trace: [], artifacts: [], txnIds: new Set(), focus: ctx.focusTxnId, proposed: null, say: null };
+  const state = newTurnState(ctx.focusTxnId);
   const wantsChange = /\b(split|note|categor|settle|mark|tag)\w*/i.test(ctx.message);
   const intent = rulesIntent(ctx.message, ctx.today);
   if (intent.kind !== "find_transactions") {

@@ -3,12 +3,14 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { counterpartyLabel } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
-import { settledAmountByParticipantIds } from "@/lib/splits/outstanding";
+import { settledAmountByOwedExpenseIds, settledAmountByParticipantIds } from "@/lib/splits/outstanding";
 import {
   loadNetEventsByTransactionIds,
   loadOpenPayablesForUser,
   loadOpenReceivablesForAccount,
 } from "@/lib/net-events/load-net-settle-data";
+import { modelSafePayee } from "./model-view";
+import type { QueryData } from "./query-tables";
 import type { CategoryLite, NetLine, TxnCardData } from "./types";
 
 const t = schema.transactions;
@@ -143,5 +145,101 @@ export async function loadOpenLinesForPerson(
         outstandingPaise: p.outstandingPaise,
         val: "",
       })),
+  };
+}
+
+/**
+ * Everything the query tool's copy holds, for this account and user only,
+ * already reduced to what the model may see (see query-tables.ts).
+ */
+export async function loadQueryData(accountId: string, userId: string): Promise<QueryData> {
+  const [txns, categories, people, splits, owed, netEvents] = await Promise.all([
+    db
+      .select({
+        id: t.id,
+        txnDate: t.txnDate,
+        amountPaise: t.amountPaise,
+        drCr: t.drCr,
+        channel: t.channel,
+        rawDescription: t.rawDescription,
+        parsedPurpose: t.parsedPurpose,
+        note: t.note,
+        isTransfer: t.isTransfer,
+        category: schema.categories.name,
+        counterpartyDisplayName: schema.counterparties.displayName,
+      })
+      .from(t)
+      .leftJoin(
+        schema.counterparties,
+        and(eq(t.counterpartyId, schema.counterparties.id), eq(schema.counterparties.userId, userId)),
+      )
+      .leftJoin(schema.categories, and(eq(t.categoryId, schema.categories.id), eq(schema.categories.userId, userId)))
+      .where(eq(t.accountId, accountId))
+      .orderBy(asc(t.txnDate), asc(t.createdAt)),
+    loadCategories(userId),
+    loadPersonNames(userId),
+    db
+      .select({
+        id: schema.splits.id,
+        txnId: schema.splits.transactionId,
+        totalPaise: schema.splits.totalPaise,
+        yourSharePaise: schema.splits.yourSharePaise,
+      })
+      .from(schema.splits)
+      .innerJoin(t, eq(schema.splits.transactionId, t.id))
+      .where(eq(t.accountId, accountId)),
+    db.select().from(schema.owedExpenses).where(eq(schema.owedExpenses.userId, userId)),
+    db
+      .select({ inflow: schema.netEvents.inflowTransactionId, outflow: schema.netEvents.outflowTransactionId })
+      .from(schema.netEvents)
+      .where(eq(schema.netEvents.userId, userId)),
+  ]);
+
+  const participants = splits.length
+    ? await db
+        .select()
+        .from(schema.splitParticipants)
+        .where(inArray(schema.splitParticipants.splitId, splits.map((s) => s.id)))
+    : [];
+  const [settledByParticipant, settledByOwed] = await Promise.all([
+    settledAmountByParticipantIds(participants.map((p) => p.id)),
+    settledAmountByOwedExpenseIds(owed.map((o) => o.id)),
+  ]);
+  const txnBySplit = new Map(splits.map((s) => [s.id, s.txnId]));
+  const netSettled = new Set(netEvents.flatMap((n) => [n.inflow, n.outflow]).filter((id): id is string => !!id));
+
+  return {
+    txns: txns.map((r) => ({
+      id: r.id,
+      date: r.txnDate,
+      paise: Number(r.amountPaise),
+      direction: r.drCr === "debit" ? "paid" : "received",
+      payee: modelSafePayee({
+        counterpartyDisplayName: r.counterpartyDisplayName,
+        parsedPurpose: r.parsedPurpose,
+        label: counterpartyLabel(r.rawDescription),
+      }),
+      note: r.note?.slice(0, 200) ?? null,
+      category: r.category,
+      channel: r.channel,
+      isTransfer: r.isTransfer,
+      netSettled: netSettled.has(r.id),
+    })),
+    categories: categories.map((c) => ({ name: c.name, kind: c.kind })),
+    people,
+    splits: splits.map((s) => ({ txnId: s.txnId, totalPaise: Number(s.totalPaise), yourSharePaise: Number(s.yourSharePaise) })),
+    participants: participants.map((p) => ({
+      txnId: txnBySplit.get(p.splitId)!,
+      person: p.personName,
+      expectedPaise: Number(p.expectedAmountPaise),
+      settledPaise: settledByParticipant.get(p.id) ?? 0,
+    })),
+    owed: owed.map((o) => ({
+      person: o.personName,
+      date: o.incurredDate,
+      paise: Number(o.amountPaise),
+      what: modelSafePayee({ counterpartyDisplayName: null, parsedPurpose: null, label: counterpartyLabel(o.description) }),
+      settledPaise: settledByOwed.get(o.id) ?? 0,
+    })),
   };
 }

@@ -237,7 +237,9 @@ export function AssistantDock() {
 
     let res: TurnResult | null = null;
     try {
-      res = await assistantTurn({ message, history, focusTxnId: focusId, resumedAfterPick: opts.resumedAfterPick });
+      // Tell the model when the focus is a row the user picked, so "the one I selected" isn't searched for again.
+      const focusPicked = !!focusId && messagesRef.current.some((m) => m.kind === "pick" && m.picked === focusId);
+      res = await assistantTurn({ message, history, focusTxnId: focusId, resumedAfterPick: opts.resumedAfterPick, focusPicked });
     } catch {
       res = null;
     }
