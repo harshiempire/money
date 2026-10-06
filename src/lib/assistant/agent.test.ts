@@ -171,6 +171,17 @@ describe("agent loop", () => {
     expect(out.messages).toContainEqual({ kind: "pick", txnIds: ["id-etsi", "id-swiggy"], total: 2, then: "show" });
   });
 
+  test("transactions a search already listed aren't listed again", async () => {
+    script = [
+      call("search_transactions", { amount_text: null, date_text: null, text: "Etsi", direction: "any", purpose: "show" }),
+      call("show_transactions", { refs: ["T1", "T2"] }),
+      say("Here they are."),
+    ];
+    const out = await turn("show my Etsi payments");
+    expect(out.messages.filter((m) => m.kind === "pick")).toHaveLength(1);
+    expect(out.messages[0].kind === "ai" && out.messages[0].trace).toContain("show_transactions(T1, T2) → already shown");
+  });
+
   test("the single match of a search can be changed, and the card ends the turn", async () => {
     script = [
       call("search_transactions", { amount_text: "2,247", date_text: null, text: null, direction: "any", purpose: "act" }),

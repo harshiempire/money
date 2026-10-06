@@ -520,10 +520,17 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
     const asked = (Array.isArray(args.refs) ? args.refs : [])
       .filter((r): r is string => typeof r === "string")
       .map((r) => r.trim().toUpperCase());
-    const ids = [...new Set(asked.map((r) => (r === "CURRENT" ? ctx.focusTxnId : state.refs.get(r))).filter((id): id is string => !!id))];
-    if (ids.length === 0) {
+    const known = [...new Set(asked.map((r) => (r === "CURRENT" ? ctx.focusTxnId : state.refs.get(r))).filter((id): id is string => !!id))];
+    if (known.length === 0) {
       state.trace.push(`show_transactions(${asked.join(", ") || "—"}) → nothing to show`);
       return { error: "None of those refs came from a query or search in this turn." };
+    }
+    // A search already put its matches on screen; don't list them twice.
+    const onScreen = new Set(state.artifacts.flatMap((a) => (a.kind === "txn" ? [a.txnId] : a.kind === "pick" ? a.txnIds : [])));
+    const ids = known.filter((id) => !onScreen.has(id));
+    if (ids.length === 0) {
+      state.trace.push(`show_transactions(${asked.join(", ")}) → already shown`);
+      return { status: "already_shown", next: "They're already on screen. Don't show them again." };
     }
     const shown = ids.slice(0, MAX_SHOWN);
     for (const id of shown) state.txnIds.add(id);
