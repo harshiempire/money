@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { netBalance } from "./card-math";
-import { proposeCategory, proposeNetSettle, proposeNote, proposeSplit } from "./proposals";
+import { netBalance, splitBalance } from "./card-math";
+import { proposeCategory, proposeItemizedSplit, proposeNetSettle, proposeNote, proposeSplit } from "./proposals";
+import type { BillItemIntent } from "./find-intent";
 import type { NetLine, TxnCardData } from "./types";
 
 const card = (over: Partial<TxnCardData> = {}): TxnCardData => ({
@@ -55,6 +56,59 @@ describe("proposeSplit", () => {
     expect(proposeSplit(card({ drCr: "credit" }), { mode: "equal", participants: [] }, []).ok).toBe(false);
     const existing = card({ split: { participants: 1, settled: 0, pendingPaise: 500, yourSharePaise: 0 } });
     expect(proposeSplit(existing, { mode: "equal", participants: [] }, [])).toMatchObject({ ok: false });
+  });
+});
+
+describe("proposeItemizedSplit", () => {
+  const shared = (label: string, pricePaise: number, qty = 1): BillItemIntent => ({
+    label,
+    pricePaise,
+    qty,
+    everyone: true,
+    you: false,
+    names: [],
+  });
+  const etsi = card({ amountPaise: 224700 });
+  const dishes = [shared("pizza", 64500), shared("pasta", 52500), shared("cake", 47500), shared("tax", 5350, 2)];
+  const nitins: BillItemIntent = { label: "Nitin's item", pricePaise: 49500, qty: 1, everyone: false, you: false, names: ["nitin"] };
+
+  test("the Etsi bill balances to the paisa", () => {
+    const p = proposeItemizedSplit(etsi, { people: ["Nitin", "Sai Abhinav"], items: [...dishes, nitins] }, [
+      "Nitin",
+      "Sai Abhinav",
+    ]);
+    expect(p).toMatchObject({
+      ok: true,
+      draft: {
+        yourShare: "584.00",
+        parts: [
+          { name: "Nitin", amt: "1079.00", known: true },
+          { name: "Sai Abhinav", amt: "584.00", known: true },
+        ],
+        items: { itemsTotalPaise: 224700 },
+      },
+    });
+    if (!p.ok || p.draft.op !== "split") return;
+    expect(splitBalance(p.draft.totalPaise, p.draft.yourShare, p.draft.parts).ok).toBe(true);
+    expect(p.draft.items?.lines.map((l) => l.sharedBy)).toEqual(["everyone", "everyone", "everyone", "everyone", ["Nitin"]]);
+    expect(p.say).toContain("exactly");
+  });
+
+  test("a gap between items and payment is flagged, not hidden in a share", () => {
+    const p = proposeItemizedSplit(etsi, { people: ["Nitin", "Sai Abhinav"], items: dishes }, ["Nitin", "Sai Abhinav"]);
+    expect(p.ok).toBe(true);
+    if (!p.ok || p.draft.op !== "split") return;
+    expect(splitBalance(p.draft.totalPaise, p.draft.yourShare, p.draft.parts)).toMatchObject({ residualPaise: 49500, ok: false });
+    expect(p.say).toContain("isn't assigned");
+  });
+
+  test("someone named only on an item still joins the split", () => {
+    const p = proposeItemizedSplit(etsi, { people: [], items: [nitins, shared("rest", 175200)] }, ["Nitin"]);
+    expect(p.ok && p.draft.op === "split" && p.draft.parts.map((x) => [x.name, x.amt])).toEqual([["Nitin", "1371.00"]]);
+  });
+
+  test("nobody else named", () => {
+    expect(proposeItemizedSplit(etsi, { people: ["me"], items: dishes }, []).ok).toBe(false);
   });
 });
 

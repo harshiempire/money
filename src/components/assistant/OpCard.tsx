@@ -221,7 +221,45 @@ function SplitBody({ draft, locked, onChange }: { draft: Draft<"split">; locked:
           </span>
         ) : null}
       </div>
+      {draft.items && <ItemsBreakdown draft={draft} items={draft.items} />}
     </>
+  );
+}
+
+/** How the shares were worked out from the user's items. */
+function ItemsBreakdown({ draft, items }: { draft: Draft<"split">; items: NonNullable<Draft<"split">["items"]> }) {
+  const gap = draft.totalPaise - items.itemsTotalPaise;
+  const group = items.worked.amts.length + 1;
+  const edited =
+    draft.yourShare !== items.worked.yourShare ||
+    draft.parts.length !== items.worked.amts.length ||
+    draft.parts.some((p, i) => p.amt !== items.worked.amts[i]);
+  return (
+    <div className="flex flex-col gap-1 rounded border border-neutral-200 px-2.5 py-2 dark:border-neutral-800">
+      <span className={label}>From your items</span>
+      {items.lines.map((l, i) => (
+        <div key={i} className="flex items-baseline gap-2 text-xs">
+          <span className="min-w-0 flex-1 truncate">
+            {l.label}
+            {l.qty > 1 && (
+              <span className="text-neutral-500">
+                {" "}
+                · {formatPaise(l.pricePaise)} × {l.qty}
+              </span>
+            )}
+          </span>
+          <span className="max-w-[40%] truncate text-[11px] text-neutral-500">
+            {l.sharedBy === "everyone" ? `all ${group}` : l.sharedBy.join(", ")}
+          </span>
+          <span className="font-mono">{formatPaise(l.pricePaise * l.qty)}</span>
+        </div>
+      ))}
+      <div className={`mt-0.5 text-xs ${gap === 0 ? "text-inflow" : "text-spend"}`}>
+        Items {formatPaise(items.itemsTotalPaise)} · payment {formatPaise(draft.totalPaise)}{" "}
+        {gap === 0 ? "✓" : gap > 0 ? `— ${formatPaise(gap)} not in the items` : `— items over by ${formatPaise(-gap)}`}
+      </div>
+      {edited && <p className="text-[11px] text-neutral-500">You&apos;ve changed the shares since — this is how they were first worked out.</p>}
+    </div>
   );
 }
 

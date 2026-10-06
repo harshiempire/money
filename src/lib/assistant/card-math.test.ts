@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  YOU,
   equalShares,
   fillReceivablesLargestFirst,
+  itemizedShares,
   netBalance,
   resolvePerson,
   splitBalance,
@@ -16,6 +18,26 @@ describe("equalShares", () => {
   test("the odd paisa goes to you", () => {
     expect(equalShares(10001, 1)).toEqual({ yours: 5001, each: 5000 });
     expect(equalShares(10000, 2)).toEqual({ yours: 3334, each: 3333 });
+  });
+});
+
+describe("itemizedShares", () => {
+  test("the Etsi bill: shared dishes ÷ 3, Nitin's own ₹495", () => {
+    const everyone = (pricePaise: number, qty = 1) => ({ pricePaise, qty, sharers: [] });
+    const r = itemizedShares(
+      [everyone(64500), everyone(52500), everyone(47500), everyone(5350, 2), { pricePaise: 49500, qty: 1, sharers: [0] }],
+      2,
+    );
+    expect(r).toEqual({ yours: 58400, each: [107900, 58400], itemsTotal: 224700 });
+  });
+  test("items with the same people are pooled before dividing", () => {
+    const hundred = { pricePaise: 10000, qty: 1, sharers: [] };
+    expect(itemizedShares([hundred, hundred, hundred], 2)).toEqual({ yours: 10000, each: [10000, 10000], itemsTotal: 30000 });
+  });
+  test("odd paise go to you, or to the first person when you didn't have it", () => {
+    expect(itemizedShares([{ pricePaise: 10000, qty: 1, sharers: [] }], 2).yours).toBe(3334);
+    expect(itemizedShares([{ pricePaise: 101, qty: 1, sharers: [1, 0] }], 2).each).toEqual([51, 50]);
+    expect(itemizedShares([{ pricePaise: 20000, qty: 1, sharers: [YOU] }], 1)).toEqual({ yours: 20000, each: [0], itemsTotal: 20000 });
   });
 });
 

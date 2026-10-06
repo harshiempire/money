@@ -42,6 +42,20 @@ export interface NetLine {
   val: string;
 }
 
+/** How a split was worked out from the user's itemised bill — shown on the card only. */
+export interface SplitItems {
+  lines: Array<{
+    label: string;
+    pricePaise: number;
+    qty: number;
+    /** "everyone", or who had it ("you" for the user). */
+    sharedBy: "everyone" | string[];
+  }>;
+  itemsTotalPaise: number;
+  /** The shares as first worked out, to tell when the user has edited them. */
+  worked: { yourShare: string; amts: string[] };
+}
+
 export type OpDraft =
   | {
       op: "split";
@@ -50,6 +64,7 @@ export type OpDraft =
       /** Rupees, "" = the remainder. */
       yourShare: string;
       parts: Array<{ name: string; amt: string; known: boolean }>;
+      items?: SplitItems;
     }
   | { op: "note"; txnId: string; currentNote: string | null; note: string }
   | { op: "cat"; txnId: string; currentCategoryId: string | null; categoryId: string }
