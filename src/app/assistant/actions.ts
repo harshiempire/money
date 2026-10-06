@@ -71,6 +71,8 @@ export async function assistantTurn(input: {
   history: HistoryTurn[];
   focusTxnId: string | null;
   resumedAfterPick?: boolean;
+  /** The focus is a transaction the user picked from a list. */
+  focusPicked?: boolean;
 }): Promise<TurnResult> {
   const user = await requireCurrentUserAction();
 
@@ -96,6 +98,7 @@ export async function assistantTurn(input: {
     history: cleanHistory(input.history),
     focusTxnId,
     resumedAfterPick: input.resumedAfterPick === true,
+    focusPicked: input.focusPicked === true && focusTxnId !== null,
     categories,
     knownPeople,
   };

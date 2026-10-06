@@ -232,6 +232,8 @@ export interface TurnContext {
   focusTxnId: string | null;
   /** The user picked CURRENT from a list to continue this request. */
   resumedAfterPick: boolean;
+  /** CURRENT is a transaction the user picked from a list themselves (not one the assistant chose). */
+  focusPicked: boolean;
   categories: CategoryLite[];
   knownPeople: string[];
 }
@@ -327,7 +329,7 @@ Rules:
 - Money in the tables is whole paise (₹1 = 100). Add and compare paise in SQL and name money columns ending in _paise; the results come back in rupees. Never add, subtract or divide amounts yourself.
 - Spending means direction = 'paid' and is_transfer = 0. If the user gives a month or day without a year, use the most recent one that has passed and say which year you used.
 - To let the user see transactions from a query, call show_transactions with their refs. A ref from a query can only be shown: to change a transaction it must be CURRENT or the single match of search_transactions.
-- "it", "this", "that one" mean CURRENT when there is one.
+- "it", "this", "that one", "the one I picked" mean CURRENT when there is one. If CURRENT is the transaction they mean, use it — don't search for it again.
 - If a search finds several and the user wants to change one, don't choose — say the list is shown and ask them to pick.
 - Splits: "half each" / "between us" → equal; "I paid for him/her" → paid_for_them; stated amounts → custom with amount_text copied. The user is never a participant.
 - Itemised bills (item prices, tax, "X had the Y", an amount one person covers) → propose_itemized_split with every item the user listed in this chat. Don't total or divide anything yourself.
@@ -346,7 +348,9 @@ People they've split with before: ${ctx.knownPeople.slice(0, 40).join(", ") || "
 CURRENT: ${current ? describeTxnForModel(current, ctx.categories) : "none"}${
     ctx.resumedAfterPick && current
       ? "\nThe user just picked CURRENT from the list for the request below. Use CURRENT; don't search again."
-      : ""
+      : ctx.focusPicked && current
+        ? "\nThe user picked CURRENT themselves from a list. When they refer to the one they picked or selected, use CURRENT; don't search for it again."
+        : ""
   }`;
 }
 

@@ -14,6 +14,7 @@ type Step = (input: ResponseItem[]) => AgentStepResult;
 const LIMITS = { usedPercent: null, resetsAt: null, windowMinutes: null };
 let script: Step[] = [];
 let modelCalls = 0;
+let lastInstructions = "";
 
 const card = (id: string, txnDate: string, amountPaise: number, label: string): TxnCardData => ({
   id, txnDate, amountPaise, drCr: "debit", channel: "upi", label, purpose: null, note: null,
@@ -43,8 +44,9 @@ mock.module("@/lib/ai/chatgpt/token-store", () => ({
 }));
 mock.module("@/lib/ai/chatgpt/responses", () => ({
   ...responsesExports,
-  callAgentStep: async (input: { input: ResponseItem[] }) => {
+  callAgentStep: async (input: { input: ResponseItem[]; instructions: string }) => {
     modelCalls++;
+    lastInstructions = input.instructions;
     const next = script.shift();
     if (!next) throw new Error(`the model was called more often than scripted (call ${modelCalls})`);
     return next(input.input);
@@ -99,10 +101,10 @@ const say = (text: string): Step => () => ({
 /** What the last tool call returned to the model. */
 const lastOutput = (input: ResponseItem[]) => JSON.parse(String(input.at(-1)?.output));
 
-const turn = (message: string, focusTxnId: string | null = null) =>
+const turn = (message: string, focusTxnId: string | null = null, focusPicked = false) =>
   runAgentTurn({
     userId: "user", accountId: "account", today: "2026-10-06", message, history: [], focusTxnId,
-    resumedAfterPick: false, categories: [{ id: "cat-food", name: "Food", kind: "spend" }], knownPeople: ["Nitin"],
+    resumedAfterPick: false, focusPicked, categories: [{ id: "cat-food", name: "Food", kind: "spend" }], knownPeople: ["Nitin"],
   });
 
 beforeEach(() => {
@@ -190,6 +192,16 @@ describe("agent loop", () => {
     const out = await turn("add a note dinner to the 2,247 payment");
     expect(modelCalls).toBe(2);
     expect(out.messages.find((m) => m.kind === "op")).toMatchObject({ draft: { op: "note", txnId: "id-etsi", note: "dinner" } });
+  });
+
+  test("tells the model when CURRENT is the one the user picked", async () => {
+    script = [say("Noted.")];
+    await turn("this is the one I selected", "id-etsi", true);
+    expect(lastInstructions).toContain("CURRENT: 6 Aug 2026 · paid ₹2,247.00");
+    expect(lastInstructions).toContain("The user picked CURRENT themselves from a list.");
+    script = [say("Noted.")];
+    await turn("this one", "id-etsi", false);
+    expect(lastInstructions).not.toContain("picked CURRENT themselves");
   });
 
   test("stops after the step limit", async () => {
