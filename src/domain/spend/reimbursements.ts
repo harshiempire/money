@@ -199,7 +199,6 @@ async function sumSettlementsReceivedInPeriod(
   return Number(bank.total) + Number(cash.total);
 }
 
-/** Outstanding split reimbursements grouped by expense month (one bulk query). */
 export async function loadBulkMonthlyReimburseOutstanding(
   accountId: string,
   from: string,

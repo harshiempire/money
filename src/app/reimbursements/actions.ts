@@ -76,9 +76,6 @@ export async function deleteCashSettlement(input: { settlementId: string }) {
   revalidatePath("/");
 }
 
-// A writeoff is structurally a settlement like cash — it just records that no
-// money moved, so the participant stops reading as outstanding for a shortfall
-// you never intended to chase.
 export async function writeOffParticipantShare(input: {
   splitParticipantId: string;
   note: string | null;
@@ -105,8 +102,6 @@ export async function writeOffParticipantShare(input: {
   revalidatePath("/");
 }
 
-// Reverses a mistaken writeoff. Refuses anything that isn't a writeoff so a
-// misclick here can't quietly delete a real cash settlement.
 export async function undoWriteOff(input: { settlementId: string }) {
   const user = await requireCurrentUserAction();
   await assertSettlementOwned(user.id, input.settlementId);

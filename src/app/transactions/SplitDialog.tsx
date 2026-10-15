@@ -185,8 +185,6 @@ function SplitForm({
   );
   const [pending, startTransition] = useTransition();
 
-  // Settled amounts by participant id, for the destructive-edit warning below —
-  // the server guard is authoritative, this is just so the user isn't surprised.
   const settledById = new Map(
     (existing?.participants ?? []).map((p) => [p.id, p.settledAmountPaise]),
   );
@@ -308,10 +306,6 @@ function SplitForm({
   };
 
   const remove = () => {
-    // Deleting a split cascades to its participants and, through them, to their
-    // settlements. Unlike an edit (which the server now refuses outright), this
-    // is a deliberate act — so spell out exactly what's about to be destroyed
-    // rather than silently dropping records of money already received.
     const settledParticipants = (existing?.participants ?? []).filter(
       (p) => p.settledAmountPaise > 0,
     );

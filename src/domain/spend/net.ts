@@ -120,8 +120,6 @@ const netCreditExpr = sql<number>`
 
 export const txnMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.transactions.txnDate}::timestamp), 'YYYY-MM')`;
 
-/** Shared debit/credit sum fragments — the single source of truth for the
- * gross debit/credit totals used across period totals and metrics queries. */
 export const debitSumExpr = sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'debit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`;
 export const creditSumExpr = sql<number>`coalesce(sum(case when ${schema.transactions.drCr} = 'credit' then ${schema.transactions.amountPaise} else 0 end), 0)::bigint`;
 
@@ -222,7 +220,6 @@ export interface PeriodTxnMetrics {
   owedSelfPaise: number;
 }
 
-/** Single-pass period transaction metrics (net, bridge, triage). */
 export async function loadPeriodTxnMetrics(
   accountId: string,
   from: string | null,
@@ -288,9 +285,6 @@ export async function loadPeriodTxnMetrics(
   };
 }
 
-/** Lean period totals — debit/credit/netSelf/count only, composed from the
- * same shared SQL fragments as loadPeriodTxnMetrics without paying for the
- * split-count join or the bridge/triage aggregates. */
 export async function netSpendTotals(
   accountId: string,
   from: string | null,
@@ -331,10 +325,6 @@ export interface CategoryRow {
   count: number;
 }
 
-/**
- * Net-self grouped by category over the period. Uncategorized rows surface
- * as "Uncategorized" so the user knows there's still work to triage.
- */
 export async function categoryBreakdown(
   accountId: string,
   from: string | null,
@@ -601,7 +591,6 @@ export interface DailyNetSpend {
   netSelfPaise: number;
 }
 
-/** Net personal spend per calendar day — for dashboard sparkline. */
 export async function dailyNetSpend(
   accountId: string,
   from: string | null,
@@ -657,7 +646,6 @@ export interface TopDebit {
   netSelfPaise: number;
 }
 
-/** Largest personal debits by net-self amount (split-aware). */
 export async function topDebits(
   accountId: string,
   from: string | null,
@@ -713,8 +701,6 @@ export async function topDebits(
         ),
   ]);
 
-  // TODO: downstream UI links to /transactions#txn-${id}; owed_expense ids
-  // won't resolve there. Revisit once we have a unified "expense" detail route.
   const combined: TopDebit[] = [
     ...txnRows.map((r) => ({
       id: r.id,
@@ -743,7 +729,6 @@ export interface BulkMonthlyTxnMetrics {
   othersSharePaise: number;
 }
 
-/** One scan of transactions grouped by calendar month. */
 export async function loadBulkMonthlyTxnMetrics(
   accountId: string,
   from: string,
@@ -777,7 +762,6 @@ export async function loadBulkMonthlyTxnMetrics(
 
 const owedMonthKeyExpr = sql<string>`to_char(date_trunc('month', ${schema.owedExpenses.incurredDate}::timestamp), 'YYYY-MM')`;
 
-/** Owed expenses grouped by calendar month. */
 export async function loadBulkMonthlyOwedSelf(
   userId: string,
   from: string,

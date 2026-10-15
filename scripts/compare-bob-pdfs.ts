@@ -1,7 +1,3 @@
-/**
- * Compare two BoB statement PDFs (old vs new format).
- * Usage: bun run scripts/compare-bob-pdfs.ts <old.pdf> <new.pdf> [password]
- */
 import { readFileSync } from "node:fs";
 import { Effect, Either } from "effect";
 import { bobAdapter } from "../src/domain/adapters/bob/parser";

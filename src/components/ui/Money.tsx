@@ -17,11 +17,6 @@ const TONE_CLASS: Record<MoneyTone, string> = {
   muted: "text-neutral-500",
 };
 
-/**
- * Inline paise amount. tone="auto" colors by sign (>= 0 spend, < 0 inflow) —
- * matching the BridgeRow convention. `signed` prefixes − for negatives and
- * renders the absolute value (the app-wide display convention).
- */
 export function Money({
   value,
   tone = "neutral",

@@ -17,12 +17,6 @@ export interface IngestInput {
   pdfPassword?: string;
 }
 
-/**
- * upload → pickAdapter → adapter.parse → persistImport (with dedup).
- *
- * Each stage is a tagged Effect, so callers can pattern-match on the failure
- * type to render targeted UI feedback (wrong bank, parser bug, DB error).
- */
 export const ingestStatement = (
   input: IngestInput,
 ): Effect.Effect<

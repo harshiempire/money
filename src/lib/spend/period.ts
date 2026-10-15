@@ -46,7 +46,6 @@ export function reimbursementsPeriodHref(sp: SpendSearchParams): string {
   return spendPeriodHref(sp, "/reimbursements");
 }
 
-/** Default spend report period: current calendar month. */
 export async function resolveSpendPeriod(
   accountId: string,
   sp: SpendSearchParams,
@@ -94,7 +93,6 @@ export async function resolveSpendPeriod(
   };
 }
 
-/** Timeline default: latest statement period; falls back like spend when none imported. */
 export async function resolveTimelinePeriod(
   accountId: string,
   sp: SpendSearchParams,
@@ -136,7 +134,6 @@ async function resolveStatementPeriod(
   };
 }
 
-/** Statement import whose date range contains txnDate, or null. */
 export async function getStatementPeriodForDate(
   accountId: string,
   txnDate: string,
@@ -165,7 +162,6 @@ export async function getStatementPeriodForDate(
   };
 }
 
-/** Latest imported statement date range, or null if none. */
 export async function getLatestStatementPeriod(
   accountId: string,
 ): Promise<Period | null> {

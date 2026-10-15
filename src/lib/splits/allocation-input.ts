@@ -1,12 +1,4 @@
 /**
- * Parsing for the amounts typed into the Settle dialog.
- *
- * Pure and client-safe so it can be unit-tested and so the dialog's live
- * totals, its Save gate and its submission all read from one result. The
- * previous path used parseFloat and dropped anything non-positive before
- * submitting, which meant "-10" was counted on screen but silently removed
- * from the save — clearing whatever allocation that row used to have.
- *
  * Grammar: up to twelve integer digits, optional point, at most two
  * decimals. Twelve digits keeps the paise value far inside the safe-integer
  * range by construction, so no BigInt is needed. Conversion is done on the

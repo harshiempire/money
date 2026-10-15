@@ -12,8 +12,6 @@ export function CopyBalanceSummary({ summary }: { summary: string }) {
       await navigator.clipboard.writeText(summary);
       setStatus("copied");
     } catch {
-      // Some mobile browsers do not expose the Clipboard API. Leave the text
-      // selected so it can still be copied through the browser's native menu.
       summaryRef.current?.focus();
       summaryRef.current?.select();
       setStatus("error");

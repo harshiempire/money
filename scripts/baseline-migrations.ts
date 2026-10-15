@@ -30,7 +30,6 @@ const journal = JSON.parse(
   entries: Array<{ tag: string; when: number }>;
 };
 
-/** Baseline through 0002 (schema already on DB from push). */
 const BASELINE_TAGS = new Set([
   "0000_brief_trish_tilby",
   "0001_married_kitty_pryde",

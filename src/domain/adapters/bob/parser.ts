@@ -9,7 +9,6 @@ import {
 import { extractPdfText, toPdfPasswordError } from "../../pdf/extract";
 import type { BankAdapter } from "../index";
 
-// ─── Anchor regex ────────────────────────────────────────────────────────────
 //
 // Bank of Baroda PDFs (rendered through unpdf) emit each row as:
 //
@@ -27,7 +26,6 @@ const ANCHOR = new RegExp(
   `^(${MONEY})(\\d+)\\s+(\\d{2}-\\d{2}-\\d{4})(?:\\s+(\\d{2}-\\d{2}-\\d{4}))?\\s+(.*)$`,
 );
 
-// Lines that show up between rows but don't belong to any row.
 const FOOTER_PATTERNS = [
   /^This is a computer-generated/i,
   /^Page \d+ of \d+/,
@@ -39,8 +37,6 @@ const isFooter = (line: string) => FOOTER_PATTERNS.some((re) => re.test(line));
 
 // Money or "-"
 const TRAIL = new RegExp(String.raw`(${MONEY}|-)\s+(${MONEY}|-)$`);
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const toIsoDate = (ddmmyyyy: string): string => {
   const [d, m, y] = ddmmyyyy.split("-");
@@ -124,11 +120,6 @@ interface RawRow {
   descriptionLines: string[];
 }
 
-/**
- * Walk a page's lines and group them into rows. Rows start at "anchor" lines
- * (matching ANCHOR); subsequent non-anchor, non-footer lines are description
- * continuations.
- */
 const collectRows = (lines: string[]): RawRow[] => {
   const rows: RawRow[] = [];
   let current: RawRow | null = null;
@@ -158,11 +149,6 @@ const collectRows = (lines: string[]): RawRow[] => {
   return rows;
 };
 
-/**
- * Strip the trailing `<debit> <credit>` pair off the row's text and return
- * the description plus parsed amounts. The pair lives on whichever line has
- * the `<money|->` `<money|->` suffix.
- */
 const splitDescriptionAndAmounts = (
   row: RawRow,
 ): {
@@ -180,7 +166,6 @@ const splitDescriptionAndAmounts = (
   const lastWithoutAmounts = last.slice(0, trail.index).trim();
   lines[lines.length - 1] = lastWithoutAmounts;
 
-  // Join with space; collapse whitespace runs.
   const description = lines
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
@@ -215,8 +200,6 @@ const buildCanonical = (
     rawPayload: { serial: row.serial, balanceText: row.balanceText },
   };
 };
-
-// ─── Header parsing for the statement period ─────────────────────────────────
 
 const PERIOD_RE =
   /Account Statement from (\d{2}-\d{2}-\d{4}) to (\d{2}-\d{2}-\d{4})/;
@@ -274,8 +257,6 @@ export const extractPeriod = (pages: string[]) => {
   }
   return { periodStart: null, periodEnd: null };
 };
-
-// ─── bob World (mobile app) layout ───────────────────────────────────────────
 
 type BobStatementFormat = "bobWorld" | "eStatement";
 
@@ -518,8 +499,6 @@ const parseEStatementPages = (
 
     return rows;
   });
-
-// ─── Adapter ─────────────────────────────────────────────────────────────────
 
 export const bobAdapter: BankAdapter = {
   name: "bob",

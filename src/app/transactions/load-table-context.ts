@@ -56,7 +56,6 @@ export type PeriodTxnTotals = {
   count: number;
 };
 
-/** Period footer stats for the same filter `where` as the table list. */
 export async function loadPeriodTxnTotals(
   where: SQL | undefined,
 ): Promise<PeriodTxnTotals> {

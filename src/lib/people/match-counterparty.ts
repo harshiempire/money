@@ -2,17 +2,12 @@ import { counterpartyLabel } from "@/lib/format";
 
 const normalize = (s: string) => s.trim().toLowerCase();
 
-/** Local part of a UPI handle, e.g. "nitin" from "nitin@okaxis". */
 const upiLocalPart = (handle: string): string | null => {
   const at = handle.indexOf("@");
   if (at <= 0) return null;
   return handle.slice(0, at);
 };
 
-/**
- * Best-effort match from a bank counterparty to a person name already in
- * `person`. No schema link — purely string/heuristic matching.
- */
 export function guessPersonFromCounterparty(input: {
   counterpartyDisplayName: string | null | undefined;
   rawDescription: string;
@@ -56,7 +51,6 @@ export function guessPersonFromCounterparty(input: {
   return best?.name;
 }
 
-/** Prefer learned counterparty → person mapping, then name/heuristic match. */
 export function resolveDefaultPersonFilter(input: {
   counterpartyId: string | null;
   counterpartyDisplayName: string | null | undefined;
