@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 /**
  * Compare two BoB statement PDFs (old vs new format).
  * Usage: bun run scripts/compare-bob-pdfs.ts <old.pdf> <new.pdf> [password]

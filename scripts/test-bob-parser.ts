@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import { bobAdapter } from "../src/domain/adapters/bob/parser";

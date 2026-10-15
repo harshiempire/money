@@ -1,4 +1,4 @@
-import { formatPaise, formatPaisePlain } from "@/lib/format";
+import { formatPaise } from "@/lib/format";
 
 export type MoneyTone =
   | "spend"
@@ -6,10 +6,9 @@ export type MoneyTone =
   | "owed-to-me"
   | "i-owe"
   | "neutral"
-  | "muted"
-  | "auto";
+  | "muted";
 
-const TONE_CLASS: Record<Exclude<MoneyTone, "auto">, string> = {
+const TONE_CLASS: Record<MoneyTone, string> = {
   spend: "text-spend",
   inflow: "text-inflow",
   "owed-to-me": "text-owed-to-me",
@@ -27,28 +26,22 @@ export function Money({
   value,
   tone = "neutral",
   signed = false,
-  plain = false,
   className = "",
 }: {
   value: number | null | undefined;
   tone?: MoneyTone;
   signed?: boolean;
-  /** Use formatPaisePlain (deterministic, SSR-safe — required inside SVG). */
-  plain?: boolean;
   className?: string;
 }) {
-  const resolvedTone =
-    tone === "auto" ? ((value ?? 0) >= 0 ? "spend" : "inflow") : tone;
-  const fmt = plain ? formatPaisePlain : formatPaise;
   const display =
     value == null
-      ? fmt(value)
+      ? formatPaise(value)
       : signed
-        ? `${value < 0 ? "−" : ""}${fmt(Math.abs(value))}`
-        : fmt(value);
+        ? `${value < 0 ? "−" : ""}${formatPaise(Math.abs(value))}`
+        : formatPaise(value);
   return (
     <span
-      className={`font-mono whitespace-nowrap ${TONE_CLASS[resolvedTone]} ${className}`.trim()}
+      className={`font-mono whitespace-nowrap ${TONE_CLASS[tone]} ${className}`.trim()}
     >
       {display}
     </span>

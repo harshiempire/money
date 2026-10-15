@@ -9,7 +9,7 @@ export async function register() {
 
   const { eq } = await import("drizzle-orm");
   const { db, schema } = await import("@/db");
-  const { SEED_USER_ID } = await import("@/db/seed-user");
+  const { SEED_USER_ID } = await import("@/db/constants");
 
   const [row] = await db
     .select({ passwordHash: schema.users.passwordHash })

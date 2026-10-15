@@ -590,41 +590,10 @@ export interface SplitBridgeTotals {
   splitTxnCount: number;
 }
 
-/** Decompose gross debits into your share vs others' share on split transactions. */
-export async function splitBridgeTotals(
-  accountId: string,
-  from: string | null,
-  to: string | null,
-  userId?: string | null,
-): Promise<SplitBridgeTotals> {
-  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
-  return {
-    personalDebitGrossPaise: m.personalDebitGrossPaise,
-    yourShareDebitPaise: m.yourShareDebitPaise,
-    othersSharePaise: m.othersSharePaise,
-    netCreditPaise: m.netCreditPaise,
-    splitTxnCount: m.splitTxnCount,
-  };
-}
-
 export interface TriageStats {
   uncategorizedNetSelfPaise: number;
   uncategorizedCount: number;
   needsReviewCount: number;
-}
-
-export async function triageStats(
-  accountId: string,
-  from: string | null,
-  to: string | null,
-  userId?: string | null,
-): Promise<TriageStats> {
-  const m = await loadPeriodTxnMetrics(accountId, from, to, userId);
-  return {
-    uncategorizedNetSelfPaise: m.uncategorizedNetSelfPaise,
-    uncategorizedCount: m.uncategorizedCount,
-    needsReviewCount: m.needsReviewCount,
-  };
 }
 
 export interface DailyNetSpend {
