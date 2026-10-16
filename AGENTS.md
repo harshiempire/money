@@ -275,6 +275,18 @@ Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assist
 
 When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server action**, **scope every query by the current user's account**.
 
+---
+
+## Cursor Cloud specific instructions
+
+Cloud agents boot with Node 24.22.0, pnpm 11.1.3, Bun, and a local Postgres 16. `node` must be 24.10+ (the query sandbox's SQLite authorizer). The agent runtime also ships Node 22; the environment links Node 24 ahead of it.
+
+- Postgres is already running after boot. Database `money`, user `money`, password `money`. `.env.local` is written on boot (`DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL=http://localhost:3000`). Do not commit it.
+- The dev server is started on boot (`pnpm dev`, http://localhost:3000). Logs: `/tmp/money-dev.log`, tmux session `money-dev`.
+- A fresh database is migrated with `pnpm exec drizzle-kit migrate` (TCP). Register at `/register` (password at least 12 characters). A new user sees an empty dashboard ("No transactions yet").
+- `bun run bootstrap-owner`, `bun run db:ping`, and other scripts that import `scripts/lib/db.ts` use the Neon HTTP driver. They do not work against this local Postgres. The app and Drizzle Kit use `postgres` over TCP and do.
+- Checks that pass here: `bun test`, `pnpm typecheck`, `pnpm build` (preflight runs first). `pnpm lint` / `bun run lint` calls `next lint`, which is already broken on main.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
