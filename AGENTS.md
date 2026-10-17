@@ -30,16 +30,11 @@ Pre-auth, all finance data was keyed to a fixed user:
 SEED_USER_ID = "00000000-0000-0000-0000-000000000001"
 ```
 
-Defined in [`src/db/constants.ts`](src/db/constants.ts) (re-exported from [`src/db/seed-user.ts`](src/db/seed-user.ts)).
+Defined in [`src/db/constants.ts`](src/db/constants.ts).
 
 **Bootstrap** ([`scripts/bootstrap-owner.ts`](scripts/bootstrap-owner.ts)) sets `email` + `password_hash` on **that same row** — no FK migration, no second user for legacy data. The first human operator logs in as this user and sees all historical transactions/imports.
 
 New users get a **new UUID** via registration; they start with empty data (`ensureDefaultCategories` + `getOrCreateAccountForBank` on first use).
-
-### Deprecated (must not use in app code)
-
-- `ensureSeedUser()` — throws; use `requireCurrentUser()` or `requireCurrentUserAction()`
-- `ensureDefaultBobAccount()` — re-export alias only; use `getOrCreateAccountForBank(userId, "bob")`
 
 ---
 
@@ -185,7 +180,7 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 - [ ] Never accept `accountId` / `userId` from FormData for authorization — resolve from session
 - [ ] Import/upload: bind to `getOrCreateAccountForBank(sessionUser.id, "bob")` only
 - [ ] Credentials `authorize`: fail closed if `!passwordHash`
-- [ ] Do not reintroduce runtime `ensureSeedUser()` inserts
+- [ ] Do not reintroduce runtime seed-user inserts; resolve the user with `requireCurrentUser()` / `requireCurrentUserAction()`
 
 ---
 

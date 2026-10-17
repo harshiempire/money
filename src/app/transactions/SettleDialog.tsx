@@ -20,11 +20,8 @@ export interface ExistingAllocation {
 }
 
 export interface CreditResidual {
-  /** transaction.residual_acknowledged_paise ?? 0 */
   acknowledgedPaise: number;
-  /** transaction.residual_disposition */
   disposition: "kept" | "written_off" | null;
-  /** sum of owed_expense.amount_paise where source_inflow_transaction_id = this credit */
   overpaymentPayablePaise: number;
   /**
    * Sum of settlement rows on this credit that belong to a Net Settle event.
@@ -39,7 +36,6 @@ const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
 const outstandingPaise = (p: ParticipantOption) =>
   Math.max(0, p.expectedAmountPaise - p.alreadySettledPaise);
 
-// A round-off small enough that "forget it" is the obvious default.
 const ROUND_OFF_THRESHOLD_PAISE = 500;
 
 type ResidualChoice = "owed_back" | "kept" | "written_off";
@@ -295,7 +291,6 @@ function SettleForm({
   const hasFilters =
     personFilter.trim().length > 0 || amountFilter.trim().length > 0;
 
-  // Rows with an allocation stay visible even when filtered out.
   const visible = useMemo(() => {
     return participants.filter((p) => {
       const hasAllocation = Boolean(allocations[p.id]?.trim());
@@ -304,9 +299,6 @@ function SettleForm({
     });
   }, [participants, personFilter, amountFilter, allocations]);
 
-  // One parse feeds the live totals, the Save gate and the submission, so
-  // what the screen adds up is exactly what gets sent. A bad entry blocks
-  // Save rather than being dropped on the way out.
   const parsed = useMemo(() => {
     const nameById = new Map(participants.map((p) => [p.id, p.personName]));
     return parseAllocationInputs(

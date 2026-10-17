@@ -1,8 +1,3 @@
-/**
- * Pure counterparty extraction from a raw bank description. Used by the
- * ingest pipeline (going forward) and by the backfill (to populate
- * counterparty rows for transactions imported before this code existed).
- */
 import type { Channel } from "../canonical";
 
 export type CounterpartyKind =
@@ -24,10 +19,6 @@ const titleCase = (s: string) =>
     .replace(/(^|\s)\w/g, (m) => m.toUpperCase())
     .trim();
 
-/**
- * Returns null when the description has nothing groupable (e.g. Opening
- * Balance — synthetic row with no counterparty).
- */
 export const extractCounterparty = (
   rawDescription: string,
   channel: Channel,

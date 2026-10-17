@@ -15,8 +15,6 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 
-// ─── Enums ───────────────────────────────────────────────────────────────────
-
 export const drCrEnum = pgEnum("dr_cr", ["debit", "credit"]);
 export const channelEnum = pgEnum("txn_channel", [
   "upi",
@@ -56,9 +54,6 @@ export const settlementMethodEnum = pgEnum("settlement_method", [
   "writeoff",
 ]);
 
-// What the unallocated remainder of an incoming credit turned out to be, once
-// you told us. Both values mean "the money is mine, stop flagging it" — they
-// differ only in intent, which is worth keeping for when you look back.
 export const residualDispositionEnum = pgEnum("residual_disposition", [
   // You'd asked for the extra, so it was always yours.
   "kept",
@@ -118,9 +113,6 @@ export const verificationTokens = pgTable(
   (t) => [primaryKey({ columns: [t.identifier, t.token] })],
 );
 
-// ─── Domain tables ───────────────────────────────────────────────────────────
-
-// Bank/wallet account that holds money. (Distinct from Auth.js's `account`.)
 export const moneyAccounts = pgTable(
   "money_account",
   {
@@ -132,7 +124,6 @@ export const moneyAccounts = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     bank: text("bank").notNull(), // "bob" | "icici" | ...
-    // Money stored as paise (integer) to avoid float drift.
     openingBalancePaise: bigint("opening_balance_paise", {
       mode: "number",
     }).notNull(),
@@ -154,7 +145,7 @@ export const counterparties = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     kind: counterpartyKindEnum("kind").notNull(),
-    key: text("key").notNull(), // e.g. "swiggy580017.rzp@rx" or "GR0WW INVEST TECH PVT LTD"
+    key: text("key").notNull(),
     displayName: text("display_name"),
     defaultCategoryId: text("default_category_id"),
     isSelf: boolean("is_self").default(false).notNull(),
@@ -347,8 +338,6 @@ export const owedExpenses = pgTable(
   },
   (t) => [
     index("owed_expense_user_incurred_idx").on(t.userId, t.incurredDate),
-    // At most one overpayment payable per credit — a duplicate would make
-    // the credit look accounted-for twice over.
     uniqueIndex("owed_expense_source_inflow_uniq").on(
       t.sourceInflowTransactionId,
     ),

@@ -1,9 +1,3 @@
-/**
- * Measure authenticated HTTP TTFB per route (dev/prod).
- * Usage: bun run perf:http-pages
- *
- * Requires BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD, and a running server.
- */
 const BASE = process.env.PERF_BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.BOOTSTRAP_EMAIL ?? "";
 const PASSWORD = process.env.BOOTSTRAP_PASSWORD ?? "";

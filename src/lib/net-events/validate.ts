@@ -74,9 +74,8 @@ export function balanceAllocationsToExpectedNet(
       .sort((a, b) => m[b] - m[a]);
 
   if (residual > 0) {
-    // Prefer shaving the largest receivable
     for (const id of sortedIds(nextR)) {
-      const room = nextR[id]; // can reduce by up to full alloc
+      const room = nextR[id];
       if (room >= residual) {
         nextR[id] -= residual;
         if (nextR[id] === 0) delete nextR[id];
@@ -87,7 +86,6 @@ export function balanceAllocationsToExpectedNet(
         };
       }
     }
-    // Else grow an already-allocated payable toward its cap
     for (const id of sortedIds(nextP)) {
       const current = nextP[id];
       const room = (payableCaps[id] ?? current) - current;
@@ -103,7 +101,6 @@ export function balanceAllocationsToExpectedNet(
     return null;
   }
 
-  // residual < 0
   const need = -residual;
   for (const id of sortedIds(nextR)) {
     const current = nextR[id];

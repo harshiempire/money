@@ -1,9 +1,5 @@
 import type { ReactNode } from "react";
 
-/**
- * The bordered rounded card used throughout the app. Optional title + action
- * row sits above the content; pass layout margins (e.g. `mt-8`) via className.
- */
 export function SectionCard({
   title,
   action,

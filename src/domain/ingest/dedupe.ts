@@ -12,10 +12,6 @@ export interface ImportSummary {
   rowsDuplicate: number;
 }
 
-/**
- * Stable fallback ref for rows whose adapter couldn't extract one (e.g. the
- * synthetic Opening Balance row, or banks that omit refs).
- */
 const fallbackRefId = (txn: CanonicalTxn): string => {
   const h = createHash("sha256");
   h.update(`${txn.txnDate}|${txn.amountPaise}|${txn.drCr}|${txn.rawDescription}`);
@@ -35,12 +31,6 @@ interface PersistInput {
   rows: readonly CanonicalTxn[];
 }
 
-/**
- * Insert one Import row and the associated transactions in a single round-trip,
- * relying on the `(account_id, ref_id)` unique index to swallow duplicates.
- *
- * Returns counts so the UI can show "115 rows seen, 87 already known, 28 new".
- */
 export const persistImport = (
   input: PersistInput,
 ): Effect.Effect<ImportSummary, PersistError> =>
@@ -57,7 +47,7 @@ export const persistImport = (
           periodStart: input.periodStart,
           periodEnd: input.periodEnd,
           rowsSeen: input.rows.length,
-          rowsNew: 0, // Updated below.
+          rowsNew: 0,
         })
         .returning({ id: schema.imports.id });
 
@@ -80,9 +70,6 @@ export const persistImport = (
 
       let rowsNew = 0;
       if (values.length > 0) {
-        // The unique index on (account_id, ref_id) is what enforces dedup.
-        // `onConflictDoNothing` returns only the rows that were actually
-        // inserted, so its length is `rowsNew`.
         const inserted = await db
           .insert(schema.transactions)
           .values(values)

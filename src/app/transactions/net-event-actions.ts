@@ -95,7 +95,6 @@ export async function saveNetEvent(input: {
     );
   }
 
-  // Sync validation first (no DB), then fan out ownership / outstanding checks.
   for (const leg of cleanLegs) {
     if (leg.kind === "receivable") {
       if (leg.method === "bank" && !input.inflowTransactionId) {

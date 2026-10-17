@@ -71,8 +71,6 @@ export async function createSplit(input: {
   });
   if (!valid.ok) throw new Error(valid.message);
 
-  // A split divides money you paid out. Splitting an incoming credit would
-  // record a share of a payment that never happened.
   const [subject] = await db
     .select({
       drCr: schema.transactions.drCr,
@@ -124,9 +122,6 @@ export async function createSplit(input: {
     ).map((p) => ({ ...p, expectedAmountPaise: Number(p.expectedAmountPaise) }));
   }
 
-  // Every id the client sent back must be a row on this split. Ownership of
-  // the transaction is already established; this pins the participant rows
-  // to it too, instead of quietly treating a foreign id as a brand-new row.
   const belongs = validateParticipantIdsBelongToSplit(
     cleanParticipants,
     new Set(existingParticipants.map((p) => p.id)),
@@ -330,9 +325,6 @@ export async function recordSettlement(input: {
     await assertSplitParticipantOwned(user.id, a.splitParticipantId);
   }
 
-  // Validate the raw amounts before any row is dropped — a negative or
-  // non-numeric amount must fail the request, not vanish and leave an empty
-  // list that then wipes the credit's existing allocations.
   const cleaned = cleanAllocations(
     input.allocations.map((a) => ({
       splitParticipantId: a.splitParticipantId,

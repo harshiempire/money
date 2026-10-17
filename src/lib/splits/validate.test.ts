@@ -8,6 +8,13 @@ import {
   validateSplitBalances,
   validateSplitInput,
 } from "./validate";
+import {
+  cleanAllocations,
+  validateInflowCapacity,
+  validateParticipantIdsBelongToSplit,
+  validateSettledParticipantEdit,
+  validateSplitTotalMatchesTransaction,
+} from "./validate";
 
 const p = (
   expectedAmountPaise: number,
@@ -27,7 +34,6 @@ describe("validateSplitBalances", () => {
   });
 
   test("rejects the paise stranded by an equal three-way split", () => {
-    // 1000 / 3 = 333.33 each; the parts fall a paise short of the total.
     const r = validateSplitBalances({
       totalPaise: 100000,
       yourSharePaise: 33333,
@@ -38,8 +44,6 @@ describe("validateSplitBalances", () => {
   });
 
   test("reports the shortfall when your share was never corrected", () => {
-    // The BookMyShow shape: a participant carries the whole amount and your
-    // share was left behind, so the parts exceed the transaction.
     const r = validateSplitBalances({
       totalPaise: 28304,
       yourSharePaise: 14152,
@@ -52,8 +56,6 @@ describe("validateSplitBalances", () => {
 
 describe("validateSplitAmounts — negative amounts (finding 5)", () => {
   test("rejects a negative participant share that would otherwise balance", () => {
-    // total 100 = your 200 + participant (−100): balances, but inflates your
-    // recorded spend to twice the transaction.
     const input = {
       totalPaise: 10000,
       yourSharePaise: 20000,
@@ -105,8 +107,6 @@ describe("validateSplitAmounts — negative amounts (finding 5)", () => {
 
 describe("validateNoDuplicateParticipants — collapsing ids (finding 4)", () => {
   test("rejects the same participant id twice even when the split balances", () => {
-    // {P, ₹50} + {P, ₹30} sums to ₹80 and balances against total ₹100 /
-    // your ₹20, but the write path keys on id, so only ₹30 survives.
     const input = {
       totalPaise: 10000,
       yourSharePaise: 2000,
@@ -188,19 +188,8 @@ describe("validatePayableReplaceable — repaid overpayment (finding 1)", () => 
   });
 });
 
-// ── Codex merge-readiness review (thread 01a039f6), 2026-08-26 ──────────────
-
-import {
-  cleanAllocations,
-  validateInflowCapacity,
-  validateParticipantIdsBelongToSplit,
-  validateSettledParticipantEdit,
-  validateSplitTotalMatchesTransaction,
-} from "./validate";
-
 describe("validateSplitTotalMatchesTransaction (review: split total trusted the browser)", () => {
   test("rejects a balanced ₹200 split posted against a ₹100 transaction", () => {
-    // The parts add up, so the balance check alone would pass this.
     expect(
       validateSplitBalances({
         totalPaise: 20000,
@@ -310,8 +299,6 @@ describe("validateSettledParticipantEdit (review: settled payments could be reas
   });
 
   test("keeps an existing overpayment editable when the edit doesn't worsen it", () => {
-    // Share already below settled (they overpaid). Raising it toward what was
-    // received must be allowed — commit 71d8397's rule, preserved here.
     expect(
       validateSettledParticipantEdit({
         existing: { personName: "Rishith", expectedAmountPaise: 121634 },

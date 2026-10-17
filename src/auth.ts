@@ -7,7 +7,6 @@ import { db, schema } from "@/db";
 import { checkLoginRateLimit } from "@/lib/rate-limit";
 import { authConfig } from "@/auth.config";
 
-/** How often to re-read user.token_version from Neon (revocation check). */
 const TOKEN_VERSION_CHECK_MS = 5 * 60 * 1000;
 /**
  * If the revocation check errors (Neon blip), keep the JWT only while the
@@ -109,10 +108,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.tvCheckedAt = Date.now();
         return token;
       } catch (err) {
-        // Transient Neon blips must not wipe the session mid-action
-        // (that previously surfaced as ForbiddenError after ~30s hangs),
-        // but only within a bounded grace window — a sustained outage must
-        // not indefinitely defer revocation.
         if (Date.now() - lastCheck < TOKEN_VERSION_GRACE_MS) {
           console.error(
             "[auth] token_version check failed; keeping JWT within grace window",

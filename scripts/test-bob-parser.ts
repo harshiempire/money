@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import { bobAdapter } from "../src/domain/adapters/bob/parser";
@@ -20,7 +19,6 @@ const program = Effect.gen(function* () {
   console.log(`period: ${meta.periodStart} → ${meta.periodEnd}`);
   console.log(`rows: ${rows.length}`);
 
-  // Counts
   const byChannel = rows.reduce<Record<string, number>>((acc, r) => {
     acc[r.channel] = (acc[r.channel] ?? 0) + 1;
     return acc;
@@ -37,7 +35,6 @@ const program = Effect.gen(function* () {
     `total debit: ₹${(totalDebit / 100).toLocaleString("en-IN")}  total credit: ₹${(totalCredit / 100).toLocaleString("en-IN")}`,
   );
 
-  // Ref id coverage
   const withRef = rows.filter((r) => r.refId !== null).length;
   console.log(
     `ref ids parsed: ${withRef}/${rows.length} (${rows.length - withRef} without — likely Opening Balance)`,
@@ -51,7 +48,6 @@ const program = Effect.gen(function* () {
     `opening: ₹${(opening / 100).toLocaleString("en-IN")}  closing: ₹${(closing / 100).toLocaleString("en-IN")}  computed-from-deltas: ₹${(computed / 100).toLocaleString("en-IN")}`,
   );
 
-  // Spot-check: print first 5 + last 3 rows
   console.log("\n--- first 5 rows ---");
   for (const r of rows.slice(0, 5)) {
     console.log(

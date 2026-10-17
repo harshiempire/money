@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseAllocationInputs, parseRupees } from "./allocation-input";
 
-// Agreed in the Codex/Claude review dialogue (room money-review-34075afa-0906-r2):
-// the Settle dialog counted a negative on screen but dropped it before
-// submitting, so a save could silently clear an existing allocation.
-
 describe("parseRupees", () => {
   test("blank and whitespace mean no allocation", () => {
     expect(parseRupees("")).toEqual({ kind: "blank" });
