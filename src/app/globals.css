@@ -28,6 +28,14 @@
   --color-i-owe: oklch(50% 0.134 242.749); /* sky-700 */
   --color-split: oklch(49.1% 0.27 292.581); /* violet-700 */
 
+  /* Waterfall card paints from the dashboard handoff (light pastels). */
+  --color-waterfall-gross: #cfcdc8;
+  --color-waterfall-mint: oklch(0.72 0.12 165);
+  --color-waterfall-blue: oklch(0.7 0.11 240);
+  --color-waterfall-net: oklch(0.62 0.17 27);
+  --color-waterfall-track: #f5f4f2;
+  --color-waterfall-amount: oklch(50.5% 0.213 27.5);
+
   /* Ask Money assistant: messages fade/slide in; "thinking" pulses. */
   --animate-ai-in: ai-in 180ms ease-out;
   --animate-ai-pulse: ai-pulse 1.1s ease-in-out infinite;
@@ -79,4 +87,20 @@
 
 body {
   font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+@utility bg-waterfall-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    oklch(0.82 0.12 75) 0 5px,
+    oklch(0.9 0.08 75) 5px 10px
+  );
+}
+
+@utility bg-waterfall-hatch-swatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    oklch(0.82 0.12 75) 0 2px,
+    oklch(0.9 0.08 75) 2px 4px
+  );
 }

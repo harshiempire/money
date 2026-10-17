@@ -9,9 +9,22 @@ const inrFormatter = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
 });
 
+const inrWholeFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+});
+
 export const formatPaise = (paise: number | null | undefined): string => {
   if (paise == null) return "—";
   return inrFormatter.format(paise / 100);
+};
+
+/** Whole rupees for narrative UI (waterfall titles and row amounts). */
+export const formatPaiseWhole = (paise: number | null | undefined): string => {
+  if (paise == null) return "—";
+  return inrWholeFormatter.format(paise / 100);
 };
 
 /** Deterministic INR string (no Intl) — avoids SSR/client hydration mismatches in SVG. */
