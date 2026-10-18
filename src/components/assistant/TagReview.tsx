@@ -453,7 +453,12 @@ export function TagReview({
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <button type="button" onClick={onCancel} className="text-sm text-neutral-600 hover:text-neutral-900">
+              <button
+                type="button"
+                onClick={onCancel}
+                aria-label={result ? "Close review" : "Cancel review"}
+                className="text-sm text-neutral-600 hover:text-neutral-900"
+              >
                 {result ? "Close" : "Cancel"}
               </button>
               {!result && (
@@ -495,11 +500,21 @@ export function TagReview({
                   result.offers.map((offer) => (
                     <span key={offer.counterpartyId} className="text-xs text-neutral-200">
                       Remember {offer.categoryName} as the default for {offer.payee}?{" "}
-                      <button type="button" className="underline" onClick={() => onRemember(offer)}>
+                      <button
+                        type="button"
+                        className="underline"
+                        aria-label={`Remember ${offer.categoryName} for ${offer.payee}`}
+                        onClick={() => onRemember(offer)}
+                      >
                         Yes
                       </button>
                       {" · "}
-                      <button type="button" className="underline" onClick={() => onDismissOffer(offer.counterpartyId)}>
+                      <button
+                        type="button"
+                        className="underline"
+                        aria-label={`Don't remember a default for ${offer.payee}`}
+                        onClick={() => onDismissOffer(offer.counterpartyId)}
+                      >
                         No
                       </button>
                     </span>
