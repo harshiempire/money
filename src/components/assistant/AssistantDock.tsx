@@ -20,7 +20,7 @@ import {
   suggestTagChunk,
   undoSuggestedTags,
 } from "@/app/assistant/tag-actions";
-import type { AppliedTag } from "@/lib/assistant/tag-apply";
+import { chunkApplyRows, type AppliedTag } from "@/lib/assistant/tag-apply";
 import type { ContextNote, TagDraftRow } from "@/lib/assistant/tag-batch";
 import { OpCard } from "./OpCard";
 import { PickList, TxnCard } from "./TxnCard";
@@ -131,6 +131,8 @@ export function AssistantDock() {
     rows: TagDraftRow[];
     txns: Record<string, TxnCardData>;
     phase: "loading" | "review" | "applying" | "done";
+    applyDone: number;
+    applyTotal: number;
     error?: string;
     suggester: "model" | "history" | "stub";
     result: TagReviewResult | null;
@@ -461,6 +463,8 @@ export function AssistantDock() {
       rows: [],
       txns: {},
       phase: "loading",
+      applyDone: 0,
+      applyTotal: 0,
       suggester: "history",
       result: null,
       undoRows: [],
@@ -494,6 +498,8 @@ export function AssistantDock() {
           rows: [...rows],
           txns: { ...batchTxns },
           phase: done ? "review" : "loading",
+          applyDone: 0,
+          applyTotal: 0,
           suggester,
           result: null,
           undoRows: [],
@@ -514,62 +520,124 @@ export function AssistantDock() {
     void startBatch(pending.year, pending.month);
   }, [messages]);
 
+  const refreshBoot = async () => {
+    const next = await getAssistantBootstrap().catch(() => null);
+    if (next) setBoot(next);
+  };
+
   const applyBatch = async (selected: { transactionId: string; categoryId: string; expectedCurrentCategoryId: string | null }[]) => {
     if (!batch) return;
-    setBatch({ ...batch, phase: "applying" });
-    try {
-      const res = await applySuggestedTags({ rows: selected });
-      const names = [
-        ...new Set(
-          res.applied
-            .map((row) => boot?.categories.find((c) => c.id === row.categoryId)?.name)
-            .filter((name): name is string => Boolean(name)),
-        ),
-      ];
-      const offers: TagReviewResult["offers"] = [];
-      const byPayee = new Map<string, { categoryId: string; payee: string }>();
-      for (const row of res.applied) {
-        const draft = batch.rows.find((r) => r.txnId === row.transactionId);
-        if (!draft?.counterpartyId) continue;
-        const payee = batch.txns[row.transactionId]?.label ?? "this payee";
-        const prev = byPayee.get(draft.counterpartyId);
-        if (!prev) byPayee.set(draft.counterpartyId, { categoryId: row.categoryId, payee });
-        else if (prev.categoryId !== row.categoryId) byPayee.delete(draft.counterpartyId);
+    const total = selected.length;
+    setBatch({ ...batch, phase: "applying", applyDone: 0, applyTotal: total, error: undefined });
+    const applied: AppliedTag[] = [];
+    const failed: Array<{ transactionId: string; reason: string }> = [];
+    let stopped = false;
+    let cursor = 0;
+    for (const slice of chunkApplyRows(selected)) {
+      setBatch((b) => (b ? { ...b, phase: "applying", applyDone: cursor, applyTotal: total } : b));
+      try {
+        const res = await applySuggestedTags({ rows: slice });
+        applied.push(...res.applied);
+        failed.push(...res.failed);
+      } catch (e) {
+        stopped = true;
+        const reason = errorText(e, "The save stopped before this row.");
+        for (const row of selected.slice(cursor)) {
+          if (applied.some((item) => item.transactionId === row.transactionId)) continue;
+          if (failed.some((item) => item.transactionId === row.transactionId)) continue;
+          failed.push({ transactionId: row.transactionId, reason });
+        }
+        break;
       }
-      for (const [counterpartyId, info] of byPayee) {
-        const categoryName = boot?.categories.find((c) => c.id === info.categoryId)?.name;
-        if (!categoryName || info.payee.includes("@") || /\d{5,}/.test(info.payee)) continue;
-        offers.push({ counterpartyId, categoryId: info.categoryId, categoryName, payee: info.payee });
-      }
-      setBatch({
-        ...batch,
-        phase: "done",
-        result: {
-          applied: res.applied.length,
-          failed: res.failed.length,
-          left: Math.max(0, batch.total - res.applied.length),
-          names,
-          offers: offers.slice(0, 2),
-        },
-        undoRows: res.applied,
-      });
-    } catch (e) {
-      setBatch({ ...batch, phase: "review", error: errorText(e, "Couldn't apply the tags.") });
+      cursor += slice.length;
     }
+    const names = [
+      ...new Set(
+        applied
+          .map((row) => boot?.categories.find((c) => c.id === row.categoryId)?.name)
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ];
+    const offers: TagReviewResult["offers"] = [];
+    const byPayee = new Map<string, { categoryId: string; payee: string; existingCategoryId: string | null }>();
+    for (const row of applied) {
+      const draft = batch.rows.find((r) => r.txnId === row.transactionId);
+      if (!draft?.counterpartyId) continue;
+      const payee = batch.txns[row.transactionId]?.label ?? "this payee";
+      const prev = byPayee.get(draft.counterpartyId);
+      if (!prev) byPayee.set(draft.counterpartyId, { categoryId: row.categoryId, payee, existingCategoryId: draft.defaultCategoryId });
+      else if (prev.categoryId !== row.categoryId) byPayee.delete(draft.counterpartyId);
+    }
+    for (const [counterpartyId, info] of byPayee) {
+      const categoryName = boot?.categories.find((c) => c.id === info.categoryId)?.name;
+      if (!categoryName || info.payee.includes("@") || /\d{5,}/.test(info.payee)) continue;
+      if (info.existingCategoryId === info.categoryId) continue;
+      const existingCategoryName = info.existingCategoryId
+        ? boot?.categories.find((c) => c.id === info.existingCategoryId)?.name
+        : undefined;
+      offers.push({
+        counterpartyId,
+        categoryId: info.categoryId,
+        categoryName,
+        payee: info.payee,
+        ...(existingCategoryName && info.existingCategoryId
+          ? { existingCategoryId: info.existingCategoryId, existingCategoryName }
+          : {}),
+      });
+    }
+    await refreshBoot();
+    setBatch({
+      ...batch,
+      phase: "done",
+      applyDone: applied.length,
+      applyTotal: total,
+      result: {
+        applied: applied.length,
+        failed: failed.length,
+        left: Math.max(0, batch.total - applied.length),
+        names,
+        offers: offers.slice(0, 2),
+        savedIds: applied.map((row) => row.transactionId),
+        failedRows: failed.map((row) => ({
+          transactionId: row.transactionId,
+          label: batch.txns[row.transactionId]?.label ?? "A payment",
+          reason: row.reason,
+        })),
+        stopped,
+      },
+      undoRows: applied,
+    });
   };
 
   const undoBatch = async () => {
     if (!batch?.result) return;
-    const res = await undoSuggestedTags({ rows: batch.undoRows });
+    let restored = 0;
+    let failed = 0;
+    let stopped = false;
+    let cursor = 0;
+    for (const slice of chunkApplyRows(batch.undoRows)) {
+      try {
+        const res = await undoSuggestedTags({ rows: slice });
+        restored += res.restored;
+        failed += res.failed;
+      } catch {
+        stopped = true;
+        failed += batch.undoRows.length - cursor;
+        break;
+      }
+      cursor += slice.length;
+    }
+    await refreshBoot();
     setBatch({
       ...batch,
       result: {
         ...batch.result,
         undone: true,
-        undoNote:
-          res.failed > 0
-            ? `Put ${res.restored} back. ${res.failed} had changed and were left alone.`
-            : `Put ${res.restored} transaction${res.restored === 1 ? "" : "s"} back.`,
+        undoNote: stopped
+          ? `Put ${restored} back. The undo stopped, so ${failed} saved rows were left as tagged.`
+          : failed > 0
+            ? `Put ${restored} back. ${failed} had changed and were left alone.`
+            : `Put ${restored} transaction${restored === 1 ? "" : "s"} back.`,
         offers: [],
       },
     });
@@ -798,6 +866,8 @@ export function AssistantDock() {
           loaded={batch.loaded}
           loading={batch.phase === "loading"}
           applying={batch.phase === "applying"}
+          applyDone={batch.applyDone}
+          applyTotal={batch.applyTotal}
           rows={batch.rows}
           txns={batch.txns}
           categories={boot?.categories ?? []}
@@ -811,12 +881,48 @@ export function AssistantDock() {
           onApply={(rows) => void applyBatch(rows)}
           onUndo={() => void undoBatch()}
           onRemember={(offer) => {
-            void rememberPayeeDefault({ counterpartyId: offer.counterpartyId, categoryId: offer.categoryId }).then((res) => {
-              if (!res.ok) return;
-              setBatch((b) =>
-                b?.result ? { ...b, result: { ...b.result, offers: b.result.offers.filter((o) => o.counterpartyId !== offer.counterpartyId) } } : b,
-              );
-            });
+            void rememberPayeeDefault({
+              counterpartyId: offer.counterpartyId,
+              categoryId: offer.categoryId,
+              confirmFromCategoryId: offer.existingCategoryId ?? null,
+            })
+              .then((res) => {
+                if (res.ok) {
+                  setBatch((b) =>
+                    b?.result
+                      ? { ...b, error: undefined, result: { ...b.result, offers: b.result.offers.filter((o) => o.counterpartyId !== offer.counterpartyId) } }
+                      : b,
+                  );
+                  return;
+                }
+                if ("confirm" in res && res.confirm) {
+                  setBatch((b) =>
+                    b?.result
+                      ? {
+                          ...b,
+                          result: {
+                            ...b.result,
+                            offers: b.result.offers.map((item) =>
+                              item.counterpartyId === offer.counterpartyId
+                                ? {
+                                    ...item,
+                                    existingCategoryId: res.existingCategoryId,
+                                    existingCategoryName: res.existingCategoryName,
+                                    categoryName: res.nextCategoryName,
+                                  }
+                                : item,
+                            ),
+                          },
+                        }
+                      : b,
+                  );
+                  return;
+                }
+                setBatch((b) => (b ? { ...b, error: res.error } : b));
+              })
+              .catch((e) => {
+                setBatch((b) => (b ? { ...b, error: errorText(e, "Couldn't update that default.") } : b));
+              });
           }}
           onDismissOffer={(counterpartyId) =>
             setBatch((b) =>

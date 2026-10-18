@@ -25,7 +25,17 @@ export interface TagReviewResult {
   failed: number;
   left: number;
   names: string[];
-  offers: Array<{ counterpartyId: string; categoryId: string; categoryName: string; payee: string }>;
+  offers: Array<{
+    counterpartyId: string;
+    categoryId: string;
+    categoryName: string;
+    payee: string;
+    existingCategoryId?: string;
+    existingCategoryName?: string;
+  }>;
+  savedIds: string[];
+  failedRows: Array<{ transactionId: string; label: string; reason: string }>;
+  stopped?: boolean;
   undone?: boolean;
   undoNote?: string;
 }
@@ -132,6 +142,8 @@ export function TagReview({
   loaded,
   loading,
   applying,
+  applyDone,
+  applyTotal,
   rows,
   txns,
   categories,
@@ -149,6 +161,8 @@ export function TagReview({
   loaded: number;
   loading: boolean;
   applying: boolean;
+  applyDone: number;
+  applyTotal: number;
   rows: TagDraftRow[];
   txns: Record<string, TxnCardData>;
   categories: CategoryLite[];
@@ -313,6 +327,8 @@ export function TagReview({
                   const isSelected = selected.has(row.txnId) && !skipped.has(row.txnId);
                   const isSkipped = skipped.has(row.txnId) || row.source === "none";
                   const locked = Boolean(result) || applying;
+                  const saved = result?.savedIds.includes(row.txnId) && !result.undone;
+                  const rowFailure = result?.failedRows.find((item) => item.transactionId === row.txnId);
                   const choices = row.choices.filter((c) => !chosen[row.txnId]);
                   return (
                     <tr key={row.txnId} className="border-t border-neutral-100 align-top">
@@ -332,6 +348,10 @@ export function TagReview({
                           {row.transfer ? "Flagged as a transfer. " : ""}
                           {row.reason}
                         </div>
+                        {saved && <div className="text-[11px] font-medium text-emerald-700">Saved</div>}
+                        {rowFailure && !result?.undone && (
+                          <div className="text-[11px] font-medium text-red-600">Not saved. {rowFailure.reason}</div>
+                        )}
                         {choices.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {choices.map((choice) => (
@@ -476,7 +496,7 @@ export function TagReview({
                   }
                   className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {applying ? "Applying…" : `Apply selected (${selectedRows.length})`}
+                  {applying ? `Saving ${applyDone} of ${applyTotal}…` : `Apply selected (${selectedRows.length})`}
                 </button>
               )}
             </div>
@@ -490,35 +510,61 @@ export function TagReview({
               <div>
                 {result.undone
                   ? (result.undoNote ?? "Undone.")
-                  : `Tagged ${result.applied} transaction${result.applied === 1 ? "" : "s"}${
+                  : `Saved ${result.applied} transaction${result.applied === 1 ? "" : "s"}${
                       result.names.length ? ` · ${result.names.join(", ")}` : ""
-                    }. ${result.left} left untagged.`}
-                {result.failed > 0 && !result.undone ? ` ${result.failed} could not be updated because they changed.` : ""}
+                    }.${
+                      result.failedRows.length
+                        ? ` ${result.failedRows.length} not saved${result.stopped ? " because the save stopped" : ""}.`
+                        : ""
+                    } Undo covers the saved rows.`}
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 {!result.undone &&
-                  result.offers.map((offer) => (
-                    <span key={offer.counterpartyId} className="text-xs text-neutral-200">
-                      Remember {offer.categoryName} as the default for {offer.payee}?{" "}
-                      <button
-                        type="button"
-                        className="underline"
-                        aria-label={`Remember ${offer.categoryName} for ${offer.payee}`}
-                        onClick={() => onRemember(offer)}
-                      >
-                        Yes
-                      </button>
-                      {" · "}
-                      <button
-                        type="button"
-                        className="underline"
-                        aria-label={`Don't remember a default for ${offer.payee}`}
-                        onClick={() => onDismissOffer(offer.counterpartyId)}
-                      >
-                        No
-                      </button>
-                    </span>
-                  ))}
+                  result.offers.map((offer) =>
+                    offer.existingCategoryName ? (
+                      <span key={offer.counterpartyId} className="text-xs text-neutral-200">
+                        {offer.payee}&apos;s default is {offer.existingCategoryName}. Change it to {offer.categoryName}?{" "}
+                        <button
+                          type="button"
+                          className="underline"
+                          aria-label={`Change ${offer.existingCategoryName} to ${offer.categoryName} for ${offer.payee}`}
+                          onClick={() => onRemember(offer)}
+                        >
+                          Change it
+                        </button>
+                        {" · "}
+                        <button
+                          type="button"
+                          className="underline"
+                          aria-label={`Keep ${offer.existingCategoryName} for ${offer.payee}`}
+                          onClick={() => onDismissOffer(offer.counterpartyId)}
+                        >
+                          Keep it
+                        </button>
+                      </span>
+                    ) : (
+                      <span key={offer.counterpartyId} className="text-xs text-neutral-200">
+                        Remember {offer.categoryName} as the default for {offer.payee}?{" "}
+                        <button
+                          type="button"
+                          className="underline"
+                          aria-label={`Remember ${offer.categoryName} for ${offer.payee}`}
+                          onClick={() => onRemember(offer)}
+                        >
+                          Yes
+                        </button>
+                        {" · "}
+                        <button
+                          type="button"
+                          className="underline"
+                          aria-label={`Don't remember a default for ${offer.payee}`}
+                          onClick={() => onDismissOffer(offer.counterpartyId)}
+                        >
+                          No
+                        </button>
+                      </span>
+                    ),
+                  )}
                 {!result.undone && (
                   <button type="button" onClick={onUndo} className="rounded-lg border border-neutral-500 px-3 py-1 text-xs">
                     Undo

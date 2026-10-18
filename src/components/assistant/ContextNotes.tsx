@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { deleteContextNote, listContextNotesAction, saveContextNote } from "@/app/assistant/tag-actions";
-import type { ContextNote } from "@/lib/assistant/tag-batch";
+import { standingNoteModelWarning, type ContextNote } from "@/lib/assistant/tag-batch";
 
 /** The user's own notes. Saving here is the user editing, not the model. */
 export function ContextNotesButton({
@@ -17,6 +17,7 @@ export function ContextNotesButton({
   const [editing, setEditing] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
@@ -27,6 +28,7 @@ export function ContextNotesButton({
   const add = async () => {
     setBusy(true);
     setError(null);
+    setWarning(null);
     try {
       const res = await saveContextNote({ body: draft });
       if (!res.ok) {
@@ -34,6 +36,7 @@ export function ContextNotesButton({
         return;
       }
       setDraft("");
+      setWarning(res.warning ?? null);
       await refresh();
     } finally {
       setBusy(false);
@@ -53,7 +56,12 @@ export function ContextNotesButton({
             {notes.map((note) => (
               <li key={note.id} className="rounded bg-neutral-50 px-2 py-1 text-[12px]">
                 {editing === note.id ? (
-                  <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={2} maxLength={500} className="w-full rounded border border-neutral-300 px-1 py-0.5 text-[12px]" />
+                  <>
+                    <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={2} maxLength={500} className="w-full rounded border border-neutral-300 px-1 py-0.5 text-[12px]" />
+                    {standingNoteModelWarning(editBody) && (
+                      <p className="mt-1 text-[11px] text-amber-700">{standingNoteModelWarning(editBody)}</p>
+                    )}
+                  </>
                 ) : (
                   <span>{note.body}</span>
                 )}
@@ -70,6 +78,7 @@ export function ContextNotesButton({
                           setError(res.error);
                           return;
                         }
+                        setWarning(res.warning ?? null);
                         setEditing(null);
                         await refresh();
                       }}
@@ -108,6 +117,9 @@ export function ContextNotesButton({
             placeholder="Add a note"
             className="mt-2 w-full rounded border border-neutral-300 px-2 py-1 text-[12px]"
           />
+          {(standingNoteModelWarning(draft) || warning) && (
+            <p className="mt-1 text-[11px] text-amber-700">{standingNoteModelWarning(draft) ?? warning}</p>
+          )}
           {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
           <button type="button" disabled={busy || !draft.trim()} onClick={() => void add()} className="mt-1 text-[11px] font-medium text-neutral-800 disabled:opacity-50">
             Save note
