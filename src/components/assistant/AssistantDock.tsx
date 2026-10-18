@@ -880,6 +880,35 @@ export function AssistantDock() {
           }}
           onApply={(rows) => void applyBatch(rows)}
           onUndo={() => void undoBatch()}
+          onRememberChoice={async (offer) => {
+            try {
+              const res = await rememberPayeeDefault({
+                counterpartyId: offer.counterpartyId,
+                categoryId: offer.categoryId,
+                confirmFromCategoryId: offer.existingCategoryId ?? null,
+              });
+              if (res.ok) {
+                setBatch((b) =>
+                  b
+                    ? {
+                        ...b,
+                        error: undefined,
+                        rows: b.rows.map((row) =>
+                          row.counterpartyId === offer.counterpartyId ? { ...row, defaultCategoryId: offer.categoryId } : row,
+                        ),
+                      }
+                    : b,
+                );
+                return res;
+              }
+              if (!("confirm" in res)) setBatch((b) => (b ? { ...b, error: res.error } : b));
+              return res;
+            } catch (e) {
+              const error = errorText(e, "Couldn't update that default.");
+              setBatch((b) => (b ? { ...b, error } : b));
+              return { ok: false as const, error };
+            }
+          }}
           onRemember={(offer) => {
             void rememberPayeeDefault({
               counterpartyId: offer.counterpartyId,
