@@ -20,7 +20,7 @@ Multi-tenant by `user_id`: every domain row belongs to a user. One special legac
 | Password hashing | `bcryptjs` cost **12** via [`src/lib/password.ts`](src/lib/password.ts) |
 | Revocation | `user.token_version` — JWT embeds version; mismatch forces re-login; bump via [`scripts/bump-token-version.ts`](scripts/bump-token-version.ts) |
 | Registration | **Open** — [`src/app/auth/actions.ts`](src/app/auth/actions.ts) `registerUser` + `/register` |
-| Route protection | [`middleware.ts`](middleware.ts) exports `auth`; public: `/login`, `/register`, `/api/auth/*` |
+| Route protection | [`middleware.ts`](middleware.ts) exports `auth`; public: `/login`, `/register`, `/api/auth/*`, `/api/mcp` (bearer-only) |
 
 ### Legacy owner / seed user (do not break)
 
@@ -63,6 +63,10 @@ New users get a **new UUID** via registration; they start with empty data (`ensu
 | [`src/db/schema.ts`](src/db/schema.ts) | Drizzle schema; Auth.js tables use names `user`, `account`, `session`; domain bank accounts are **`money_account`** |
 | [`src/db/money-account.ts`](src/db/money-account.ts) | `getOrCreateAccountForBank(userId, "bob")` |
 | [`scripts/lib/db.ts`](scripts/lib/db.ts) | **CLI-only** DB client (no `server-only`) — use in `scripts/*` |
+| [`src/lib/mcp/auth.ts`](src/lib/mcp/auth.ts) | Single bearer authentication seam for `/api/mcp` |
+| [`src/lib/mcp/server.ts`](src/lib/mcp/server.ts) | Scope-filtered MCP tools; injected actor operations |
+| [`src/lib/mcp/token-store.ts`](src/lib/mcp/token-store.ts), [`draft-store.ts`](src/lib/mcp/draft-store.ts) | Tenant-scoped tokens and proposed tag drafts |
+| [`src/app/api/mcp/route.ts`](src/app/api/mcp/route.ts) | Stateless Streamable HTTP endpoint |
 
 ### Pages (all use auth + tenant scope)
 
@@ -72,6 +76,7 @@ New users get a **new UUID** via registration; they start with empty data (`ensu
 | `/transactions` | |
 | `/timeline` | Imports for period scoped by account |
 | `/reimbursements` | |
+| `/connections` | Create and revoke MCP tokens |
 | `/import` | **Recent imports** must filter `imports.account_id = account.id` (was a global leak pre-auth) |
 | `/login`, `/register` | Public |
 
@@ -95,6 +100,8 @@ const account = await getOrCreateAccountForBank(user.id, "bob");
 | [`src/app/auth/actions.ts`](src/app/auth/actions.ts) | `registerUser` |
 | [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) | 5, all read-only (bootstrap, turn, card data, blank card, apply-to-all preview) — see Ask Money below |
 | [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts) | Tag a month (`suggestTagChunk` is a draft), `applySuggestedTags`, `undoSuggestedTags`, context notes, `rememberPayeeDefault` |
+| [`src/app/connections/actions.ts`](src/app/connections/actions.ts) | `listMcpTokens`, `createMcpToken`, `revokeMcpToken` |
+| [`src/app/assistant/proposed-tag-actions.ts`](src/app/assistant/proposed-tag-actions.ts) | `listProposedTagDrafts`, `openProposedTagDraft`, `resolveProposedTagDraft` |
 
 **Middleware does not protect server actions** — each action must authenticate and authorize itself.
 
@@ -166,7 +173,7 @@ Copy [`.env.example`](.env.example).
 1. `bun install`
 2. Set env (see above)
 3. If DB was push-created: `bun run baseline-migrations`
-4. `bun run db:migrate` (or `db:push` on empty dev DB). Migration `0012_assistant_context_note` has to be applied before the Ask Money deploy that reads it.
+4. `bun run db:migrate` (or `db:push` on empty dev DB). Migrations `0012_assistant_context_note` and `0013_mcp_token_and_draft` must be applied before deploying Ask Money and MCP.
 5. `bun run bootstrap-owner` — **before** serving traffic in prod
 6. `bun run build` / deploy only after step 4 has finished on that database
 7. Log in at `/login` with `BOOTSTRAP_EMAIL` — confirm legacy data on dashboard
@@ -216,7 +223,7 @@ bun run db:studio
 
 ## Ask Money assistant (floating panel, ⌘/Ctrl+J)
 
-Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assistant/`](src/components/assistant/). Server entry points: [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) (`assistantTurn`, `getAssistantBootstrap`, `loadAssistantTxns`, `prepareAssistantOp`, `prepareApplyToAll`) and [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts). Agent: [`src/lib/assistant/agent.ts`](src/lib/assistant/agent.ts). Month tagging and standing notes: [`actor-ops.ts`](src/lib/assistant/actor-ops.ts) is the callable core. It takes a `MoneyActor` (`userId` + `accountId`) the caller has already authenticated. `loadTagMonth` selects the month, `draftTagChunk` builds the suggestion list (model guesses are an optional input; the function does not call a model), `applyTagDraft` / `undoTagDraft` write through `setCategoryForActor`, and `readStandingNotes` / `proposeStandingNote` read and propose notes. The Ask Money tool definitions and the React panel are wrappers. There is no MCP server or CLI in this app. [`tag-batch.ts`](src/lib/assistant/tag-batch.ts) holds the pure draft rules, [`tag-suggest.ts`](src/lib/assistant/tag-suggest.ts) is the one model call per chunk, [`tag-store.ts`](src/lib/assistant/tag-store.ts) is the account-scoped read, and [`TagReview.tsx`](src/components/assistant/TagReview.tsx) is the review modal.
+Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assistant/`](src/components/assistant/). Server entry points: [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) (`assistantTurn`, `getAssistantBootstrap`, `loadAssistantTxns`, `prepareAssistantOp`, `prepareApplyToAll`) and [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts). Agent: [`src/lib/assistant/agent.ts`](src/lib/assistant/agent.ts). Month tagging and standing notes: [`actor-ops.ts`](src/lib/assistant/actor-ops.ts) is the callable core. It takes a `MoneyActor` (`userId` + `accountId`) the caller has already authenticated. `loadTagMonth` selects the month, `draftTagChunk` builds the suggestion list (model guesses are an optional input; the function does not call a model), `applyTagDraft` / `undoTagDraft` write through `setCategoryForActor`, and `readStandingNotes` / `proposeStandingNote` read and propose notes. The Ask Money tool definitions and the React panel are wrappers. The remote MCP server uses the same authenticated actor pattern. There is no CLI in this app. [`tag-batch.ts`](src/lib/assistant/tag-batch.ts) holds the pure draft rules, [`tag-suggest.ts`](src/lib/assistant/tag-suggest.ts) is the one model call per chunk, [`tag-store.ts`](src/lib/assistant/tag-store.ts) is the account-scoped read, and [`TagReview.tsx`](src/components/assistant/TagReview.tsx) is the review modal.
 
 **Agent contract — do not weaken:**
 - **Read tools run; write tools only propose.** `search_transactions` / `get_open_balances` / `query` / `describe_table` / `show_transactions` execute against the session user's account. `propose_note|split|itemized_split|category|net_settle|context_note` return a draft rendered as a pending card; nothing is written until the user presses Apply, which calls the **existing** server actions (`setTransactionNote`, `createSplit`, `setTransactionCategory`, `saveNetEvent`, or `addContextNote`) with the user's edited values. `suggest_tags` only opens a review draft. Never give the model a tool that writes.
@@ -225,7 +232,7 @@ Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assist
 - **Refs, not ids.** The model sees transactions as `T1…`/`CURRENT` handed out by the server in that turn. `CURRENT` (the focus id from the browser) is re-checked against the account every turn. A ref from a search with several matches is refused until the user picks. A ref found only by `query` can be shown (`show_transactions`) but not proposed on in that turn — SQL isn't grounded in the user's words the way a search is; once shown it becomes `CURRENT` for the next message.
 - **Query sandbox** ([`query-tables.ts`](src/lib/assistant/query-tables.ts), [`query-sandbox.ts`](src/lib/assistant/query-sandbox.ts)). `query` runs the model's SQL on a throwaway in-memory SQLite copy of the user's data, never on Neon. The copy holds only the columns in `QUERY_TABLES` (same model view as below, refs instead of ids), loaded by `loadQueryData` scoped to the account/user. It runs in a separate `node --permission` process with an empty environment (no secrets, no files, no child processes); SQLite's authorizer allows only reading those tables and `QUERY_FUNCTIONS` (no writes, PRAGMA, ATTACH, schema reads, recursion); `query_only`, size limits, one statement, 100-row cap; a slow query is stopped by killing the process (SQLite can't be interrupted from JS). Needs Node 24.10+ for the authorizer — without it the sandbox refuses to start. Money columns ending in `_paise` are turned into rupees by code before the model sees them. Keep the brief in the instructions short (every step resends it); details go in `describe_table`.
 - **Ask, don't guess.** Split participants and the net-settle person must be names the user actually wrote in the chat ([`namedByUser`](src/lib/assistant/find-intent.ts)); otherwise the tool returns an error and the model asks.
-- **What the model sees** ([`model-view.ts`](src/lib/assistant/model-view.ts)): date, amount, direction, a payee name (display name → purpose → bank payee name; never a UPI handle or any part of one, nothing with 5+ digits), the user's notes, category names, split status, known person names, open amounts owed between the user and a named person, and standing notes that pass `modelSafeText`. A standing note or transaction note that contains `@` or 5+ digits is omitted entirely. Never raw bank descriptions, ref ids, account balances or DB ids. Amounts and dates on the tag review come from the database.
+- **What the model sees** ([`model-view.ts`](src/lib/assistant/model-view.ts)): date, amount, direction, a payee name (display name → purpose → bank payee name; never a UPI handle or any part of one, nothing with 5+ digits), the user's notes, category names, split status, known person names, open amounts owed between the user and a named person, and standing notes that pass `modelSafeText`. Auto display names copied from a UPI handle and handle-shaped payee tokens are never sent. A standing note or transaction note that contains `@` or 5+ digits is omitted entirely. Never raw bank descriptions, ref ids, account balances or DB ids. Amounts and dates on the tag review come from the database.
 - **Exact money.** Amounts/dates the model passes are re-read by the server ([`groundIntent`](src/lib/assistant/find-intent.ts)): anything not in the user's own words is dropped (small models invent years). Card math is integer paise ([`card-math.ts`](src/lib/assistant/card-math.ts)); equal-split remainder paise go to the user. Itemised bills: the model copies each price, its count and who had it ([`groundBillItems`](src/lib/assistant/find-intent.ts) refuses any price the user didn't write, so the model can't total or divide); `itemizedShares` pools items with the same people and divides once, and the card lists the items and flags any gap between them and the payment rather than folding it into a share.
 - **Stale/duplicate safety.** Apply passes guards: `createSplit({ expectNoExistingSplit })`, `setTransactionNote({ expectedCurrentNote })`, `setTransactionCategory({ expectedCurrentCategoryId })`; `saveNetEvent` refuses a second event on the same transaction and returns `{ netEventId }` for Undo; `deleteSplit({ expectNoSettlements })` for split Undo. `applySuggestedTags` uses the same category guard per row and returns applied, skipped, and failed counts. The panel blocks double-clicks per card and flags a reload mid-save instead of retrying.
 - **Undo** reverses through existing actions (`deleteSplit` only when nothing was settled since, `deleteNetEvent`, previous note/category).
@@ -273,6 +280,29 @@ Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assist
 - Auth added: JWT Credentials, open registration, in-place bootstrap on `SEED_USER_ID` to preserve finance FKs, ownership checks on 13 server actions, tenant-scoped pages.
 
 When in doubt: **preserve `SEED_USER_ID` data**, **authenticate every server action**, **scope every query by the current user's account**.
+
+## MCP server (`/api/mcp`)
+
+POST, GET and DELETE authenticate by bearer token, independently of session cookies. Cross-host Origin headers are refused. The endpoint uses the Node runtime, stateless Streamable HTTP, a 256 KiB body limit and `Cache-Control: no-store`.
+
+- **Read or propose only.** `list_categories`, `list_transactions`, `get_period_summary` and `list_standing_notes` read one account. `propose_tags` accepts only uncategorized transactions and stores a pending draft. Bad rows are rejected individually: `invalid_row`, `unknown_ref`, `duplicate_ref`, `unknown_category`, `already_categorized`. The model never receives a tool that writes finance data. The app applies drafts through the existing chunked `applySuggestedTags` / `undoSuggestedTags` and TagReview flow. Opening a draft rechecks categories and marks every suggestion as model-sourced, so none is preselected.
+- **Tokens.** Plaintext is `mny_` plus 43 base64url characters from 32 random bytes, returned once. Store only SHA-256 of the full token and an eight-character display hint. Names are 1–40 trimmed characters; each user can hold ten unrevoked tokens. `read` exposes read tools; `propose` also exposes `propose_tags`. Revocation and a changed `user.token_version` invalidate tokens. Limit each token to 60 requests per minute: Upstash sliding window when configured, otherwise a best-effort fixed window per process. `last_used_at` updates at most once per minute.
+- **Authentication seam.** [`authenticateMcpRequest`](src/lib/mcp/auth.ts) alone turns an HTTP request into an actor, scope, token id and label. OAuth in v2 plugs in here; tools receive an authenticated actor and never inspect bearer headers.
+- **Model view.** [`view.ts`](src/lib/mcp/view.ts) reuses `modelSafePayee` / `modelSafeText`. Return exact rupee strings, dates and safe names/notes; omit bank descriptions, handles, bank refs, balances and DB ids. Auto display names copied from a UPI handle and handle-shaped payee tokens are never sent. `bankPayeeLabel` never uses bank-extracted labels for UPI rows, because a wrapped handle can lose its `@`; use only a user-chosen display name or purpose, as Ask Money does. Payee filtering runs against the same safe name returned to the caller.
+- **Refs.** [`refs.ts`](src/lib/mcp/refs.ts) derives an HMAC key from `AUTH_SECRET`. Missing secret fails closed. Refs bind the user and transaction without revealing ids. Rotating `AUTH_SECRET` changes refs; drafts store internal ids and survive rotation.
+- **Drafts and migration.** Migration `0013_mcp_token_and_draft` creates only `mcp_token` and `mcp_tag_draft` plus indexes, checks and foreign keys. Run it before deploying. Missing tables read as no tokens or no drafts; creation/proposal returns a migration message. Stored JSON is decoded row by row with Effect Schema. A user can have twenty pending drafts. Resolving a draft changes its status only; finance writes still require Apply in the app.
+
+# Learning more about Effect
+
+This repository uses the Effect Typescript library.
+
+It is on Effect 4: ingest uses `Result` instead of `Either` and `Effect.result` instead of `Effect.either`.
+
+Before writing any Effect code, first read `node_modules/effect/AGENTS.md`
+**completely**, and follow the links in the file when required.
+
+If you need to learn more about particular Effect apis and concepts that the
+guide doesn't cover, search through the source code in `node_modules/effect/src`.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import {
   ParseError,
   PdfPasswordError,
@@ -512,7 +512,7 @@ export const bobAdapter: BankAdapter = {
       ) {
         return false;
       }
-      const extracted = yield* Effect.either(
+      const extracted = yield* Effect.result(
         Effect.tryPromise({
           try: () =>
             extractPdfText(new Uint8Array(file), {
@@ -531,13 +531,13 @@ export const bobAdapter: BankAdapter = {
           },
         }),
       );
-      if (Either.isLeft(extracted)) {
-        if (extracted.left._tag === "PdfPasswordError") {
-          return yield* Effect.fail(extracted.left);
+      if (Result.isFailure(extracted)) {
+        if (extracted.failure._tag === "PdfPasswordError") {
+          return yield* Effect.fail(extracted.failure);
         }
         return false;
       }
-      const { text } = extracted.right;
+      const { text } = extracted.success;
       const blob = Array.isArray(text) ? text.join(" ") : text;
       return /bob World|Bank of Baroda|BARB0/.test(blob);
     }),
