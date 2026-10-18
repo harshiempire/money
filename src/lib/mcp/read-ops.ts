@@ -5,7 +5,7 @@ import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { readStandingNotes } from "@/lib/assistant/actor-ops";
 import { loadCategories } from "@/lib/assistant/data";
 import { monthBounds } from "@/lib/assistant/tag-store";
-import { modelSafeText } from "@/lib/assistant/model-view";
+import { modelSafeText, userChosenDisplayName } from "@/lib/assistant/model-view";
 import { resolveSpendPeriod } from "@/lib/spend/period";
 import { categoryBreakdown, loadPeriodTxnMetrics } from "@/domain/spend/net";
 import { mapPeriodMetrics } from "@/domain/spend/period-metrics";
@@ -32,6 +32,8 @@ export const mcpReadOps: McpOps = {
         drCr: t.drCr,
         channel: t.channel,
         displayName: schema.counterparties.displayName,
+        counterpartyKind: schema.counterparties.kind,
+        counterpartyKey: schema.counterparties.key,
         parsedPurpose: t.parsedPurpose,
         rawDescription: t.rawDescription,
         note: t.note,
@@ -55,8 +57,9 @@ export const mcpReadOps: McpOps = {
           input.uncategorized ? isNull(t.categoryId) : undefined,
         ),
       );
-    return rows.map(({ rawDescription, ...row }) => ({
+    return rows.map(({ rawDescription, counterpartyKind, counterpartyKey, ...row }) => ({
       ...row,
+      displayName: userChosenDisplayName({ kind: counterpartyKind, key: counterpartyKey, displayName: row.displayName }),
       label: bankPayeeLabel(rawDescription),
     }));
   },

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { deriveMcpRefKey, transactionRef } from "./refs";
 import { transactionView, validatePayeeFilter, rupees, bankPayeeLabel } from "./view";
+import { userChosenDisplayName } from "@/lib/assistant/model-view";
+import type { McpTransaction } from "./view";
 
 test("transaction views omit bank text, handles, digits and unsafe notes", () => {
   const rawDescription = "UPI/123456789/09:00/UPI/private.handle@bank/9876543210";
@@ -84,4 +86,28 @@ test("bank label extraction never exposes a fragment of a wrapped UPI handle", (
   expect(JSON.stringify(view)).not.toContain("private.handle");
   expect(bankPayeeLabel("NEFT-ABCD123-JANE DOE")).toBe("JANE DOE");
   expect(bankPayeeLabel("ordinary bank description")).toBe("Payee");
+});
+
+test("MCP payees omit handle-shaped display names and purposes, preserving normal names", () => {
+  const row: McpTransaction = {
+    id: "db", txnDate: "2026-10-01", amountPaise: 100, drCr: "debit", channel: "upi",
+    displayName: null, parsedPurpose: null, label: "Payee", note: null, category: null, isTransfer: false,
+  };
+  for (const handle of ["paytm.s2wy2f", "rohanrao.b-", "q123456", "ravi_k"]) {
+    expect(transactionView({ ...row, displayName: handle, parsedPurpose: "lunch" }, "ref").payee).toBe("lunch");
+    expect(transactionView({ ...row, displayName: handle, parsedPurpose: handle }, "ref").payee).toBe("Payee");
+  }
+  for (const name of ["Swiggy", "Padmavathi Tiffins", "ACME PAYROLL", "groceries", "lunch", "Petrol"]) {
+    expect(transactionView({ ...row, displayName: name }, "ref").payee).toBe(name);
+    expect(transactionView({ ...row, parsedPurpose: name }, "ref").payee).toBe(name);
+  }
+  // Alphabetic auto names evade the handle-shape check: loader provenance must reject them.
+  expect(transactionView({
+    ...row,
+    displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi", displayName: " RA VI " }),
+  }, "ref").payee).toBe("Payee");
+  expect(transactionView({
+    ...row,
+    displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi_k", displayName: "Ravi Kumar" }),
+  }, "ref").payee).toBe("Ravi Kumar");
 });
