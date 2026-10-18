@@ -106,13 +106,14 @@ function rememberCheckboxLabel(input: {
   differs: boolean;
   prompt: RememberPrompt | null;
 }): string {
+  const saves = "This saves immediately.";
   if (input.prompt) {
-    return `Remember for this payee. ${input.payee}'s default is ${input.prompt.existingCategoryName}. Change it to ${input.prompt.nextCategoryName}?`;
+    return `Remember for this payee. ${input.payee}'s default is ${input.prompt.existingCategoryName}. Change it to ${input.prompt.nextCategoryName}? ${saves}`;
   }
   if (input.differs && input.existingName && input.nextName) {
-    return `Remember for this payee. ${input.payee}'s default is ${input.existingName}. Change it to ${input.nextName}?`;
+    return `Remember for this payee. ${input.payee}'s default is ${input.existingName}. Change it to ${input.nextName}? ${saves}`;
   }
-  return "Remember for this payee";
+  return `Remember for this payee. ${saves}`;
 }
 
 function ConfidenceCue({ level }: { level: TagConfidence }) {
@@ -327,12 +328,60 @@ export function TagReview({
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<string | null>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
   const [confirmPrompt, setConfirmPrompt] = useState<Record<string, RememberPrompt>>({});
   const [rememberingId, setRememberingId] = useState<string | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   useEffect(() => {
     if ((applying || result) && editing) setEditing(null);
   }, [applying, result, editing]);
+
+  useEffect(() => {
+    if (!editing) {
+      const opener = openerRef.current;
+      openerRef.current = null;
+      opener?.focus();
+      return;
+    }
+    if (!window.matchMedia("(width < 640px)").matches) return;
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setEditing(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        sheet.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        sheet.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      const inside = active instanceof HTMLElement && focusable.includes(active);
+      if (event.shiftKey) {
+        if (!inside || active === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (!inside || active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing]);
 
   const nameOf = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null;
   const categoryFor = (row: TagDraftRow) => chosen[row.txnId] ?? row.suggestedCategoryId;
@@ -477,9 +526,16 @@ export function TagReview({
                 <span className="min-w-0">Review suggested tags</span>
               </h2>
               <p className="mt-0.5 text-xs text-neutral-500">
-                {loading
-                  ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved yet`
-                  : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply`}
+                <span className="sm:hidden">
+                  {loading
+                    ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`
+                    : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`}
+                </span>
+                <span className="hidden sm:inline">
+                  {loading
+                    ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved yet`
+                    : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply`}
+                </span>
               </p>
             </div>
             <span className="shrink-0 whitespace-nowrap rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-600">
@@ -605,7 +661,14 @@ export function TagReview({
                             disabled={locked}
                             aria-expanded={editing === row.txnId}
                             aria-haspopup="dialog"
-                            onClick={() => setEditing(editing === row.txnId ? null : row.txnId)}
+                            onClick={(event) => {
+                              if (editing === row.txnId) {
+                                setEditing(null);
+                                return;
+                              }
+                              openerRef.current = event.currentTarget;
+                              setEditing(row.txnId);
+                            }}
                             className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
                               editing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
                             }`}
@@ -825,7 +888,7 @@ export function TagReview({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-neutral-200 bg-white px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden">
+      <div className="max-h-[40vh] shrink-0 overflow-y-auto overscroll-contain border-t border-neutral-200 bg-white px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-medium text-neutral-900">
@@ -870,10 +933,12 @@ export function TagReview({
             onClick={() => setEditing(null)}
           />
           <div
+            ref={sheetRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="tag-change-title"
-            className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl bg-white px-4 pt-3 shadow-[0_-12px_40px_rgba(0,0,0,.18)] pb-[max(1rem,env(safe-area-inset-bottom))]"
+            tabIndex={-1}
+            className="absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-t-2xl bg-white px-4 pt-3 shadow-[0_-12px_40px_rgba(0,0,0,.18)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none"
           >
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-neutral-200" />
             <div className="flex items-center justify-between gap-3">
@@ -896,6 +961,7 @@ export function TagReview({
                     key={category.id}
                     type="button"
                     onClick={() => choose(editingRow, category.id, false)}
+                    aria-pressed={selected}
                     className={`inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-medium ${pillClass(category.name)} ${
                       selected ? "ring-2 ring-neutral-900 ring-offset-1" : ""
                     }`}
