@@ -895,7 +895,7 @@ export function AssistantDock() {
                   );
                   return;
                 }
-                if ("confirm" in res && res.confirm) {
+                if ("confirm" in res) {
                   setBatch((b) =>
                     b?.result
                       ? {
