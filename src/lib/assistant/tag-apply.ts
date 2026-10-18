@@ -4,6 +4,16 @@
  * saved.
  */
 
+/** One server call saves at most this many rows, so a timeout cannot sit on a 400-row write. */
+export const TAG_APPLY_CHUNK = 50;
+
+export function chunkApplyRows<T>(rows: T[], size = TAG_APPLY_CHUNK): T[][] {
+  const out: T[][] = [];
+  const step = Math.max(1, size);
+  for (let i = 0; i < rows.length; i += step) out.push(rows.slice(i, i + step));
+  return out;
+}
+
 export interface TagApplyRequest {
   transactionId: string;
   categoryId: string;
@@ -14,6 +24,8 @@ export interface AppliedTag {
   transactionId: string;
   previousCategoryId: string | null;
   categoryId: string;
+  /** The flag on the row before this apply. Undo writes it back. */
+  previousIsTransfer: boolean;
 }
 
 export interface TagApplyResult {
@@ -24,7 +36,7 @@ export interface TagApplyResult {
 
 export async function runTagApply(
   rows: TagApplyRequest[],
-  applyOne: (row: TagApplyRequest) => Promise<void>,
+  applyOne: (row: TagApplyRequest) => Promise<{ previousIsTransfer: boolean }>,
 ): Promise<TagApplyResult> {
   const applied: AppliedTag[] = [];
   const failed: TagApplyResult["failed"] = [];
@@ -35,11 +47,12 @@ export async function runTagApply(
       continue;
     }
     try {
-      await applyOne(row);
+      const written = await applyOne(row);
       applied.push({
         transactionId: row.transactionId,
         previousCategoryId: row.expectedCurrentCategoryId,
         categoryId: row.categoryId,
+        previousIsTransfer: written.previousIsTransfer,
       });
     } catch (err) {
       failed.push({

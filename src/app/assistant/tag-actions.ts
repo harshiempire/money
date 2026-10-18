@@ -18,7 +18,7 @@ import {
   type MoneyActor,
 } from "@/lib/assistant/actor-ops";
 import { loadTxnCards } from "@/lib/assistant/data";
-import type { AppliedTag, TagApplyRequest } from "@/lib/assistant/tag-apply";
+import { TAG_APPLY_CHUNK, type AppliedTag, type TagApplyRequest } from "@/lib/assistant/tag-apply";
 import { monthTitle, standingNotesForModel, type ContextNote, type ModelGuess, type TagDraftRow } from "@/lib/assistant/tag-batch";
 import { suggestTagNames } from "@/lib/assistant/tag-suggest";
 import type { CategoryLite, TxnCardData } from "@/lib/assistant/types";
@@ -140,8 +140,8 @@ export async function suggestTagChunk(input: {
   };
 }
 
-function cleanApplyRows(raw: unknown): TagApplyRequest[] {
-  if (!Array.isArray(raw)) return [];
+function cleanApplyRows(raw: unknown): { rows: TagApplyRequest[]; overflow: TagApplyRequest[] } {
+  if (!Array.isArray(raw)) return { rows: [], overflow: [] };
   const out: TagApplyRequest[] = [];
   for (const item of raw.slice(0, 400)) {
     if (!item || typeof item !== "object") continue;
@@ -154,7 +154,7 @@ function cleanApplyRows(raw: unknown): TagApplyRequest[] {
       expectedCurrentCategoryId: typeof expected === "string" ? expected : null,
     });
   }
-  return out;
+  return { rows: out.slice(0, TAG_APPLY_CHUNK), overflow: out.slice(TAG_APPLY_CHUNK) };
 }
 
 export async function applySuggestedTags(input: { rows: TagApplyRequest[] }): Promise<{
@@ -163,7 +163,11 @@ export async function applySuggestedTags(input: { rows: TagApplyRequest[] }): Pr
   skipped: number;
 }> {
   const actor = await actorFromSession();
-  const result = await applyTagDraft(actor, cleanApplyRows(input?.rows));
+  const cleaned = cleanApplyRows(input?.rows);
+  const result = await applyTagDraft(actor, cleaned.rows);
+  for (const row of cleaned.overflow) {
+    result.failed.push({ transactionId: row.transactionId, reason: `Only ${TAG_APPLY_CHUNK} rows can be saved at a time.` });
+  }
   if (result.applied.length > 0) {
     revalidatePath("/transactions");
     revalidatePath("/");
@@ -176,14 +180,20 @@ export async function undoSuggestedTags(input: { rows: AppliedTag[] }): Promise<
   failed: number;
 }> {
   const actor = await actorFromSession();
-  const rows = Array.isArray(input?.rows) ? input.rows.slice(0, 400) : [];
+  const rows = Array.isArray(input?.rows) ? input.rows.slice(0, TAG_APPLY_CHUNK) : [];
   const cleaned: AppliedTag[] = [];
+  let failed = Math.max(0, (Array.isArray(input?.rows) ? input.rows.length : 0) - rows.length);
   for (const row of rows) {
     if (!row || typeof row.transactionId !== "string" || typeof row.categoryId !== "string") continue;
+    if (typeof row.previousIsTransfer !== "boolean") {
+      failed++;
+      continue;
+    }
     cleaned.push({
       transactionId: row.transactionId,
       previousCategoryId: typeof row.previousCategoryId === "string" ? row.previousCategoryId : null,
       categoryId: row.categoryId,
+      previousIsTransfer: row.previousIsTransfer,
     });
   }
   const result = await undoTagDraft(actor, cleaned);
@@ -191,14 +201,20 @@ export async function undoSuggestedTags(input: { rows: AppliedTag[] }): Promise<
     revalidatePath("/transactions");
     revalidatePath("/");
   }
-  return { restored: result.restored.length, failed: result.failed.length };
+  return { restored: result.restored.length, failed: result.failed.length + failed };
 }
 
 /** Sets the payee's default category only. Other transactions stay as they are. */
-export async function rememberPayeeDefault(input: { counterpartyId: string; categoryId: string }) {
+export async function rememberPayeeDefault(input: {
+  counterpartyId: string;
+  categoryId: string;
+  confirmFromCategoryId?: string | null;
+}) {
   const actor = await actorFromSession();
+  const confirm = input?.confirmFromCategoryId;
   return rememberPayeeDefaultForActor(actor, {
     counterpartyId: typeof input?.counterpartyId === "string" ? input.counterpartyId : "",
     categoryId: typeof input?.categoryId === "string" ? input.categoryId : "",
+    confirmFromCategoryId: typeof confirm === "string" ? confirm : null,
   });
 }

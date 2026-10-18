@@ -64,6 +64,8 @@ export interface TagDraftRow {
   transfer: boolean;
   /** Present so the review can offer to remember a payee default. The model payload drops it. */
   counterpartyId: string | null;
+  /** The payee's current default, when this row has a payee. Remember must not replace it quietly. */
+  defaultCategoryId: string | null;
 }
 
 export interface ModelGuess {
@@ -212,11 +214,18 @@ function safePayee(row: TagFact): string {
   });
 }
 
+const GENERIC_PAYEE = new Set(["payee", "self", "unknown", "opening balance"]);
+
+function genericPayeeLabel(name: string): boolean {
+  return GENERIC_PAYEE.has(name.trim().toLowerCase());
+}
+
 function samePayee(target: TagFact, other: TagFact): boolean {
   if (target.counterpartyId && other.counterpartyId) return target.counterpartyId === other.counterpartyId;
   const payee = safePayee(target);
-  if (payee === "Payee") return false;
-  return safePayee(other) === payee;
+  const otherPayee = safePayee(other);
+  if (genericPayeeLabel(payee) || genericPayeeLabel(otherPayee)) return false;
+  return payee === otherPayee;
 }
 
 export type HistoryCall =
@@ -366,6 +375,7 @@ export function buildDraftRow(
     ref,
     transfer: row.isTransfer,
     counterpartyId: row.counterpartyId,
+    defaultCategoryId: row.defaultCategoryId,
     choices: [] as TagChoice[],
   };
   if (history.kind === "conflict") {
@@ -484,4 +494,32 @@ export function proposeStandingNote(body: string): StandingNoteProposal {
     };
   }
   return { ok: true, body: text };
+}
+
+/** Shown when a note the user is saving would be dropped before it reaches the model. */
+export function standingNoteModelWarning(body: string): string | null {
+  const trimmed = body.replace(/\s+/g, " ").trim();
+  if (trimmed.length < 2 || modelSafeText(trimmed, 500)) return null;
+  return "Ask Money will skip this note. It has a handle or a long number, so it is not sent to the model.";
+}
+
+export type RememberDefaultDecision =
+  | { action: "set" }
+  | { action: "unchanged" }
+  | { action: "confirm"; existingCategoryId: string };
+
+/**
+ * A payee with no default can gain one. A payee who already has a different
+ * default is unchanged until the caller confirms that exact previous id.
+ */
+export function decideRememberDefault(input: {
+  currentCategoryId: string | null;
+  nextCategoryId: string;
+  confirmFromCategoryId?: string | null;
+}): RememberDefaultDecision {
+  if (!input.currentCategoryId || input.currentCategoryId === input.nextCategoryId) {
+    return input.currentCategoryId === input.nextCategoryId ? { action: "unchanged" } : { action: "set" };
+  }
+  if (input.confirmFromCategoryId === input.currentCategoryId) return { action: "set" };
+  return { action: "confirm", existingCategoryId: input.currentCategoryId };
 }

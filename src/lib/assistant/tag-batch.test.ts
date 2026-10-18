@@ -12,7 +12,9 @@ import {
   rowForModel,
   rowPreselected,
   selectUntagged,
+  decideRememberDefault,
   proposeStandingNote,
+  standingNoteModelWarning,
   standingNotesForModel,
   type TagFact,
 } from "./tag-batch";
@@ -223,6 +225,40 @@ test("standing notes and free text drop handles and long numbers", () => {
   expect(standingNotesForModel(["Swiggy is Food", "me@upi", "account 1234567890"])).toEqual(["Swiggy is Food"]);
   expect(proposeStandingNote("Swiggy is Food")).toEqual({ ok: true, body: "Swiggy is Food" });
   expect(proposeStandingNote("rahul@oksbi").ok).toBe(false);
+  expect(standingNoteModelWarning("Swiggy is Food")).toBeNull();
+  expect(standingNoteModelWarning("rahul@oksbi")).toMatch(/skip this note/);
+  expect(standingNoteModelWarning("account 1234567890")).toMatch(/skip this note/);
+});
+
+test("a generic payee label does not borrow another payment's category", () => {
+  const past = [
+    fact({ id: "p1", txnDate: "2026-05-01", label: "payee", categoryId: "food" }),
+    fact({ id: "p2", txnDate: "2026-05-02", label: "PAYEE", categoryId: "food" }),
+    fact({ id: "s1", txnDate: "2026-05-03", label: "Self", displayName: "Self", categoryId: "travel" }),
+    fact({ id: "s2", txnDate: "2026-05-04", label: "Self", displayName: "Self", categoryId: "travel" }),
+    fact({ id: "c1", txnDate: "2026-05-05", label: "Cafe", displayName: "Cafe", categoryId: "food" }),
+    fact({ id: "c2", txnDate: "2026-05-06", label: "Cafe", displayName: "Cafe", categoryId: "food" }),
+  ];
+  expect(readHistory(fact({ id: "t", txnDate: "2026-06-01", label: "Payee" }), past, categories).kind).toBe("none");
+  expect(readHistory(fact({ id: "t2", txnDate: "2026-06-02", label: "Self", displayName: "Self" }), past, categories).kind).toBe("none");
+  const cafe = readHistory(fact({ id: "t3", txnDate: "2026-06-03", label: "Cafe", displayName: "Cafe" }), past, categories);
+  expect(cafe.kind).toBe("match");
+  if (cafe.kind === "match") expect(cafe.categoryId).toBe("food");
+});
+
+test("remembering a default does not replace a different one without naming it", () => {
+  expect(decideRememberDefault({ currentCategoryId: null, nextCategoryId: "food" })).toEqual({ action: "set" });
+  expect(decideRememberDefault({ currentCategoryId: "food", nextCategoryId: "food" })).toEqual({ action: "unchanged" });
+  expect(decideRememberDefault({ currentCategoryId: "groceries", nextCategoryId: "food" })).toEqual({
+    action: "confirm",
+    existingCategoryId: "groceries",
+  });
+  expect(
+    decideRememberDefault({ currentCategoryId: "groceries", nextCategoryId: "food", confirmFromCategoryId: "groceries" }),
+  ).toEqual({ action: "set" });
+  expect(
+    decideRememberDefault({ currentCategoryId: "groceries", nextCategoryId: "food", confirmFromCategoryId: "travel" }),
+  ).toEqual({ action: "confirm", existingCategoryId: "groceries" });
 });
 
 test("a chunk draft keeps history and conflict rows away from the model", () => {

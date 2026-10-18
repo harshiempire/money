@@ -22,27 +22,36 @@ export async function setCategoryForActor(
     transactionId: string;
     categoryId: string;
     expectedCurrentCategoryId?: string | null;
+    /** Write this flag as given. Undo passes the flag recorded when the row was tagged. */
+    isTransfer?: boolean;
   },
-): Promise<void> {
+): Promise<{ previousIsTransfer: boolean }> {
   const { accountId } = await assertTransactionOwned(actor.userId, input.transactionId);
   if (actor.accountId && actor.accountId !== accountId) {
     throw new Error("That transaction isn't in this account.");
   }
+  const [current] = await db
+    .select({ categoryId: schema.transactions.categoryId, isTransfer: schema.transactions.isTransfer })
+    .from(schema.transactions)
+    .where(eq(schema.transactions.id, input.transactionId))
+    .limit(1);
   if (input.expectedCurrentCategoryId !== undefined) {
-    const [current] = await db
-      .select({ categoryId: schema.transactions.categoryId })
-      .from(schema.transactions)
-      .where(eq(schema.transactions.id, input.transactionId))
-      .limit(1);
     if ((current?.categoryId ?? null) !== (input.expectedCurrentCategoryId || null)) {
       throw new Error("The category changed since this card was made. Ask again to get a fresh card.");
     }
   }
+  const previousIsTransfer = current?.isTransfer ?? false;
   const newCategoryId = input.categoryId === "" ? null : input.categoryId;
   if (newCategoryId) await assertCategoryOwned(actor.userId, newCategoryId);
-  const isTransfer = newCategoryId ? await categoryIsTransfer(newCategoryId, actor.userId) : false;
+  const isTransfer =
+    input.isTransfer !== undefined
+      ? input.isTransfer
+      : newCategoryId
+        ? await categoryIsTransfer(newCategoryId, actor.userId)
+        : false;
   await db
     .update(schema.transactions)
     .set({ categoryId: newCategoryId, isTransfer })
     .where(and(eq(schema.transactions.id, input.transactionId), eq(schema.transactions.accountId, accountId)));
+  return { previousIsTransfer };
 }

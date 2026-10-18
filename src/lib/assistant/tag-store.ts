@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { isMissingTable } from "@/lib/db/pg-errors";
 import { counterpartyLabel } from "@/lib/format";
 import type { ContextNote, TagFact, UntaggedMonth } from "./tag-batch";
 
@@ -95,9 +96,16 @@ export async function listUntaggedMonths(accountId: string): Promise<UntaggedMon
 }
 
 export async function loadContextNotes(userId: string): Promise<ContextNote[]> {
-  return db
-    .select({ id: schema.assistantContextNotes.id, body: schema.assistantContextNotes.body })
-    .from(schema.assistantContextNotes)
-    .where(eq(schema.assistantContextNotes.userId, userId))
-    .orderBy(asc(schema.assistantContextNotes.createdAt));
+  try {
+    return await db
+      .select({ id: schema.assistantContextNotes.id, body: schema.assistantContextNotes.body })
+      .from(schema.assistantContextNotes)
+      .where(eq(schema.assistantContextNotes.userId, userId))
+      .orderBy(asc(schema.assistantContextNotes.createdAt));
+  } catch (err) {
+    // Deploy can reach this code before migration 0012. Every Ask Money turn
+    // reads notes, so a missing table is an empty list, not a panel outage.
+    if (isMissingTable(err)) return [];
+    throw err;
+  }
 }
