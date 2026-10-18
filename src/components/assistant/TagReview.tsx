@@ -561,7 +561,7 @@ export function TagReview({
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="break-words font-medium text-neutral-900">{payee}</div>
-                            <div className="break-words text-[11px] text-neutral-500">
+                            <div className="break-words text-xs text-neutral-500">
                               {txn ? `${shortMonthDay(txn.txnDate)} · ` : ""}
                               {row.transfer ? "Flagged as a transfer. " : ""}
                               {row.reason}
@@ -579,20 +579,22 @@ export function TagReview({
                           ) : (
                             <span className="text-[11px] text-neutral-400">No suggestion</span>
                           )}
-                          <ConfidenceCue level={row.confidence} />
+                          <span className="text-xs">
+                            <ConfidenceCue level={row.confidence} />
+                          </span>
                         </div>
                         {saved && <div className="mt-1 text-[11px] font-medium text-emerald-700">Saved</div>}
                         {rowFailure && !result?.undone && (
                           <div className="mt-1 text-[11px] font-medium text-red-600">Not saved. {rowFailure.reason}</div>
                         )}
-                        <div className="mt-2 flex flex-wrap gap-1">
+                        <div className="mt-2 flex flex-nowrap items-center gap-1">
                           <button
                             type="button"
                             disabled={locked || !categoryId}
                             onClick={() => {
                               if (!isSelected) toggle(row);
                             }}
-                            className={`rounded-md px-2.5 py-1.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
                               isSelected ? "bg-emerald-500 text-white" : "border border-neutral-200 text-neutral-500"
                             }`}
                           >
@@ -604,7 +606,7 @@ export function TagReview({
                             aria-expanded={editing === row.txnId}
                             aria-haspopup="dialog"
                             onClick={() => setEditing(editing === row.txnId ? null : row.txnId)}
-                            className={`rounded-md px-2.5 py-1.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
                               editing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
@@ -614,7 +616,7 @@ export function TagReview({
                             type="button"
                             disabled={locked}
                             onClick={() => skip(row)}
-                            className={`rounded-md px-2.5 py-1.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
                               isSkipped ? "bg-neutral-200 text-neutral-500" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
@@ -894,7 +896,7 @@ export function TagReview({
                     key={category.id}
                     type="button"
                     onClick={() => choose(editingRow, category.id, false)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium ${pillClass(category.name)} ${
+                    className={`inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-medium ${pillClass(category.name)} ${
                       selected ? "ring-2 ring-neutral-900 ring-offset-1" : ""
                     }`}
                   >
