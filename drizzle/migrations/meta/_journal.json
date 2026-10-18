@@ -92,6 +92,13 @@
       "when": 1792306015619,
       "tag": "0012_assistant_context_note",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792337883783,
+      "tag": "0013_mcp_token_and_draft",
+      "breakpoints": true
     }
   ]
 }
