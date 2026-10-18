@@ -285,6 +285,8 @@ export function TagReview({
   txns,
   categories,
   error,
+  notice,
+  summary,
   suggester,
   result,
   onCancel,
@@ -305,6 +307,8 @@ export function TagReview({
   txns: Record<string, TxnCardData>;
   categories: CategoryLite[];
   error?: string;
+  notice?: string;
+  summary?: string;
   suggester: "model" | "history" | "stub";
   result: TagReviewResult | null;
   onCancel: () => void;
@@ -527,14 +531,16 @@ export function TagReview({
               </h2>
               <p className="mt-0.5 text-xs text-neutral-500">
                 <span className="sm:hidden">
-                  {loading
-                    ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`
-                    : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`}
+                  {summary ??
+                    (loading
+                      ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`
+                      : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply, except a payee default you tick Remember on, which saves right away`)}
                 </span>
                 <span className="hidden sm:inline">
-                  {loading
-                    ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved yet`
-                    : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply`}
+                  {summary ??
+                    (loading
+                      ? `Suggesting tags for ${label || "this month"} · ${loaded} of ${total || "…"} · nothing is saved yet`
+                      : `Ask Money found ${total} untagged transaction${total === 1 ? "" : "s"} in ${label} · nothing is saved until you press Apply`)}
                 </span>
               </p>
             </div>
@@ -543,6 +549,7 @@ export function TagReview({
             </span>
           </header>
 
+          {notice && <p className="px-4 pb-2 text-xs text-amber-700 sm:px-5">{notice}</p>}
           {error && <p className="px-4 pb-2 text-xs font-medium text-red-600 sm:px-5">{error}</p>}
           {suggester === "history" && !loading && rows.length > 0 && (
             <p className="px-4 pb-2 text-[11px] text-amber-700 sm:px-5">
