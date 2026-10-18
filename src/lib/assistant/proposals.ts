@@ -15,6 +15,7 @@ import {
   type BillItem,
 } from "./card-math";
 import type { BillItemIntent } from "./find-intent";
+import { proposeStandingNote } from "./tag-batch";
 import type { CategoryLite, NetLine, OpDraft, SplitItems, TxnCardData } from "./types";
 
 /** `say` replaces the stock reply when the card needs explaining. */
@@ -164,6 +165,12 @@ export function proposeNote(card: TxnCardData, noteText: string): Proposal {
     draft: { op: "note", txnId: card.id, currentNote: card.note, note: noteText.trim().slice(0, 500) },
     trace: [],
   };
+}
+
+export function proposeContextNote(body: string): Proposal {
+  const proposed = proposeStandingNote(body);
+  if (!proposed.ok) return { ok: false, reason: proposed.reason };
+  return { ok: true, draft: { op: "context_note", body: proposed.body }, trace: ["propose_context_note"] };
 }
 
 export function proposeCategory(card: TxnCardData, said: string, categories: CategoryLite[]): Proposal {

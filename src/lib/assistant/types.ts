@@ -86,7 +86,8 @@ export type OpDraft =
       recv: NetLine[];
       pay: NetLine[];
       note: string;
-    };
+    }
+  | { op: "context_note"; body: string };
 
 export type OpStatus = "pending" | "applying" | "applied" | "undoing" | "discarded" | "undone";
 
@@ -95,7 +96,8 @@ export type UndoInfo =
   | { kind: "cat"; prevCategoryId: string | null; appliedCategoryId: string }
   | { kind: "cat_all"; ids: string[]; categoryId: string }
   | { kind: "split" }
-  | { kind: "net"; netEventId: string };
+  | { kind: "net"; netEventId: string }
+  | { kind: "context_note"; id: string };
 
 export type ChatMessage =
   | { kind: "user"; id: string; text: string }
@@ -146,6 +148,13 @@ export type ChatMessage =
       status: OpStatus;
       error?: string;
       undo?: UndoInfo;
+    }
+  | {
+      kind: "tag_run";
+      id: string;
+      year: number;
+      month: number;
+      started?: boolean;
     };
 
 /** What a turn sends back; ids are assigned by the client. */
@@ -153,7 +162,8 @@ export type TurnMessage =
   | Omit<Extract<ChatMessage, { kind: "ai" }>, "id">
   | Omit<Extract<ChatMessage, { kind: "txn" }>, "id">
   | Omit<Extract<ChatMessage, { kind: "pick" }>, "id">
-  | { kind: "op"; draft: OpDraft };
+  | { kind: "op"; draft: OpDraft }
+  | { kind: "tag_run"; year: number; month: number };
 
 export interface HistoryTurn {
   role: "user" | "assistant";

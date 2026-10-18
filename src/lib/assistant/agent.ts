@@ -24,12 +24,14 @@ import { rulesIntent } from "./rules-intent";
 import { MONTH_ABBR, modelAmount, modelDate, modelSafePayee } from "./model-view";
 import {
   proposeCategory,
+  proposeContextNote,
   proposeItemizedSplit,
   proposeNetSettle,
   proposeNote,
   proposeSplit,
   type Proposal,
 } from "./proposals";
+import { monthTitle, parseMonthName } from "./tag-batch";
 import { loadOpenLinesForPerson, loadQueryData, loadTxnCards } from "./data";
 import { resolvePerson } from "./card-math";
 import { QUERY_TABLES, buildQueryTables, describeTable, formatQueryResult, queryBrief } from "./query-tables";
@@ -221,6 +223,35 @@ export const AGENT_TOOLS: FunctionTool[] = [
       properties: { txn_ref: str("The incoming payment: T1… or CURRENT."), person_name: str("Who sent it.") },
     },
   },
+  {
+    type: "function",
+    name: "suggest_tags",
+    description:
+      "Draft categories for every untagged payment in one calendar month. Returns a review list only. Nothing is saved until the user applies it in the review.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["month_name", "year"],
+      properties: {
+        month_name: str('Month name, e.g. "June".'),
+        year: nullableStr("Four-digit year if the user said one, otherwise null."),
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "propose_context_note",
+    description:
+      "Show a pending card that adds a standing note (a category preference or a fact the user just stated). Nothing is saved until they apply it.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["body"],
+      properties: { body: str("The note, in the user's words. No handles or account numbers.") },
+    },
+  },
 ];
 
 export interface TurnContext {
@@ -236,6 +267,8 @@ export interface TurnContext {
   focusPicked: boolean;
   categories: CategoryLite[];
   knownPeople: string[];
+  /** Notes that already passed the model-view privacy filter. */
+  standingNotes: string[];
 }
 
 export interface TurnOutput {
@@ -267,6 +300,8 @@ interface TurnState {
   proposed: OpDraft["op"] | null;
   /** The proposal's own explanation (e.g. items that don't add up), used as the reply. */
   say: string | null;
+  /** Set when suggest_tags starts a review. The panel fills the draft in chunks. */
+  tagRun: { year: number; month: number } | null;
 }
 
 function newTurnState(focus: string | null): TurnState {
@@ -282,6 +317,7 @@ function newTurnState(focus: string | null): TurnState {
     focus,
     proposed: null,
     say: null,
+    tagRun: null,
   };
 }
 
@@ -337,6 +373,11 @@ Rules:
 - If something needed is missing or ambiguous, ask one short question instead of guessing.
 - Keep replies short: one or two sentences, or a short list when they asked for one. Only state amounts that came from a tool result.
 - You can't delete transactions, move money, or change anything besides notes, splits, categories and net settlements.
+- To tag every untagged payment in a month ("tag June"), call suggest_tags. It opens a review draft and does not save anything.
+- When the user states a preference to remember ("Swiggy is Food"), call propose_context_note with their words. It is not saved until they apply.
+
+Standing notes from the user:
+${ctx.standingNotes.length ? ctx.standingNotes.map((n) => `- ${n}`).join("\n") : "none yet"}
 
 Today is ${ctx.today}.
 Tables for query (this user's data only):
@@ -552,6 +593,39 @@ async function runTool(call: FunctionCall, ctx: TurnContext, state: TurnState, g
     };
   }
 
+  if (call.name === "suggest_tags") {
+    const month = parseMonthName(s("month_name") ?? "");
+    const yearText = s("year");
+    const todayYear = Number(ctx.today.slice(0, 4));
+    const todayMonth = Number(ctx.today.slice(5, 7));
+    const year = yearText && /^\d{4}$/.test(yearText) ? Number(yearText) : month && month <= todayMonth ? todayYear : todayYear - 1;
+    if (!month || year < 2000 || year > 2100) {
+      state.trace.push("suggest_tags(—) → need a month");
+      return { error: "Say which month to tag, for example June 2026." };
+    }
+    state.tagRun = { year, month };
+    state.artifacts.push({ kind: "tag_run", year, month });
+    state.trace.push(`suggest_tags(${monthTitle(year, month)}) → draft`);
+    return {
+      status: "draft_started",
+      period: monthTitle(year, month),
+      next: "A review draft is opening. Nothing is saved. Tell the user to check the suggestions and apply the ones they want.",
+    };
+  }
+
+  if (call.name === "propose_context_note") {
+    const proposal = proposeContextNote(s("body") ?? "");
+    if (!proposal.ok) {
+      state.trace.push("propose_context_note → not possible");
+      return { error: proposal.reason };
+    }
+    state.trace.push(...proposal.trace);
+    state.artifacts.push({ kind: "op", draft: proposal.draft });
+    state.proposed = proposal.draft.op;
+    state.say = proposal.say ?? null;
+    return { status: "card_shown", next: "The user reviews and applies it. Reply in one short sentence." };
+  }
+
   const ref = (s("txn_ref") ?? "").trim().toUpperCase();
   const txnId = ref === "CURRENT" ? ctx.focusTxnId : state.refs.get(ref) ?? null;
   if (!txnId) {
@@ -647,6 +721,7 @@ const PROPOSED_TEXT: Record<OpDraft["op"], string> = {
   cat: "Here's the category change. Apply it when it looks right.",
   net: "Review the lines, then save — nothing is saved until you do.",
   cat_all: "Here's what would change. Apply it when it looks right.",
+  context_note: "I'll add this to your notes. Apply it when it looks right.",
 };
 
 function historyItems(history: HistoryTurn[]): ResponseItem[] {
@@ -659,7 +734,9 @@ function historyItems(history: HistoryTurn[]): ResponseItem[] {
 
 /** Finishes the messages: text + trace first, then the cards, with no duplicate txn cards. */
 function assemble(state: TurnState, text: string, notice?: string): TurnMessage[] {
-  const opTxns = new Set(state.artifacts.flatMap((a) => (a.kind === "op" ? [a.draft.txnId] : [])));
+  const opTxns = new Set(
+    state.artifacts.flatMap((a) => (a.kind === "op" && "txnId" in a.draft ? [a.draft.txnId] : [])),
+  );
   const seen = new Set<string>();
   const cards = state.artifacts.filter((a) => {
     if (a.kind !== "txn") return true;
@@ -748,6 +825,10 @@ async function agentLoop(ctx: TurnContext, state: TurnState): Promise<TurnOutput
     // A card is the answer; skip another model round-trip just to say so.
     if (state.proposed) {
       text = state.say ?? (text || PROPOSED_TEXT[state.proposed]);
+      break;
+    }
+    if (state.tagRun) {
+      text = text || `Reviewing untagged payments in ${monthTitle(state.tagRun.year, state.tagRun.month)}. Nothing is saved until you apply.`;
       break;
     }
     if (step === MAX_STEPS - 1) text = text || "I couldn't finish that. Try asking a different way.";

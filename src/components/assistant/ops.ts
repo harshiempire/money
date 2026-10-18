@@ -3,6 +3,7 @@
  * authenticated server actions (which re-check ownership and re-validate the
  * money) with the values the user edited — never the model's raw output.
  */
+import { addContextNote, deleteContextNote } from "@/app/assistant/tag-actions";
 import {
   applyCategoryToCounterparty,
   setTransactionCategory,
@@ -28,6 +29,8 @@ export function draftReady(draft: OpDraft): boolean {
       return draft.count > 0;
     case "net":
       return netBalance(draft.inflowPaise, draft.recv, draft.pay).ok;
+    case "context_note":
+      return draft.body.trim().length > 0;
   }
 }
 
@@ -95,6 +98,10 @@ export async function applyDraft(
         message: `Split saved. ${owes}. Your spend on this is now ${formatPaise(balance.yourSharePaise)}.`,
       };
     }
+    case "context_note": {
+      const { id } = await addContextNote({ body: draft.body.trim() });
+      return { undo: { kind: "context_note", id }, message: "Added to your notes. Ask Money will see it on the next message." };
+    }
     case "net": {
       if (!netBalance(draft.inflowPaise, draft.recv, draft.pay).ok) throw new Error("The lines don't balance yet.");
       const lines = (ls: typeof draft.recv) => ls.map((l) => ({ id: l.id, paise: typedPaise(l.val) }));
@@ -123,20 +130,24 @@ export async function applyDraft(
 /** `fresh` is the transaction re-read just before undoing. */
 export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardData | undefined): Promise<string> {
   switch (undo.kind) {
-    case "note":
+    case "note": {
+      if (draft.op !== "note") throw new Error("That card doesn't match.");
       await setTransactionNote({
         transactionId: draft.txnId,
         note: undo.prevNote ?? "",
         expectedCurrentNote: undo.appliedNote,
       });
       return undo.prevNote ? "Put the previous note back." : "Note removed.";
-    case "cat":
+    }
+    case "cat": {
+      if (draft.op !== "cat") throw new Error("That card doesn't match.");
       await setTransactionCategory({
         transactionId: draft.txnId,
         categoryId: undo.prevCategoryId ?? "",
         expectedCurrentCategoryId: undo.appliedCategoryId || null,
       });
       return "Category put back.";
+    }
     case "cat_all": {
       let reverted = 0;
       let skipped = 0;
@@ -154,13 +165,12 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
       } The payee's default category stays as it is.`;
     }
     case "split": {
+      if (draft.op !== "split") throw new Error("That card doesn't match.");
       if (!fresh?.split) return "The split was already removed.";
-      if (draft.op === "split") {
-        const b = splitBalance(draft.totalPaise, draft.yourShare, draft.parts);
-        const people = draft.parts.filter((p) => p.name.trim() && typedPaise(p.amt) > 0).length;
-        if (fresh.split.participants !== people || fresh.split.yourSharePaise !== b.yourSharePaise) {
-          throw new Error("This split was edited in the table since. Change it there instead.");
-        }
+      const b = splitBalance(draft.totalPaise, draft.yourShare, draft.parts);
+      const people = draft.parts.filter((p) => p.name.trim() && typedPaise(p.amt) > 0).length;
+      if (fresh.split.participants !== people || fresh.split.yourSharePaise !== b.yourSharePaise) {
+        throw new Error("This split was edited in the table since. Change it there instead.");
       }
       // The server refuses if any money was settled against it in the meantime.
       await deleteSplit({ transactionId: draft.txnId, expectNoSettlements: true });
@@ -169,6 +179,11 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
     case "net":
       await deleteNetEvent({ netEventId: undo.netEventId });
       return "Net event reversed.";
+    case "context_note": {
+      const removed = await deleteContextNote({ id: undo.id });
+      if (!removed.ok) throw new Error(removed.error);
+      return "Removed that note.";
+    }
   }
 }
 

@@ -105,6 +105,7 @@ const turn = (message: string, focusTxnId: string | null = null, focusPicked = f
   runAgentTurn({
     userId: "user", accountId: "account", today: "2026-10-06", message, history: [], focusTxnId,
     resumedAfterPick: false, focusPicked, categories: [{ id: "cat-food", name: "Food", kind: "spend" }], knownPeople: ["Nitin"],
+    standingNotes: [],
   });
 
 beforeEach(() => {
@@ -209,6 +210,28 @@ describe("agent loop", () => {
     const out = await turn("keep going");
     expect(modelCalls).toBe(12);
     expect(out.messages[0]).toMatchObject({ text: "I couldn't finish that. Try asking a different way." });
+  });
+
+  test("suggest_tags opens a review draft and does not write", async () => {
+    script = [call("suggest_tags", { month_name: "June", year: "2026" })];
+    const out = await turn("tag every payment in June");
+    expect(modelCalls).toBe(1);
+    expect(out.messages).toContainEqual({ kind: "tag_run", year: 2026, month: 6 });
+    expect(out.messages.some((m) => m.kind === "op")).toBe(false);
+  });
+
+  test("a context note with a handle is refused", async () => {
+    let error = "";
+    script = [
+      call("propose_context_note", { body: "rahul@oksbi is Family" }),
+      (input) => {
+        error = lastOutput(input).error;
+        return say("I can't save that.")(input);
+      },
+    ];
+    const out = await turn("remember rahul@oksbi is Family");
+    expect(error).toContain("handle");
+    expect(out.messages.some((m) => m.kind === "op")).toBe(false);
   });
 
   test("retries a timeout once", async () => {
