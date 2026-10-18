@@ -11,6 +11,8 @@ import { getChatgptConnectionStatus } from "@/lib/ai/chatgpt/token-store";
 import { runAgentTurn, runRulesTurn, type TurnContext } from "@/lib/assistant/agent";
 import { loadCategories, loadOpenLinesForPerson, loadPersonNames, loadTxnCards } from "@/lib/assistant/data";
 import { proposeNetSettle, proposeNote, proposeSplit } from "@/lib/assistant/proposals";
+import { listUntaggedMonthsForActor, notesForModel, readStandingNotes, type MoneyActor } from "@/lib/assistant/actor-ops";
+import { monthTitle, parseTagRequest, type ContextNote, type UntaggedMonth } from "@/lib/assistant/tag-batch";
 import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hints";
 import { resolveDefaultPersonFilter } from "@/lib/people/match-counterparty";
 import { counterpartyLabel } from "@/lib/format";
@@ -22,6 +24,9 @@ export interface AssistantBootstrap {
   aiState: AiState;
   accountName: string;
   categories: CategoryLite[];
+  /** Newest first. The first entry is the Tag button's default month. */
+  untaggedMonths: UntaggedMonth[];
+  contextNotes: ContextNote[];
 }
 
 export type TurnResult =
@@ -45,14 +50,21 @@ async function aiStateFor(userId: string): Promise<AiState> {
   return status === "active" ? "ready" : status === "none" ? "not_connected" : "reconnect";
 }
 
+function actorFor(userId: string, accountId: string): MoneyActor {
+  return { userId, accountId };
+}
+
 export async function getAssistantBootstrap(): Promise<AssistantBootstrap> {
   const user = await requireCurrentUserAction();
-  const [account, aiState, categories] = await Promise.all([
-    getOrCreateAccountForBank(user.id, "bob"),
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const actor = actorFor(user.id, account.id);
+  const [aiState, categories, untaggedMonths, contextNotes] = await Promise.all([
     aiStateFor(user.id),
     loadCategories(user.id),
+    listUntaggedMonthsForActor(actor),
+    readStandingNotes(actor),
   ]);
-  return { aiState, accountName: account.name, categories };
+  return { aiState, accountName: account.name, categories, untaggedMonths, contextNotes };
 }
 
 function cleanHistory(raw: unknown): HistoryTurn[] {
@@ -88,12 +100,36 @@ export async function assistantTurn(input: {
     typeof input.focusTxnId === "string" && input.focusTxnId
       ? ((await loadTxnCards(account.id, user.id, [input.focusTxnId]))[0]?.id ?? null)
       : null;
-  const [categories, knownPeople] = await Promise.all([loadCategories(user.id), loadPersonNames(user.id)]);
+  const actor = actorFor(user.id, account.id);
+  const [categories, knownPeople, standingNotes, untaggedMonths] = await Promise.all([
+    loadCategories(user.id),
+    loadPersonNames(user.id),
+    notesForModel(actor),
+    listUntaggedMonthsForActor(actor),
+  ]);
+  const today = todayInIndia();
+  const tag = parseTagRequest(message, untaggedMonths, today);
+  if (tag) {
+    return {
+      ok: true,
+      reader: "rules",
+      messages: [
+        {
+          kind: "ai",
+          text: `Reviewing untagged payments in ${monthTitle(tag.year, tag.month)}. Nothing is saved until you apply.`,
+        },
+        { kind: "tag_run", year: tag.year, month: tag.month },
+      ],
+      txns: [],
+      focusTxnId,
+      limits: null,
+    };
+  }
 
   const ctx: TurnContext = {
     userId: user.id,
     accountId: account.id,
-    today: todayInIndia(),
+    today,
     message,
     history: cleanHistory(input.history),
     focusTxnId,
@@ -101,6 +137,7 @@ export async function assistantTurn(input: {
     focusPicked: input.focusPicked === true && focusTxnId !== null,
     categories,
     knownPeople,
+    standingNotes,
   };
 
   const aiState = await aiStateFor(user.id);

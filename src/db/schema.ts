@@ -483,3 +483,27 @@ export const aiConnections = pgTable(
   },
   (t) => [uniqueIndex("ai_connection_user_provider_uniq").on(t.userId, t.provider)],
 );
+
+// Facts the user wants Ask Money to remember (category preferences, "Swiggy
+// is Food"). The model only receives rows that pass modelSafeText. Additions
+// the model suggests are a pending card; this table changes when the user
+// applies or edits.
+export const assistantContextNotes = pgTable(
+  "assistant_context_note",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("assistant_context_note_user_idx").on(t.userId, t.createdAt)],
+);

@@ -12,6 +12,7 @@ import {
   assertTransactionOwned,
   assertTransactionsOwned,
 } from "@/lib/auth/ownership";
+import { categoryIsTransfer, setCategoryForActor } from "@/lib/transactions/category-for-actor";
 import { counterpartyLabel } from "@/lib/format";
 import { summarizeSplitSettlement } from "@/lib/splits/settlement-status";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
@@ -23,38 +24,7 @@ export async function setTransactionCategory(input: {
   expectedCurrentCategoryId?: string | null;
 }) {
   const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-  if (input.expectedCurrentCategoryId !== undefined) {
-    const [current] = await db
-      .select({ categoryId: schema.transactions.categoryId })
-      .from(schema.transactions)
-      .where(eq(schema.transactions.id, input.transactionId))
-      .limit(1);
-    if ((current?.categoryId ?? null) !== (input.expectedCurrentCategoryId || null)) {
-      throw new Error("The category changed since this card was made. Ask again to get a fresh card.");
-    }
-  }
-  const newCategoryId = input.categoryId === "" ? null : input.categoryId;
-  if (newCategoryId) {
-    await assertCategoryOwned(user.id, newCategoryId);
-  }
-  const isTransfer = newCategoryId
-    ? await categoryIsTransfer(newCategoryId, user.id)
-    : false;
-
-  await db
-    .update(schema.transactions)
-    .set({ categoryId: newCategoryId, isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
-
+  await setCategoryForActor({ userId: user.id }, input);
   revalidatePath("/transactions");
   revalidatePath("/");
 }
@@ -107,23 +77,6 @@ export async function applyCategoryToCounterparty(input: {
   revalidatePath("/transactions");
   revalidatePath("/");
   return { updated: updated.length, ids: updated.map((r) => r.id) };
-}
-
-async function categoryIsTransfer(
-  categoryId: string,
-  userId: string,
-): Promise<boolean> {
-  const [cat] = await db
-    .select({ kind: schema.categories.kind })
-    .from(schema.categories)
-    .where(
-      and(
-        eq(schema.categories.id, categoryId),
-        eq(schema.categories.userId, userId),
-      ),
-    )
-    .limit(1);
-  return cat?.kind === "transfer" || cat?.kind === "investment";
 }
 
 export async function setTransactionTransfer(input: {

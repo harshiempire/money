@@ -132,6 +132,8 @@ export async function callAgentStep(input: {
   tools: FunctionTool[];
   sessionId: string;
   timeoutMs?: number;
+  /** Defaults to auto. A named function forces that tool, used by batch tagging. */
+  toolChoice?: "auto" | { type: "function"; name: string };
 }): Promise<AgentStepResult> {
   let res: Response;
   try {
@@ -151,7 +153,7 @@ export async function callAgentStep(input: {
         instructions: input.instructions,
         input: input.input,
         tools: input.tools,
-        tool_choice: "auto",
+        tool_choice: input.toolChoice ?? "auto",
         parallel_tool_calls: false,
         reasoning: { effort: "low" },
         store: false,

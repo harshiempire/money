@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { isMissingTable } from "@/lib/db/pg-errors";
 import { loadSecretKey, open, seal } from "@/lib/crypto/secret-box";
 import type { AiFailure } from "@/lib/ai/failure";
 import {
@@ -27,12 +28,6 @@ const connectionWhere = (userId: string) =>
 
 const needsRefresh = (row: Row) =>
   !row.accessExpiresAt || row.accessExpiresAt.getTime() - Date.now() < REFRESH_WINDOW_MS;
-
-/** Postgres "undefined_table" — migration 0011 hasn't been applied to this DB. */
-function isMissingTable(err: unknown): boolean {
-  const code = (e: unknown) => (e && typeof e === "object" && "code" in e ? (e as { code: unknown }).code : null);
-  return code(err) === "42P01" || code((err as { cause?: unknown } | null)?.cause) === "42P01";
-}
 
 export async function getChatgptConnectionStatus(
   userId: string,

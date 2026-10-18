@@ -30,6 +30,7 @@ const TITLE: Record<OpDraft["op"], string> = {
   cat: "Set category",
   cat_all: "Apply to all from payee",
   net: "Net settle",
+  context_note: "Add a note",
 };
 
 export function OpCard({
@@ -64,6 +65,7 @@ export function OpCard({
   if (draft.op === "cat") applyLabel = "Apply category";
   if (draft.op === "cat_all") applyLabel = `Apply to ${draft.count} payment${draft.count === 1 ? "" : "s"}`;
   if (draft.op === "net") applyLabel = "Save net event";
+  if (draft.op === "context_note") applyLabel = "Save note";
 
   return (
     <div className={`${card} ${border} ${faded ? "opacity-55" : ""}`}>
@@ -96,6 +98,16 @@ export function OpCard({
             from {draft.payee}. Payments that already have a category aren&apos;t touched. New payments from this payee will
             default to it too.
           </p>
+        )}
+        {draft.op === "context_note" && (
+          <textarea
+            value={draft.body}
+            readOnly={locked}
+            maxLength={500}
+            rows={3}
+            onChange={(e) => onChange({ ...draft, body: e.target.value })}
+            className={`${input} w-full`}
+          />
         )}
         {draft.op === "net" && <NetBody draft={draft} locked={locked} onChange={onChange} />}
         {msg.error && <p className="text-xs font-medium text-red-600">{msg.error}</p>}

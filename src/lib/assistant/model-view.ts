@@ -7,6 +7,17 @@
 const LONG_DIGITS = /\d{5,}/;
 
 /**
+ * Text the model may see: the user's own words, with UPI handles and long
+ * digit runs (phones, account numbers, reference ids) removed entirely.
+ * A note that fails is omitted, not partially redacted.
+ */
+export function modelSafeText(value: string | null | undefined, max = 160): string | null {
+  const t = value?.replace(/\s+/g, " ").trim();
+  if (!t || t.length < 2 || t.includes("@") || LONG_DIGITS.test(t)) return null;
+  return t.slice(0, max);
+}
+
+/**
  * A payee name safe to send: your display name for them → the payment
  * purpose → a bank payee name (NEFT/IMPS). Never a UPI handle or any part of
  * one, and nothing with a long digit run (phone/account numbers).
