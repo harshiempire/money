@@ -629,7 +629,7 @@ export function TagReview({
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {categoryName ? (
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${pillClass(categoryName)}`}>
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${pillClass(categoryName)}`}>
                               {categoryName}
                             </span>
                           ) : (
@@ -639,9 +639,9 @@ export function TagReview({
                             <ConfidenceCue level={row.confidence} />
                           </span>
                         </div>
-                        {saved && <div className="mt-1 text-[11px] font-medium text-emerald-700">Saved</div>}
+                        {saved && <div className="mt-1 text-xs font-medium text-emerald-700">Saved</div>}
                         {rowFailure && !result?.undone && (
-                          <div className="mt-1 text-[11px] font-medium text-red-600">Not saved. {rowFailure.reason}</div>
+                          <div className="mt-1 text-xs font-medium text-red-600">Not saved. {rowFailure.reason}</div>
                         )}
                         <div className="mt-2 flex flex-nowrap items-center gap-1">
                           <button
@@ -650,7 +650,7 @@ export function TagReview({
                             onClick={() => {
                               if (!isSelected) toggle(row);
                             }}
-                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs ${
                               isSelected ? "bg-emerald-500 text-white" : "border border-neutral-200 text-neutral-500"
                             }`}
                           >
@@ -669,7 +669,7 @@ export function TagReview({
                               openerRef.current = event.currentTarget;
                               setEditing(row.txnId);
                             }}
-                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs ${
                               editing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
@@ -679,7 +679,7 @@ export function TagReview({
                             type="button"
                             disabled={locked}
                             onClick={() => skip(row)}
-                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-[11px] ${
+                            className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs ${
                               isSkipped ? "bg-neutral-200 text-neutral-500" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
