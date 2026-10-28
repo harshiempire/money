@@ -29,7 +29,7 @@ export function Connections({
 }) {
   const [tokens, setTokens] = useState(initialTokens);
   const [name, setName] = useState("");
-  const [scope, setScope] = useState<"read" | "propose">("read");
+  const [scope, setScope] = useState<"read" | "propose" | "write">("read");
   const [created, setCreated] = useState<{
     token: string;
     command: string;
@@ -249,6 +249,15 @@ export function Connections({
               </span>
             </span>
           </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="radio" name="scope" value="write" checked={scope === "write"}
+              onChange={() => setScope("write")} className="mt-1" />
+            <span>Read, propose and write
+              <span className="block text-xs text-neutral-500">
+                The agent can change categories, notes and flags directly. Every change can be undone from this page.
+              </span>
+            </span>
+          </label>
         </fieldset>
         <button
           type="submit"
@@ -276,7 +285,7 @@ export function Connections({
                   <span className="min-w-0 break-words text-sm font-medium">{token.name}</span>
                   <span className="text-xs text-neutral-500">
                     {token.revokedAt ? "Revoked" : "Active"} ·{" "}
-                    {token.scope === "read" ? "Read" : "Read + propose tags"}
+                    {token.scope === "write" ? "Read, propose and write" : token.scope === "read" ? "Read" : "Read + propose tags"}
                   </span>
                 </div>
                 <p className="mt-1 break-all font-mono text-xs text-neutral-500">{token.hint}</p>

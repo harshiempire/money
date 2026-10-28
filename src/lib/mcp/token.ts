@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Schema } from "effect";
 
-export const McpScope = Schema.Literals(["read", "propose"]);
+export const McpScope = Schema.Literals(["read", "propose", "write"]);
 export type McpScope = typeof McpScope.Type;
 export const McpToken = Schema.String.check(Schema.isPattern(/^mny_[A-Za-z0-9_-]{43}$/));
 
@@ -16,4 +16,8 @@ export function hashMcpToken(token: string): string {
 export function parseMcpBearer(header: string | null): string | null {
   const match = header?.match(/^Bearer ([^\s]+)$/i);
   return match && Schema.is(McpToken)(match[1]) ? match[1] : null;
+}
+
+export function scopeAllows(scope: McpScope, required: McpScope): boolean {
+  return ["read", "propose", "write"].indexOf(scope) >= ["read", "propose", "write"].indexOf(required);
 }

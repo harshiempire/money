@@ -85,7 +85,7 @@ test("unknown, revoked, invalidated, or foreign-account tokens fail closed", asy
   }
 });
 test("valid scopes return one actor and touch at most once per minute", async () => {
-  for (const scope of ["read", "propose"] as const) {
+  for (const scope of ["read", "propose", "write"] as const) {
     const { run, touched } = setup({
       lookup: async () => ({
         ...record,

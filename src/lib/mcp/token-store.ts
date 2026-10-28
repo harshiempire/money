@@ -97,7 +97,7 @@ export async function createToken(actor: MoneyActor, input: unknown) {
   if (!Schema.is(TokenInput)(input))
     return {
       ok: false,
-      error: "Choose a name and a read or propose scope.",
+      error: "Choose a name and a read, propose or write scope.",
     } as const;
   const name = input.name.trim();
   if (name.length < 1 || name.length > 40)

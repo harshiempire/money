@@ -1,5 +1,6 @@
 import "server-only";
 import { and, eq, gte, inArray, isNull, lt } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { readStandingNotes } from "@/lib/assistant/actor-ops";
@@ -14,6 +15,7 @@ import type { McpOps } from "./server";
 import { bankPayeeLabel, rupees } from "./view";
 
 const t = schema.transactions;
+const defaultCategory = alias(schema.categories, "payee_default_category");
 const account = schema.moneyAccounts;
 const ownsAccount = (actor: MoneyActor) =>
   and(eq(account.id, actor.accountId), eq(account.userId, actor.userId));
@@ -38,7 +40,10 @@ export const mcpReadOps: McpOps = {
         rawDescription: t.rawDescription,
         note: t.note,
         category: schema.categories.name,
+        defaultCategory: defaultCategory.name,
         isTransfer: t.isTransfer,
+        needsReview: t.needsReview,
+        categoryId: t.categoryId,
       })
       .from(t)
       .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))
@@ -50,6 +55,7 @@ export const mcpReadOps: McpOps = {
         schema.categories,
         and(eq(t.categoryId, schema.categories.id), eq(schema.categories.userId, actor.userId)),
       )
+      .leftJoin(defaultCategory, and(eq(schema.counterparties.defaultCategoryId, defaultCategory.id), eq(defaultCategory.userId, actor.userId)))
       .where(
         and(
           eq(t.accountId, actor.accountId),

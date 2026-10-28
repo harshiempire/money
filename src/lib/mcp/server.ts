@@ -4,7 +4,10 @@ import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { modelSafeText } from "@/lib/assistant/model-view";
 import { standingNotesForModel } from "@/lib/assistant/tag-batch";
 import type { McpPrincipal } from "./auth";
-import { McpScope } from "./token";
+import { McpScope, scopeAllows } from "./token";
+import { LedgerError } from "@/lib/ledger/context";
+import type { McpWriteOps } from "./write-ops";
+import { UpdateInput, PayeeInput, ChangesInput, UndoInput, WriteOutput, ChangesOutput } from "./write-schemas";
 import { transactionRef } from "./refs";
 import { validateTagProposal, type StoredTagRow } from "./proposal";
 import { McpToolError, pageTransactions } from "./pagination";
@@ -96,7 +99,9 @@ async function safely(run: () => Promise<CallToolResult>): Promise<CallToolResul
         {
           type: "text",
           text:
-            error instanceof McpToolError
+            error instanceof LedgerError
+              ? `${error.code}: ${error.message}`
+              : error instanceof McpToolError
               ? error.message
               : "Money couldn't complete that request. Try again.",
         },
@@ -105,7 +110,7 @@ async function safely(run: () => Promise<CallToolResult>): Promise<CallToolResul
   }
 }
 
-export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8Array): McpServer {
+export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8Array, revKey: Uint8Array, writes?: McpWriteOps): McpServer {
   const server = new McpServer(
     {
       name: "money",
@@ -113,8 +118,9 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     },
     {
       instructions:
-        "Read-only access to one Money account. propose_tags only stores a draft; nothing changes until " +
-        "the owner presses Apply in Money.",
+        principal.scope === "write"
+          ? "Access to one Money account. Write tools change categories, notes, flags and payee defaults directly. Read current refs and revs first. Every write requires an idempotency key; reuse it only for the identical request. Changes can be undone with undo_change or from Connections. propose_tags still only stores a review draft."
+          : "Read access to one Money account. propose_tags only stores a draft; nothing changes until the owner presses Apply in Money.",
     },
   );
   const actor = principal.actor;
@@ -159,7 +165,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     },
     (input) =>
       safely(async () => {
-        return result(pageTransactions(await ops.listTransactions(actor, input), input, actor, key));
+        return result(pageTransactions(await ops.listTransactions(actor, input), input, actor, key, revKey));
       }),
   );
   server.registerTool(
@@ -196,7 +202,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
         });
       }),
   );
-  if (principal.scope === "propose") {
+  if (scopeAllows(principal.scope, "propose")) {
     server.registerTool(
       "propose_tags",
       {
@@ -250,6 +256,28 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
           });
         }),
     );
+  }
+  if (scopeAllows(principal.scope, "write")) {
+    server.registerTool("update_transactions", {
+      title: "Update transactions", description: "Edit categories, notes and flags for 1–100 transactions. All rows succeed together or nothing changes. Read current refs and revs first; stale errors include current_rev. Every change can be undone.",
+      inputSchema: standard(UpdateInput), outputSchema: standard(WriteOutput), annotations: { readOnlyHint: false, destructiveHint: false },
+    }, (input) => safely(async () => result(await requireWrites().update(principal, input))));
+    server.registerTool("set_payee_default", {
+      title: "Set payee default", description: "Set or clear a payee's default category using a transaction ref. current_default must name the present default (null for none) to confirm replacement. Other transactions stay unchanged.",
+      inputSchema: standard(PayeeInput), outputSchema: standard(WriteOutput), annotations: { readOnlyHint: false, destructiveHint: false },
+    }, (input) => safely(async () => result(await requireWrites().payee(principal, input))));
+    server.registerTool("list_changes", {
+      title: "List recent changes", description: "Read the newest changes from the app and agents, including change ids for Undo and redacted reasons. Newest first, up to 50 per page.",
+      inputSchema: standard(ChangesInput), outputSchema: standard(ChangesOutput), annotations: read,
+    }, (input) => safely(async () => result(await requireWrites().changes(principal, input))));
+    server.registerTool("undo_change", {
+      title: "Undo a change", description: "Undo every target of a change together. Refused if a target changed since, or the change was already undone. Undoing an undo restores its previous values.",
+      inputSchema: standard(UndoInput), outputSchema: standard(WriteOutput), annotations: { readOnlyHint: false, destructiveHint: false },
+    }, (input) => safely(async () => result(await requireWrites().undo(principal, input))));
+  }
+  function requireWrites(): McpWriteOps {
+    if (!writes) throw new McpToolError("Write operations aren't available.");
+    return writes;
   }
   return server;
 }

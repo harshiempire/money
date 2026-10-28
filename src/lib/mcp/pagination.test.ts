@@ -18,6 +18,7 @@ const base: McpTransaction = {
   label: "Payee",
   note: null,
   category: null,
+  categoryId: null, needsReview: false,
   isTransfer: false,
 };
 const rows = [

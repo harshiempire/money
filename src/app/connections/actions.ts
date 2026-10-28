@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { LedgerError } from "@/lib/ledger/context";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { createToken, listTokens, revokeToken } from "@/lib/mcp/token-store";
@@ -68,4 +70,36 @@ export async function revokeMcpToken(input: { id: string }): Promise<
     },
     input.id,
   );
+}
+
+export async function listLedgerChanges() {
+  const user = await requireCurrentUserAction();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  try {
+    const { listChanges } = await import("@/lib/ledger/changes");
+    const rows = await listChanges({ userId: user.id, accountId: account.id }, { limit: 20 });
+    return { available: true as const, rows: rows.map((row) => ({
+      id: row.id, at: row.createdAt.toISOString(), by: row.sourceLabel, summary: row.summary,
+      kind: row.kind, count: row.ops.length, undone: row.undoneByChangeId !== null,
+    })) };
+  } catch (e) {
+    if (e instanceof LedgerError && e.code === "migration_required") return { available: false as const, rows: [] };
+    throw e;
+  }
+}
+
+export async function undoLedgerChange(input: { changeId: string }) {
+  const user = await requireCurrentUserAction();
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  if (typeof input?.changeId !== "string" || !input.changeId) return { ok: false, error: "Choose a change first." };
+  try {
+    const { undoChange } = await import("@/lib/ledger/undo");
+    const result = await undoChange({ actor: { userId: user.id, accountId: account.id }, source: "app" }, input.changeId);
+    if (result.stale?.length) return { ok: false, error: "Nothing was undone. A transaction or payee default changed after this change. Review the latest values first." };
+    revalidatePath("/transactions"); revalidatePath("/"); revalidatePath("/connections");
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof LedgerError) return { ok: false, error: e.message };
+    throw e;
+  }
 }

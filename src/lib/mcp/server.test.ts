@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { buildMcpServer, principalFromContext, type McpOps } from "./server";
 import type { McpPrincipal } from "./auth";
-import { deriveMcpRefKey, transactionRef } from "./refs";
+import { deriveMcpRefKey, deriveMcpRevKey, transactionRef } from "./refs";
 import type { StoredTagRow } from "./proposal";
 
 const key = deriveMcpRefKey("protocol-test");
@@ -44,12 +44,12 @@ function fixture(
       drafts.push(draft);
     },
   };
-  const handler = createMcpHandler((ctx) => buildMcpServer(principalFromContext(ctx), ops, key), {
+  const handler = createMcpHandler((ctx) => buildMcpServer(principalFromContext(ctx), ops, key, deriveMcpRevKey("protocol-test")), {
     legacy: "stateless",
     responseMode: "json",
     maxRequestBodySize: 256 * 1024,
   });
-  const call = async (scope: "read" | "propose", method: string, params: unknown = {}) => {
+  const call = async (scope: "read" | "propose" | "write", method: string, params: unknown = {}) => {
     const modern = protocolVersion === "2026-07-28";
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -133,7 +133,7 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         });
         expect(init.json.result.serverInfo.name).toBe("money");
       }
-      for (const scope of ["read", "propose"] as const) {
+      for (const scope of ["read", "propose", "write"] as const) {
         const { json } = await call(scope, "tools/list");
         expect(json.result.tools.map((t: { name: string }) => t.name)).toEqual(
           scope === "read"
@@ -144,6 +144,7 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
                 "get_period_summary",
                 "list_standing_notes",
                 "propose_tags",
+                ...(scope === "write" ? ["update_transactions", "set_payee_default", "list_changes", "undo_change"] : []),
               ],
         );
         const list = json.result.tools.find((t: { name: string }) => t.name === "list_transactions");
@@ -157,7 +158,14 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
           pattern: "^\\d{4}-(0[1-9]|1[0-2])$",
           description: expect.any(String),
         });
-        if (scope === "propose") {
+        if (scope === "write") {
+          const update = json.result.tools.find((t: { name: string }) => t.name === "update_transactions");
+          expect(update.inputSchema.properties.idempotency_key.pattern).toBe("^[A-Za-z0-9_-]{8,80}$");
+          expect(update.inputSchema.properties.rows.minItems).toBe(1);
+          expect(update.inputSchema.properties.rows.maxItems).toBe(100);
+          expect(update.inputSchema.properties.rows.items.required).toEqual(["ref", "rev"]);
+        }
+        if (scope !== "read") {
           const proposal = json.result.tools.find((t: { name: string }) => t.name === "propose_tags");
           expect(proposal.inputSchema.properties.rows).toMatchObject({
             type: "array",
@@ -195,6 +203,12 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         });
         expect(JSON.stringify(list.inputSchema)).not.toContain("Infinity");
         expect(list.inputSchema.required ?? []).toEqual([]);
+      }
+      for (const deniedScope of ["read", "propose"] as const) {
+        for (const name of ["update_transactions", "set_payee_default", "list_changes", "undo_change"]) {
+          const deniedWrite = await call(deniedScope, "tools/call", { name, arguments: {} });
+          expect(deniedWrite.json.error ?? deniedWrite.json.result?.isError).toBeTruthy();
+        }
       }
       const denied = await call("read", "tools/call", {
         name: "propose_tags",

@@ -19,11 +19,13 @@ test("transaction views omit bank text, handles, digits and unsafe notes", () =>
       note: "mail me@home",
       category: "Food",
       isTransfer: false,
+      categoryId: null, needsReview: false,
     },
-    "opaque-ref",
+    "opaque-ref", "rev-test",
   );
   expect(view).toEqual({
     ref: "opaque-ref",
+    rev: "rev-test", needs_review: false,
     date: "2026-10-01",
     amount: "1234.50",
     direction: "paid",
@@ -31,6 +33,7 @@ test("transaction views omit bank text, handles, digits and unsafe notes", () =>
     payee: "Lunch",
     note: null,
     category: "Food",
+    payee_default: null,
     transfer: false,
   });
   const json = JSON.stringify(view);
@@ -79,8 +82,9 @@ test("bank label extraction never exposes a fragment of a wrapped UPI handle", (
       note: null,
       category: null,
       isTransfer: false,
+      categoryId: null, needsReview: false,
     },
-    "ref",
+    "ref", "rev-test",
   );
   expect(view.payee).toBe("Payee");
   expect(JSON.stringify(view)).not.toContain("private.handle");
@@ -91,23 +95,23 @@ test("bank label extraction never exposes a fragment of a wrapped UPI handle", (
 test("MCP payees omit handle-shaped display names and purposes, preserving normal names", () => {
   const row: McpTransaction = {
     id: "db", txnDate: "2026-10-01", amountPaise: 100, drCr: "debit", channel: "upi",
-    displayName: null, parsedPurpose: null, label: "Payee", note: null, category: null, isTransfer: false,
+    displayName: null, parsedPurpose: null, label: "Payee", note: null, category: null, categoryId: null, needsReview: false, isTransfer: false,
   };
   for (const handle of ["paytm.s2wy2f", "rohanrao.b-", "q123456", "ravi_k"]) {
-    expect(transactionView({ ...row, displayName: handle, parsedPurpose: "lunch" }, "ref").payee).toBe("lunch");
-    expect(transactionView({ ...row, displayName: handle, parsedPurpose: handle }, "ref").payee).toBe("Payee");
+    expect(transactionView({ ...row, displayName: handle, parsedPurpose: "lunch" }, "ref", "rev-test").payee).toBe("lunch");
+    expect(transactionView({ ...row, displayName: handle, parsedPurpose: handle }, "ref", "rev-test").payee).toBe("Payee");
   }
   for (const name of ["Swiggy", "Padmavathi Tiffins", "ACME PAYROLL", "groceries", "lunch", "Petrol"]) {
-    expect(transactionView({ ...row, displayName: name }, "ref").payee).toBe(name);
-    expect(transactionView({ ...row, parsedPurpose: name }, "ref").payee).toBe(name);
+    expect(transactionView({ ...row, displayName: name }, "ref", "rev-test").payee).toBe(name);
+    expect(transactionView({ ...row, parsedPurpose: name }, "ref", "rev-test").payee).toBe(name);
   }
   // Alphabetic auto names evade the handle-shape check: loader provenance must reject them.
   expect(transactionView({
     ...row,
     displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi", displayName: " RA VI " }),
-  }, "ref").payee).toBe("Payee");
+  }, "ref", "rev-test").payee).toBe("Payee");
   expect(transactionView({
     ...row,
     displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi_k", displayName: "Ravi Kumar" }),
-  }, "ref").payee).toBe("Ravi Kumar");
+  }, "ref", "rev-test").payee).toBe("Ravi Kumar");
 });

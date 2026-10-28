@@ -1,6 +1,6 @@
 import { Result, Schema } from "effect";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
-import { transactionRef } from "./refs";
+import { transactionRef, transactionRev } from "./refs";
 import type { ListTransactionsInput } from "./schemas";
 import { transactionView, validatePayeeFilter, type McpTransaction } from "./view";
 
@@ -12,6 +12,7 @@ export function pageTransactions(
   input: ListTransactionsInput,
   actor: MoneyActor,
   key: Uint8Array,
+  revKey: Uint8Array = key,
 ) {
   let payee: string | undefined;
   try {
@@ -26,7 +27,7 @@ export function pageTransactions(
         (!input.uncategorized || r.category === null),
     )
     .sort((a, b) => b.txnDate.localeCompare(a.txnDate) || b.id.localeCompare(a.id))
-    .map((r) => transactionView(r, transactionRef(key, actor.userId, r.id)))
+    .map((r) => transactionView(r, transactionRef(key, actor.userId, r.id), transactionRev(revKey, actor.userId, r.id, r)))
     .filter((r) => !payee || r.payee.toLowerCase().includes(payee));
   let start = 0;
   if (input.cursor !== undefined) {

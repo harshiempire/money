@@ -13,6 +13,9 @@ export interface McpTransaction {
   label: string;
   note: string | null;
   category: string | null;
+  defaultCategory?: string | null;
+  categoryId: string | null;
+  needsReview: boolean;
   isTransfer: boolean;
 }
 
@@ -20,6 +23,8 @@ export const TransactionView = Schema.Struct({
   ref: Schema.String.annotate({
     description: "Opaque account-bound reference for proposals; not a database id.",
   }),
+  rev: Schema.String.annotate({ description: "Opaque revision of all editable fields; use it to guard writes." }),
+  needs_review: Schema.Boolean.annotate({ description: "Whether the transaction needs review." }),
   date: Schema.String.annotate({ description: "Transaction date in YYYY-MM-DD format." }),
   amount: Schema.String.annotate({
     description: "Exact rupee amount as a decimal string with two fractional digits.",
@@ -33,6 +38,7 @@ export const TransactionView = Schema.Struct({
   category: Schema.NullOr(Schema.String).annotate({
     description: "Category name, or null when absent or unsafe.",
   }),
+  payee_default: Schema.NullOr(Schema.String).annotate({ description: "Current payee default category name, or null when absent or unsafe. Use as current_default when confirming replacement." }),
   transfer: Schema.Boolean.annotate({ description: "Whether the transaction is marked as a transfer." }),
 });
 export type TransactionView = typeof TransactionView.Type;
@@ -44,9 +50,11 @@ export function rupees(paise: number): string {
   return `${value < 0n ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
 }
 
-export function transactionView(row: McpTransaction, ref: string): TransactionView {
+export function transactionView(row: McpTransaction, ref: string, rev: string): TransactionView {
   return {
     ref,
+    rev,
+    needs_review: row.needsReview,
     date: row.txnDate.slice(0, 10),
     amount: rupees(row.amountPaise),
     direction: row.drCr === "debit" ? "paid" : "received",
@@ -58,6 +66,7 @@ export function transactionView(row: McpTransaction, ref: string): TransactionVi
     }),
     note: modelSafeText(row.note),
     category: modelSafeText(row.category, row.category?.length),
+    payee_default: modelSafeText(row.defaultCategory, row.defaultCategory?.length),
     transfer: row.isTransfer,
   };
 }
