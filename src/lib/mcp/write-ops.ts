@@ -6,7 +6,7 @@ import { modelSafeText } from "@/lib/assistant/model-view";
 import { editTransactionFields, type EditResult } from "@/lib/ledger/transaction-fields";
 import { setPayeeDefault, type PayeeResult } from "@/lib/ledger/payee-default";
 import { undoChange, type UndoResult } from "@/lib/ledger/undo";
-import { listChanges, changeCursor } from "@/lib/ledger/changes";
+import { listChanges } from "@/lib/ledger/changes";
 import { replayChange } from "@/lib/ledger/store";
 import { requestHash } from "@/lib/ledger/rules";
 import type { WriteContext } from "@/lib/ledger/context";
@@ -97,11 +97,7 @@ export const mcpWriteOps: McpWriteOps = {
       transactions: new Map(
         transactions.map((t) => [
           transactionRef(key.ref, p.actor.userId, t.id),
-          {
-            id: t.id,
-            rev: transactionRev(key.rev, p.actor.userId, t.id, t),
-            noteHidden: t.note !== null && modelSafeText(t.note) === null,
-          },
+          { id: t.id, rev: transactionRev(key.rev, p.actor.userId, t.id, t) },
         ]),
       ),
       categories,
@@ -147,8 +143,7 @@ export const mcpWriteOps: McpWriteOps = {
     return payeeOutput(result);
   },
   async changes(p, input) {
-    const rows = await listChanges(p.actor, { limit: input.limit, before: input.cursor });
-    const last = rows.at(-1);
+    const { rows, nextCursor } = await listChanges(p.actor, { limit: input.limit, before: input.cursor });
     return {
       changes: rows.map((row) => ({
         change_id: row.id,
@@ -160,7 +155,7 @@ export const mcpWriteOps: McpWriteOps = {
         undone: row.undoneByChangeId !== null,
         ...(row.undoesChangeId ? { undoes: row.undoesChangeId } : {}),
       })),
-      next_cursor: last && rows.length === (input.limit ?? 20) ? changeCursor(last) : null,
+      next_cursor: nextCursor,
     };
   },
   async undo(p, input) {

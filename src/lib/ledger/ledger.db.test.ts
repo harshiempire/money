@@ -139,7 +139,8 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       editTransactionFields,
       undoChange,
       setPayeeDefault,
-      listChanges,
+      listPage: listChanges,
+      listChanges: async (a: typeof actor) => (await listChanges(a)).rows,
     };
   }
   test(
@@ -516,6 +517,57 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
         expect(result.changeId).toBeNull();
         expect((await f.listChanges(f.actor))[0].ops).toEqual([]);
         expect((await f.editTransactionFields(ctx, input)).replayed).toBe(true);
+      }),
+    60000,
+  );
+  test(
+    "agents can't replace or undo over a note they can't see; the owner can",
+    () =>
+      fixture(async (f) => {
+        const hidden = "paid 9876543210";
+        const saved = await f.editTransactionFields(f.app, {
+          kind: "transaction_fields",
+          edits: [{ transactionId: f.ids[0], set: { note: hidden } }],
+        });
+        const edit = (key: string, set: { note?: string | null; needsReview?: boolean }) =>
+          f.editTransactionFields(f.mcp(key, set), {
+            kind: "transaction_fields",
+            edits: [{ transactionId: f.ids[0], set }],
+          });
+        for (const note of [hidden, "guess", null]) {
+          const refused = await edit(`hidden-${String(note)}`, { note });
+          expect(refused.errors?.[0].code).toBe("note_hidden");
+        }
+        expect((await f.read()).note).toBe(hidden);
+        await expect(f.undoChange(f.mcp("hidden-undo-1"), saved.changeId!)).rejects.toMatchObject({
+          code: "note_hidden",
+        });
+        expect((await f.read()).note).toBe(hidden);
+        const flag = await edit("hidden-flag-1", { needsReview: true });
+        expect(flag.errors).toBeUndefined();
+        expect((await f.undoChange(f.mcp("hidden-undo-flag"), flag.changeId!)).changeId).not.toBeNull();
+        expect((await f.undoChange(f.app, saved.changeId!)).changeId).not.toBeNull();
+        expect((await f.read()).note).toBeNull();
+      }),
+    60000,
+  );
+  test(
+    "change history pages until every change is reachable",
+    () =>
+      fixture(async (f) => {
+        for (const note of ["one", "two", "three"])
+          await f.editTransactionFields(f.app, {
+            kind: "transaction_fields",
+            edits: [{ transactionId: f.ids[0], set: { note } }],
+          });
+        const first = await f.listPage(f.actor, { limit: 2 });
+        expect(first.rows).toHaveLength(2);
+        expect(first.nextCursor).not.toBeNull();
+        const second = await f.listPage(f.actor, { limit: 2, before: first.nextCursor! });
+        expect(second.rows).toHaveLength(1);
+        expect(second.nextCursor).toBeNull();
+        expect(new Set([...first.rows, ...second.rows].map((row) => row.id)).size).toBe(3);
+        expect((await f.listPage(f.actor, { limit: 3 })).nextCursor).toBeNull();
       }),
     60000,
   );

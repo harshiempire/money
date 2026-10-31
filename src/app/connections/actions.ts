@@ -72,18 +72,20 @@ export async function revokeMcpToken(input: { id: string }): Promise<
   );
 }
 
-export async function listLedgerChanges() {
+export async function listLedgerChanges(input?: { before?: string }) {
   const user = await requireCurrentUserAction();
   const account = await getOrCreateAccountForBank(user.id, "bob");
+  const before = typeof input?.before === "string" && input.before ? input.before : undefined;
   try {
     const { listChanges } = await import("@/lib/ledger/changes");
-    const rows = await listChanges({ userId: user.id, accountId: account.id }, { limit: 20 });
-    return { available: true as const, rows: rows.map((row) => ({
+    const page = await listChanges({ userId: user.id, accountId: account.id }, { limit: 20, before });
+    return { available: true as const, nextCursor: page.nextCursor, rows: page.rows.map((row) => ({
       id: row.id, at: row.createdAt.toISOString(), by: row.sourceLabel, summary: row.summary,
       kind: row.kind, count: row.ops.length, undone: row.undoneByChangeId !== null,
     })) };
   } catch (e) {
-    if (e instanceof LedgerError && e.code === "migration_required") return { available: false as const, rows: [] };
+    if (e instanceof LedgerError && e.code === "migration_required")
+      return { available: false as const, nextCursor: null, rows: [] };
     throw e;
   }
 }

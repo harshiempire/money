@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
-import { inverse, Operations, sameFields, type Operation } from "./rules";
+import { inverse, noteHiddenFromAgent, Operations, sameFields, type Operation } from "./rules";
 import { runChange } from "./store";
 export type UndoResult = {
   changeId: string | null;
@@ -56,6 +56,15 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
       }
     }
     if (stale.length) return { ops: [], refused: true, result: { changeId: null, stale } };
+    // Every target matches its after-values here, so op.after.note is the note on the locked row.
+    if (
+      ctx.source === "mcp" &&
+      ops.some((op) => op.target === "transaction" && op.before.note !== op.after.note && noteHiddenFromAgent(op.after.note))
+    )
+      throw new LedgerError({
+        code: "note_hidden",
+        message: "This change replaced a note you can't see. Ask the owner to undo it in Money.",
+      });
     const reversed = inverse(ops);
     for (const op of reversed) {
       if (op.target === "transaction")

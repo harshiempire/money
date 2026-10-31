@@ -3,6 +3,7 @@ import {
   afterFields,
   guardMatches,
   inverse,
+  noteHiddenFromAgent,
   sameFields,
   requestHash,
   idempotencyDecision,
@@ -62,4 +63,10 @@ test("idempotency canonicalizes key order while binding tool, values, nulls and 
   expect(idempotencyDecision(null, hash)).toBe("new");
   expect(idempotencyDecision(hash, hash)).toBe("replay");
   expect(idempotencyDecision("other", hash)).toBe("conflict");
+});
+test("a note is hidden from agents exactly when the model view would drop it", () => {
+  expect(noteHiddenFromAgent(null)).toBe(false);
+  expect(noteHiddenFromAgent("lunch with Ravi")).toBe(false);
+  expect(noteHiddenFromAgent("paid ravi@okaxis")).toBe(true);
+  expect(noteHiddenFromAgent("call 9876543210")).toBe(true);
 });

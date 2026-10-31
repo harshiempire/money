@@ -5,7 +5,16 @@ import { db, schema } from "@/db";
 import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
 import type { WriteContext } from "./context";
 import { LedgerError } from "./context";
-import { afterFields, Fields, Guard, guardMatches, sameFields, SetFields, type Operation } from "./rules";
+import {
+  afterFields,
+  Fields,
+  Guard,
+  guardMatches,
+  noteHiddenFromAgent,
+  sameFields,
+  SetFields,
+  type Operation,
+} from "./rules";
 import { runChange } from "./store";
 export const Edit = Schema.Struct({
   transactionId: Schema.NonEmptyString,
@@ -21,7 +30,7 @@ const Input = Schema.Struct({
 });
 export type RowError = {
   transactionId: string;
-  code: "not_found" | "stale" | "invalid_category" | "invalid_row";
+  code: "not_found" | "stale" | "invalid_category" | "invalid_row" | "note_hidden";
   message: string;
   currentRev?: string;
 };
@@ -80,6 +89,11 @@ export async function editTransactionFields(
           continue;
         }
         const before = Schema.decodeUnknownSync(Fields)(row);
+        // Checked before the guard, so a stale reply never hints whether a guessed note matched.
+        if (ctx.source === "mcp" && edit.set.note !== undefined && noteHiddenFromAgent(before.note)) {
+          error("note_hidden", "This transaction has a note you can't see. Ask the owner to edit it in Money.");
+          continue;
+        }
         const rev =
           edit.guard?.rev !== undefined
             ? transactionRev(deriveMcpRevKey(process.env.AUTH_SECRET), ctx.actor.userId, row.id, before)

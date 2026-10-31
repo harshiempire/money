@@ -89,11 +89,3 @@ test("write category names round-trip the redacted list exactly and refuse ambig
     ),
   ).toBeUndefined();
 });
-
-test("a note the agent can't see can't be replaced or confirmed, but other fields still can", () => {
-  const hidden = { transactions: new Map([[ref, { id: "t", rev: row.rev, noteHidden: true }]]), categories: context.categories };
-  const refused = validateTransactionUpdates([row], hidden);
-  expect(refused.edits).toEqual([]);
-  expect(refused.errors[0].code).toBe("note_hidden");
-  expect(validateTransactionUpdates([{ ref, rev: row.rev, category: "Food" }], hidden).errors).toEqual([]);
-});

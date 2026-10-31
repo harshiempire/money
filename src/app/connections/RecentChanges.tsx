@@ -7,10 +7,17 @@ const changeDateFormat = new Intl.DateTimeFormat("en-IN", {
   timeZone: "Asia/Kolkata",
 });
 type Changes = Awaited<ReturnType<typeof listLedgerChanges>>;
+// Appends rows not already shown; `page` supplies the cursor.
+function append(current: Changes, page: Changes): Changes {
+  if (!current.available || !page.available) return page;
+  const shown = new Set(current.rows.map((row) => row.id));
+  return { ...page, rows: [...current.rows, ...page.rows.filter((row) => !shown.has(row.id))] };
+}
 export function RecentChanges({ initial }: { initial: Changes }) {
   const [changes, setChanges] = useState(initial);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saving = useRef(false);
   async function undo(id: string) {
@@ -25,12 +32,32 @@ export function RecentChanges({ initial }: { initial: Changes }) {
         return;
       }
       setConfirm(null);
-      setChanges(await listLedgerChanges());
+      const first = await listLedgerChanges();
+      // Keep older pages the user already opened; their cursor still points past the last row shown.
+      setChanges((current) => {
+        const merged = append(first, current);
+        return merged.available
+          ? { ...merged, rows: merged.rows.map((row) => (row.id === id ? { ...row, undone: true } : row)) }
+          : merged;
+      });
     } catch {
       setError("Couldn't confirm whether Undo finished. Reload this page before trying again.");
     } finally {
       saving.current = false;
       setBusy(false);
+    }
+  }
+  async function loadOlder() {
+    if (!changes.available || !changes.nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    setError(null);
+    try {
+      const page = await listLedgerChanges({ before: changes.nextCursor });
+      setChanges((current) => append(current, page));
+    } catch {
+      setError("Couldn't load older changes.");
+    } finally {
+      setLoadingOlder(false);
     }
   }
   return (
@@ -95,6 +122,16 @@ export function RecentChanges({ initial }: { initial: Changes }) {
             </li>
           ))}
         </ul>
+      )}
+      {changes.available && changes.nextCursor && (
+        <button
+          type="button"
+          disabled={loadingOlder}
+          onClick={() => void loadOlder()}
+          className="rounded border px-3 py-2 text-sm disabled:opacity-50"
+        >
+          {loadingOlder ? "Loading…" : "Show older changes"}
+        </button>
       )}
     </section>
   );

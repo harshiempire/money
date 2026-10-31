@@ -20,7 +20,7 @@ export type UpdateError = {
 export function validateTransactionUpdates(
   rows: readonly unknown[],
   context: {
-    transactions: ReadonlyMap<string, { id: string; rev: string; noteHidden?: boolean }>;
+    transactions: ReadonlyMap<string, { id: string; rev: string }>;
     categories: readonly { id: string; name: string }[];
   },
 ) {
@@ -70,11 +70,6 @@ export function validateTransactionUpdates(
       row.category === undefined ? undefined : resolveCategoryName(context.categories, row.category);
     if (row.category != null && categoryId === undefined) {
       fail("unknown_category", "Use an exact category name from list_categories.");
-      return;
-    }
-    if (row.note !== undefined && txn.noteHidden) {
-      // The agent can't see this note, so it may not replace it or confirm a guess of it.
-      fail("note_hidden", "This transaction has a note you can't see. Ask the owner to edit it in Money.");
       return;
     }
     if (row.rev !== txn.rev) {
