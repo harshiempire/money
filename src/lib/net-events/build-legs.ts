@@ -1,4 +1,4 @@
-import type { NetEventLeg, NewPayableSpec } from "@/app/transactions/net-event-actions";
+import type { NetEventLeg, NewPayableSpec } from "@/lib/net-events/legs";
 
 /**
  * Turns per-line allocations (exact paise) into net-event legs. Receivables

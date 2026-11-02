@@ -1,7 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { schema } from "@/db";
-import type { WriteContext } from "./context";
+import { LedgerError, type WriteContext } from "./context";
 import { runRelationalChange } from "./relational-store";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
@@ -24,12 +24,12 @@ export async function createOwedExpense(
 
     const amountPaise = safePaise(input.amountPaise);
     if (amountPaise <= 0) {
-      throw new Error("Amount must be positive");
+      throw new LedgerError({ code: "invalid_input", message: "Amount must be positive" });
     }
 
     const description = input.description.trim();
     if (!description) {
-      throw new Error("Description is required");
+      throw new LedgerError({ code: "invalid_input", message: "Description is required" });
     }
 
     if (input.categoryId) {
@@ -39,13 +39,13 @@ export async function createOwedExpense(
     if (input.sourceInflowTransactionId) {
       await helpers.assertTransactionOwned(user.id, input.sourceInflowTransactionId);
       const [inflow] = await tx.select().from(schema.transactions).where(eq(schema.transactions.id, input.sourceInflowTransactionId));
-      if (inflow.drCr !== "credit") throw new Error("A source inflow must be a credit.");
+      if (inflow.drCr !== "credit") throw new LedgerError({ code: "invalid_input", message: "A source inflow must be a credit." });
       const linked = helpers.before.owed.filter(row => row.sourceInflowTransactionId === inflow.id);
       const allocated = helpers.before.settlements.filter(row => row.inflowTransactionId === inflow.id).reduce((sum, row) => sum + row.amountPaise, 0);
       if (linked.length || inflow.residualDisposition || amountPaise > inflow.amountPaise - allocated)
-        throw new Error("Source inflow is already explained or has insufficient unallocated money.");
+        throw new LedgerError({ code: "invalid_input", message: "Source inflow is already explained or has insufficient unallocated money." });
       const [net] = await tx.select({ id: schema.netEvents.id }).from(schema.netEvents).where(eq(schema.netEvents.inflowTransactionId, inflow.id));
-      if (net) throw new Error("Source inflow is part of a net event.");
+      if (net) throw new LedgerError({ code: "invalid_input", message: "Source inflow is part of a net event." });
     }
 
     const personId = await getOrCreatePerson(user.id, input.personName);
@@ -99,15 +99,15 @@ export async function updateOwedExpense(
     }
     if (input.amountPaise !== undefined) {
       const amountPaise = safePaise(input.amountPaise);
-      if (amountPaise <= 0) throw new Error("Amount must be positive");
+      if (amountPaise <= 0) throw new LedgerError({ code: "invalid_input", message: "Amount must be positive" });
       const settled = (await helpers.settledAmountByOwedExpenseIds([input.id])).get(input.id) ?? 0;
       if (amountPaise < settled)
-        throw new Error(`Amount cannot be less than the existing settlements of ₹${(settled / 100).toFixed(2)}.`);
+        throw new LedgerError({ code: "invalid_input", message: `Amount cannot be less than the existing settlements of ₹${(settled / 100).toFixed(2)}.` });
       updates.amountPaise = amountPaise;
     }
     if (input.description !== undefined) {
       const description = input.description.trim();
-      if (!description) throw new Error("Description is required");
+      if (!description) throw new LedgerError({ code: "invalid_input", message: "Description is required" });
       updates.description = description;
     }
     if (input.categoryId !== undefined) {

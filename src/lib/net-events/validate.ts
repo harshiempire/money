@@ -1,4 +1,4 @@
-import type { NetEventLeg } from "@/app/transactions/net-event-actions";
+import type { NetEventLeg } from "@/lib/net-events/legs";
 
 export function sumReceivableLegs(legs: NetEventLeg[]): number {
   return legs

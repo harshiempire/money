@@ -20,7 +20,14 @@ export async function createOwedExpense(input: {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await createOwedExpenseForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      personName: input.personName,
+      incurredDate: input.incurredDate,
+      amountPaise: input.amountPaise,
+      description: input.description,
+      ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");
@@ -45,7 +52,15 @@ export async function updateOwedExpense(input: {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await updateOwedExpenseForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      id: input.id,
+      ...(input.personName !== undefined ? { personName: input.personName } : {}),
+      ...(input.incurredDate !== undefined ? { incurredDate: input.incurredDate } : {}),
+      ...(input.amountPaise !== undefined ? { amountPaise: input.amountPaise } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");
@@ -61,7 +76,9 @@ export async function deleteOwedExpense(input: { id: string }) {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await deleteOwedExpenseForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      id: input.id,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");

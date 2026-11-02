@@ -6,8 +6,8 @@ import {
   saveNetEvent as saveNetEventForActor,
   deleteNetEvent as deleteNetEventForActor,
 } from "@/lib/ledger/net-events";
-import type { NetEventLeg } from "@/lib/ledger/net-events";
-export type { NewPayableSpec, NetEventLeg } from "@/lib/ledger/net-events";
+import { pickNetEventLeg, type NetEventLeg } from "@/lib/net-events/legs";
+export type { NewPayableSpec, NetEventLeg } from "@/lib/net-events/legs";
 
 export async function saveNetEvent(input: {
   netEventId?: string;
@@ -21,7 +21,14 @@ export async function saveNetEvent(input: {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await saveNetEventForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      eventDate: input.eventDate,
+      ...(input.netEventId !== undefined ? { netEventId: input.netEventId } : {}),
+      ...(input.inflowTransactionId !== undefined ? { inflowTransactionId: input.inflowTransactionId } : {}),
+      ...(input.outflowTransactionId !== undefined ? { outflowTransactionId: input.outflowTransactionId } : {}),
+      ...(input.note !== undefined ? { note: input.note } : {}),
+      legs: input.legs.map(pickNetEventLeg),
+    },
   );
   if (result.revalidate) {
     revalidatePath("/transactions");
@@ -38,7 +45,9 @@ export async function deleteNetEvent(input: { netEventId: string }) {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await deleteNetEventForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      netEventId: input.netEventId,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/transactions");

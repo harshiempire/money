@@ -1,34 +1,13 @@
 import "server-only";
 import { eq, or, type SQL } from "drizzle-orm";
-import { NetEventValidationError } from "@/lib/net-events/errors";
+import { ForbiddenError } from "@/lib/auth/forbidden";
 import { validateNetEventInvariant } from "@/lib/net-events/validate";
 import { schema } from "@/db";
-import type { WriteContext } from "./context";
+import { LedgerError, type WriteContext } from "./context";
 import type { LedgerTx } from "./store";
 import { runRelationalChange, type RelationalHelpers } from "./relational-store";
-export type NewPayableSpec = {
-  personName: string;
-  incurredDate: string;
-  amountPaise: number;
-  description: string;
-  categoryId?: string | null;
-  note?: string | null;
-};
-
-export type NetEventLeg =
-  | {
-      kind: "receivable";
-      splitParticipantId: string;
-      amountPaise: number;
-      method: "bank" | "offset";
-    }
-  | ({
-      kind: "payable";
-      amountPaise: number;
-      method: "offset";
-    } & (
-      { owedExpenseId: string; newPayable?: never } | { owedExpenseId?: never; newPayable: NewPayableSpec }
-    ));
+import type { NetEventLeg } from "@/lib/net-events/legs";
+export type { NetEventLeg, NewPayableSpec } from "@/lib/net-events/legs";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
 async function fetchTransactionAmount(
@@ -44,7 +23,7 @@ async function fetchTransactionAmount(
     .where(eq(schema.transactions.id, transactionId))
     .limit(1);
   if (!row) {
-    throw new NetEventValidationError("MISSING_BANK_TXN", "Transaction not found");
+    throw new LedgerError({ code: "invalid_input", message: "Transaction not found" });
   }
   return Number(row.amountPaise);
 }
@@ -59,6 +38,47 @@ export async function saveNetEvent(
     legs: NetEventLeg[];
   },
 ) {
+  const cleanLegs = input.legs
+    .map((leg) => ({
+      ...leg,
+      amountPaise: safePaise(leg.amountPaise),
+    }))
+    .filter((leg) => leg.amountPaise > 0);
+
+  if (cleanLegs.length === 0) {
+    throw new LedgerError({ code: "invalid_input", message: "At least one non-zero leg is required" });
+  }
+
+  for (const leg of cleanLegs) {
+    if (leg.kind === "receivable") {
+      if (leg.method === "bank" && !input.inflowTransactionId) {
+        throw new LedgerError({ code: "invalid_input", message: "Bank receivable legs require an inflow transaction" });
+      }
+    } else if (leg.owedExpenseId && leg.newPayable) {
+      throw new LedgerError({ code: "invalid_input", message: "A payable leg must either use an existing payable or create a new one, not both" });
+    } else if (leg.owedExpenseId) {
+      if (leg.method !== "offset") {
+        throw new LedgerError({ code: "invalid_input", message: "Payable legs must use offset method" });
+      }
+    } else if (leg.newPayable) {
+      if (leg.method !== "offset") {
+        throw new LedgerError({ code: "invalid_input", message: "Payable legs must use offset method" });
+      }
+      const description = leg.newPayable.description.trim();
+      if (!description) {
+        throw new LedgerError({ code: "invalid_input", message: "New payable description is required" });
+      }
+      if (leg.newPayable.amountPaise <= 0) {
+        throw new LedgerError({ code: "invalid_input", message: "New payable amount must be positive" });
+      }
+      if (leg.amountPaise > leg.newPayable.amountPaise) {
+        throw new LedgerError({ code: "invalid_input", message: `Payable leg exceeds new expense amount by ${(leg.amountPaise - leg.newPayable.amountPaise) / 100}` });
+      }
+    } else {
+      throw new LedgerError({ code: "invalid_input", message: "Payable leg requires owedExpenseId or newPayable" });
+    }
+  }
+
   try {
     return await runRelationalChange(ctx, "save_net_event", async (tx, helpers) => {
       const user = { id: ctx.actor.userId };
@@ -72,54 +92,6 @@ export async function saveNetEvent(
         participantOutstanding,
         owedExpenseOutstanding,
       } = helpers;
-
-      const cleanLegs = input.legs
-        .map((leg) => ({
-          ...leg,
-          amountPaise: safePaise(leg.amountPaise),
-        }))
-        .filter((leg) => leg.amountPaise > 0);
-
-      if (cleanLegs.length === 0) {
-        throw new NetEventValidationError("INVALID_LEG", "At least one non-zero leg is required");
-      }
-
-      for (const leg of cleanLegs) {
-        if (leg.kind === "receivable") {
-          if (leg.method === "bank" && !input.inflowTransactionId) {
-            throw new NetEventValidationError(
-              "MISSING_BANK_TXN",
-              "Bank receivable legs require an inflow transaction",
-            );
-          }
-        } else if (leg.owedExpenseId) {
-          if (leg.method !== "offset") {
-            throw new NetEventValidationError("INVALID_LEG", "Payable legs must use offset method");
-          }
-        } else if (leg.newPayable) {
-          if (leg.method !== "offset") {
-            throw new NetEventValidationError("INVALID_LEG", "Payable legs must use offset method");
-          }
-          const description = leg.newPayable.description.trim();
-          if (!description) {
-            throw new NetEventValidationError("INVALID_LEG", "New payable description is required");
-          }
-          if (leg.newPayable.amountPaise <= 0) {
-            throw new NetEventValidationError("INVALID_LEG", "New payable amount must be positive");
-          }
-          if (leg.amountPaise > leg.newPayable.amountPaise) {
-            throw new NetEventValidationError(
-              "OVER_ALLOCATION",
-              `Payable leg exceeds new expense amount by ${(leg.amountPaise - leg.newPayable.amountPaise) / 100}`,
-            );
-          }
-        } else {
-          throw new NetEventValidationError(
-            "INVALID_LEG",
-            "Payable leg requires owedExpenseId or newPayable",
-          );
-        }
-      }
 
       const ownershipChecks: Promise<unknown>[] = [];
       if (input.inflowTransactionId) {
@@ -160,10 +132,7 @@ export async function saveNetEvent(
             .where(or(...linked))
             .limit(1);
           if (existing) {
-            throw new NetEventValidationError(
-              "INVALID_LEG",
-              "This transaction is already net settled. Open Net ✓ to change it.",
-            );
+            throw new LedgerError({ code: "invalid_input", message: "This transaction is already net settled. Open Net ✓ to change it." });
           }
         }
       }
@@ -179,7 +148,7 @@ export async function saveNetEvent(
 
       const invariant = validateNetEventInvariant(cleanLegs, inflowAmount, outflowAmount);
       if (!invariant.ok) {
-        throw new NetEventValidationError("INVARIANT_MISMATCH", invariant.message);
+        throw new LedgerError({ code: "invalid_input", message: invariant.message });
       }
 
       // A share can have both bank and offset legs. Cap their combined amount.
@@ -193,18 +162,12 @@ export async function saveNetEvent(
           if (leg.kind === "receivable") {
             const outstanding = await participantOutstanding(leg.splitParticipantId, input.netEventId);
             if (amountPaise > outstanding) {
-              throw new NetEventValidationError(
-                "OVER_ALLOCATION",
-                `Combined receivable legs exceed outstanding by ${(amountPaise - outstanding) / 100}`,
-              );
+              throw new LedgerError({ code: "invalid_input", message: `Combined receivable legs exceed outstanding by ${(amountPaise - outstanding) / 100}` });
             }
           } else if (leg.owedExpenseId) {
             const outstanding = await owedExpenseOutstanding(leg.owedExpenseId, input.netEventId);
             if (amountPaise > outstanding) {
-              throw new NetEventValidationError(
-                "OVER_ALLOCATION",
-                `Combined payable legs exceed outstanding by ${(amountPaise - outstanding) / 100}`,
-              );
+              throw new LedgerError({ code: "invalid_input", message: `Combined payable legs exceed outstanding by ${(amountPaise - outstanding) / 100}` });
             }
           }
         }),
@@ -276,9 +239,10 @@ export async function saveNetEvent(
       return { revalidate: true, value: { netEventId: savedEventId } };
     });
   } catch (err) {
+    if (err instanceof ForbiddenError || err instanceof LedgerError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     if (/timeout|terminat|connect/i.test(msg))
-      throw new Error("Database connection timed out while saving. Please try again in a moment.");
+      throw new LedgerError({ code: "unavailable", message: "Database connection timed out while saving. Please try again in a moment." });
     throw err;
   }
 }
@@ -297,9 +261,10 @@ export async function deleteNetEvent(ctx: WriteContext, input: { netEventId: str
       return { revalidate: true, value: undefined };
     });
   } catch (err) {
+    if (err instanceof ForbiddenError || err instanceof LedgerError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     if (/timeout|terminat|connect/i.test(msg))
-      throw new Error("Database connection timed out while reversing. Please try again.");
+      throw new LedgerError({ code: "unavailable", message: "Database connection timed out while reversing. Please try again." });
     throw err;
   }
 }

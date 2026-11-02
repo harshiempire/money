@@ -4,8 +4,8 @@ import { useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   deleteNetEvent,
   saveNetEvent,
-  type NetEventLeg,
 } from "./net-event-actions";
+import type { NetEventLeg } from "@/lib/net-events/legs";
 import type { CategoryOption } from "./RowActions";
 import type {
   PayableOption,

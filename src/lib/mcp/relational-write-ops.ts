@@ -4,7 +4,7 @@ import { Result, Schema } from "effect";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
 import { ForbiddenError } from "@/lib/auth/forbidden";
-import { LedgerError, type WriteContext } from "@/lib/ledger/context";
+import { LedgerError, type LedgerErrorCode, type WriteContext } from "@/lib/ledger/context";
 import { requestHash, type Operation } from "@/lib/ledger/rules";
 import { relationalSnapshot, relationalRows } from "@/lib/ledger/relational-store";
 import { replayChange } from "@/lib/ledger/store";
@@ -28,7 +28,7 @@ function decode<K extends RelationalTool>(tool: K, raw: unknown): (typeof Relati
   if (Result.isFailure(parsed)) throw new LedgerError({ code: "invalid_input", message: "Use the tool's documented fields, exact decimal rupees and idempotency key." });
   return parsed.success;
 }
-const refuse = (code: string, message: string): never => { throw new LedgerError({ code, message }); };
+const refuse = (code: LedgerErrorCode, message: string): never => { throw new LedgerError({ code, message }); };
 const unavailable = (): never => refuse("not_found", "That ref isn't available in this account.");
 
 /** Resolve only by recomputing refs over actor-scoped rows. All writes stay in ledger cores. */

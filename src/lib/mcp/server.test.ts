@@ -9,6 +9,7 @@ import { resolveMcpPeriod } from "./range";
 import type { PeriodInput } from "./schemas";
 import { readFixture } from "./read-fixtures";
 import { RelationalInputs } from "./relational-schemas";
+import { LedgerError } from "@/lib/ledger/context";
 
 const phase2Tools = ["get_transactions", "list_people", "get_open_balances", "list_payees", "find_payments", "query", "describe_table"];
 const key = deriveMcpRefKey("protocol-test");
@@ -128,12 +129,31 @@ function fixture(
     };
   };
   return {
+    ops,
     drafts,
     summaries,
     handler,
     call,
   };
 }
+
+test("MCP preserves stable LedgerError codes and messages at the protocol boundary", async () => {
+  const { call, handler, ops } = fixture();
+  try {
+    for (const code of ["invalid_input", "unavailable", "stale"] as const) {
+      const message = code === "unavailable"
+        ? "Database connection timed out while saving. Please try again in a moment."
+        : "Amount must be positive";
+      ops.listCategories = async () => { throw new LedgerError({ code, message }); };
+      const result = await call("read", "tools/call", { name: "list_categories", arguments: {} });
+      expect(result.json.result.isError).toBe(true);
+      expect(result.json.result.content).toEqual([{ type: "text", text: `${code}: ${message}` }]);
+    }
+  } finally {
+    await handler.close();
+  }
+});
+
 for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
   test(`SDK ${protocolVersion} advertises scope-filtered tools and documented schemas`, async () => {
     const { call, handler } = fixture(undefined, protocolVersion);

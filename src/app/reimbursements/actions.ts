@@ -18,7 +18,11 @@ export async function recordCashSettlement(input: {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await recordCashSettlementForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      splitParticipantId: input.splitParticipantId,
+      amountPaise: input.amountPaise,
+      note: input.note,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");
@@ -32,7 +36,9 @@ export async function deleteCashSettlement(input: { settlementId: string }) {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await deleteCashSettlementForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      settlementId: input.settlementId,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");
@@ -46,7 +52,10 @@ export async function writeOffParticipantShare(input: { splitParticipantId: stri
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await writeOffParticipantShareForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      splitParticipantId: input.splitParticipantId,
+      note: input.note,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");
@@ -61,7 +70,9 @@ export async function undoWriteOff(input: { settlementId: string }) {
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const result = await undoWriteOffForActor(
     { actor: { userId: user.id, accountId: account.id }, source: "app" },
-    input,
+    {
+      settlementId: input.settlementId,
+    },
   );
   if (result.revalidate) {
     revalidatePath("/reimbursements");

@@ -11,15 +11,10 @@ import {
   validateSplitTotalMatchesTransaction,
 } from "@/lib/splits/validate";
 import { schema } from "@/db";
-import type { WriteContext } from "./context";
+import { LedgerError, type WriteContext } from "./context";
 import { runRelationalChange, type RelationalHelpers } from "./relational-store";
-export interface ParticipantInput {
-  // Existing participant id — pass back what the dialog was given for rows
-  // that were kept, so the row (and its settlements) survive an edit.
-  id?: string;
-  personName: string;
-  expectedAmountPaise: number;
-}
+import type { ParticipantInput } from "@/lib/splits/types";
+export type { ParticipantInput } from "@/lib/splits/types";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
 const rupees = (paise: number): string => `₹${(paise / 100).toFixed(2)}`;
@@ -37,7 +32,7 @@ async function assertResidualPayableReplaceable(
       personName: payable.personName,
       settledPaise: settled.get(payable.id) ?? 0,
     });
-    if (!check.ok) throw new Error(check.message);
+    if (!check.ok) throw new LedgerError({ code: "invalid_input", message: check.message });
   }
 }
 export async function createSplit(
@@ -72,7 +67,7 @@ export async function createSplit(
       yourSharePaise,
       participants: cleanParticipants,
     });
-    if (!valid.ok) throw new Error(valid.message);
+    if (!valid.ok) throw new LedgerError({ code: "invalid_input", message: valid.message });
 
     const [subject] = await tx
       .select({
@@ -83,7 +78,7 @@ export async function createSplit(
       .where(eq(schema.transactions.id, input.transactionId))
       .limit(1);
     if (subject?.drCr !== "debit") {
-      throw new Error("Only a payment you made can be split.");
+      throw new LedgerError({ code: "invalid_input", message: "Only a payment you made can be split." });
     }
 
     // The total isn't the client's to decide — it is the transaction's amount.
@@ -91,13 +86,11 @@ export async function createSplit(
       totalPaise,
       transactionAmountPaise: Number(subject.amountPaise),
     });
-    if (!totalMatches.ok) throw new Error(totalMatches.message);
+    if (!totalMatches.ok) throw new LedgerError({ code: "invalid_input", message: totalMatches.message });
 
     const existingSplit = helpers.before.splits.find(row => row.transactionId === input.transactionId);
     if (existingSplit && input.expectNoExistingSplit) {
-      throw new Error(
-        "This payment already has a split. Edit it from the Split button in the table so settlements aren't lost.",
-      );
+      throw new LedgerError({ code: "invalid_input", message: "This payment already has a split. Edit it from the Split button in the table so settlements aren't lost." });
     }
 
     // Re-check settled money under the relational locks.
@@ -117,7 +110,7 @@ export async function createSplit(
       cleanParticipants,
       new Set(existingParticipants.map((p) => p.id)),
     );
-    if (!belongs.ok) throw new Error(belongs.message);
+    if (!belongs.ok) throw new LedgerError({ code: "invalid_input", message: belongs.message });
 
     if (existingParticipants.length > 0) {
       const settledByParticipant = await settledAmountByParticipantIds(existingParticipants.map((p) => p.id));
@@ -131,7 +124,7 @@ export async function createSplit(
           kept: keptById.get(ep.id),
           settledPaise: settledByParticipant.get(ep.id) ?? 0,
         });
-        if (!check.ok) throw new Error(check.message);
+        if (!check.ok) throw new LedgerError({ code: "invalid_input", message: check.message });
       }
     }
 
@@ -221,7 +214,7 @@ export async function deleteSplit(
       const participantIds = new Set(participants.map(row => row.id));
       const rows = helpers.before.settlements.filter(row => row.splitParticipantId !== null && participantIds.has(row.splitParticipantId));
       if (input.expectNoSettlements && rows.length > 0) {
-        throw new Error("Money was settled against this split since. Remove it from the table instead.");
+        throw new LedgerError({ code: "invalid_input", message: "Money was settled against this split since. Remove it from the table instead." });
       }
       affectedInflowIds = [
         ...new Set(rows.map((r) => r.inflowTransactionId).filter((id): id is string => id !== null)),
@@ -276,7 +269,7 @@ export async function recordSettlement(
         amountPaise: a.amountPaise,
       })),
     );
-    if (!cleaned.ok) throw new Error(cleaned.message);
+    if (!cleaned.ok) throw new LedgerError({ code: "invalid_input", message: cleaned.message });
     const allocations = cleaned.allocations;
 
     const [inflow] = await tx
@@ -290,7 +283,7 @@ export async function recordSettlement(
       .limit(1);
 
     const source = validateSettlementSource(inflow?.drCr);
-    if (!source.ok) throw new Error(source.message);
+    if (!source.ok) throw new LedgerError({ code: "invalid_input", message: source.message });
 
     await assertResidualPayableReplaceable(helpers, input.inflowTransactionId);
 
@@ -309,7 +302,7 @@ export async function recordSettlement(
       reservedByNetSettlePaise,
       allocationsSumPaise: allocationsSum,
     });
-    if (!capacity.ok) throw new Error(capacity.message);
+    if (!capacity.ok) throw new LedgerError({ code: "invalid_input", message: capacity.message });
 
     if (allocations.length > 0) {
       const participantIds = [...new Set(allocations.map((a) => a.splitParticipantId))];
@@ -348,9 +341,7 @@ export async function recordSettlement(
         const settled = settledExcludingThisInflow.get(participantId) ?? 0;
         const outstanding = Math.max(0, expected - settled);
         if (allocated > outstanding) {
-          throw new Error(
-            `Allocation of ${rupees(allocated)} to ${participant.personName} exceeds their outstanding balance of ${rupees(outstanding)}.`,
-          );
+          throw new LedgerError({ code: "invalid_input", message: `Allocation of ${rupees(allocated)} to ${participant.personName} exceeds their outstanding balance of ${rupees(outstanding)}.` });
         }
       }
     }
@@ -394,7 +385,7 @@ export async function recordSettlement(
         if (input.residual.kind === "owed_back") {
           const personName = input.residual.personName?.trim();
           if (!personName) {
-            throw new Error("A person name is required to record an overpayment as owed back.");
+            throw new LedgerError({ code: "invalid_input", message: "A person name is required to record an overpayment as owed back." });
           }
           const personId = await getOrCreatePerson(user.id, personName, tx);
           await tx.insert(schema.owedExpenses).values({

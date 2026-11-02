@@ -287,7 +287,7 @@ export async function applyRowOperations(tx: LedgerTx, ops: RowOperation[]) {
         await tx.delete(schema.persons).where(eq(schema.persons.id, op.id));
         break;
       case "transaction_residual":
-        throw new Error("Bank transactions cannot be deleted by ledger undo.");
+        throw new LedgerError({ code: "invalid_input", message: "Bank transactions cannot be deleted by ledger undo." });
     }
   }
   for (const op of upserts) {

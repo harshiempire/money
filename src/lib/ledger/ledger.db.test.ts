@@ -12,7 +12,8 @@ import { homedir } from "node:os";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
 import { requestHash } from "./rules";
-import type { WriteContext } from "./context";
+import { LedgerError, type LedgerErrorCode, type WriteContext } from "./context";
+import { ForbiddenError } from "@/lib/auth/forbidden";
 const enabled = process.env.MONEY_LEDGER_TEST_DB === "1";
 const revalidated: string[] = [];
 if (enabled) mock.module("next/cache", () => ({ revalidatePath: (path: string) => revalidated.push(path) }));
@@ -157,6 +158,57 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       listChanges: async (a: typeof actor) => (await listChanges(a)).rows,
     };
   }
+  async function expectLedger(run: Promise<unknown>, code: LedgerErrorCode, message: string) {
+    const error = await run.then(() => null, (error: unknown) => error);
+    expect(error).toBeInstanceOf(LedgerError);
+    expect(error).toMatchObject({ code, message });
+    expect((error as Error).message).toBe(message);
+  }
+
+  test("net both payable fields are rejected before any database or ownership work", async () => {
+    const { saveNetEvent } = await import("./net-events");
+    // Invalid UUIDs would fail at the database boundary if validation got that far.
+    const ctx: WriteContext = { source: "app", actor: { userId: "no-db-user", accountId: "no-db-account" } };
+    const malformed = {
+      kind: "payable" as const, method: "offset" as const, amountPaise: 100,
+      owedExpenseId: "no-db-payable",
+      newPayable: { personName: "Asha", incurredDate: "2026-10-01", amountPaise: -1, description: "", categoryId: "foreign-category" },
+    };
+    await expectLedger(saveNetEvent(ctx, { eventDate: "2026-10-01", legs: [malformed as never] }), "invalid_input",
+      "A payable leg must either use an existing payable or create a new one, not both");
+  });
+
+  test("ledger error contract preserves representative core messages and ForbiddenError", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const metadata = await import("./metadata");
+    const { linkPayeesToPerson } = await import("./person-links");
+    const { runChange } = await import("./store");
+    const { runRelationalChange } = await import("./relational-store");
+    await expectLedger(f.editTransactionFields(f.app, { kind: "", edits: [] }), "invalid_input", "Invalid transaction edits.");
+    await expectLedger(f.setPayeeDefault(f.app, { counterpartyId: "", categoryId: null, guard: {} }), "invalid_input", "Pick a payee and a category.");
+    await expectLedger(r.splits.createSplit(f.app, {
+      ...r.splitInput, yourSharePaise: 4000,
+      participants: [{ personName: "Asha", expectedAmountPaise: 3000 }, { personName: "asha", expectedAmountPaise: 3000 }],
+    }), "invalid_input", "Asha appears twice in this split. Each person may only have one share.");
+    await expectLedger(r.owed.createOwedExpense(f.app, { ...r.expenseInput, amountPaise: 0 }), "invalid_input", "Amount must be positive");
+    await expectLedger(r.owed.createOwedExpense(f.app, { ...r.expenseInput, sourceInflowTransactionId: f.ids[0] }), "invalid_input", "A source inflow must be a credit.");
+    await expectLedger(r.net.saveNetEvent(f.app, { eventDate: "2026-10-01", legs: [] }), "invalid_input", "At least one non-zero leg is required");
+    await r.settlements.writeOffParticipantShare(f.app, { splitParticipantId: r.share.id, note: null });
+    await expectLedger(r.settlements.writeOffParticipantShare(f.app, { splitParticipantId: r.share.id, note: null }), "invalid_input", "Nothing outstanding on this share to forgive.");
+    await expectLedger(metadata.renamePayee(f.app, { counterpartyId: f.payee, displayName: "", currentDisplayName: "Lunch" }), "invalid_input", "Use a nonblank display name of at most 200 characters.");
+    await expectLedger(linkPayeesToPerson(f.app, []), "invalid_input", "Use 1–50 distinct payees with current-person guards.");
+    await expectLedger(f.listPage(f.actor, { before: "invalid-cursor" }), "invalid_cursor", "Start with a new list_changes request.");
+    await expectLedger(f.undoChange(f.app, crypto.randomUUID()), "not_found", "That change isn't available.");
+    await expectLedger(runChange(f.app, { kind: "test", summary: "x".repeat(201) }, async () => ({ ops: [], result: {} })), "invalid_input", "Use a reason of at most 200 characters.");
+    await expectLedger(runRelationalChange({ actor: f.actor, source: "mcp", tokenId: f.tokenId, label: "Test" }, "test", async () => ({ revalidate: false })), "invalid_input", "Use an 8–80 character idempotency key.");
+    const splitError = await r.splits.createSplit(f.app, { ...r.splitInput, transactionId: f.otherId }).catch((error: unknown) => error);
+    expect(splitError).toBeInstanceOf(ForbiddenError);
+    expect(splitError).not.toBeInstanceOf(LedgerError);
+    const netError = await r.net.deleteNetEvent(f.app, { netEventId: crypto.randomUUID() }).catch((error: unknown) => error);
+    expect(netError).toBeInstanceOf(ForbiddenError);
+    expect(netError).not.toBeInstanceOf(LedgerError);
+  }), 120000);
+
   test(
     "migration created log, indexes and write scope check",
     () =>

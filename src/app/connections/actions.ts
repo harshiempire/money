@@ -45,7 +45,10 @@ export async function createMcpToken(input: { name: string; scope: McpScope }): 
       userId: user.id,
       accountId: account.id,
     },
-    input,
+    {
+      name: input.name,
+      scope: input.scope,
+    },
   );
 }
 
@@ -78,7 +81,7 @@ export async function listLedgerChanges(input?: { before?: string }) {
   const before = typeof input?.before === "string" && input.before ? input.before : undefined;
   try {
     const { listChanges } = await import("@/lib/ledger/changes");
-    const page = await listChanges({ userId: user.id, accountId: account.id }, { limit: 20, before });
+    const page = await listChanges({ userId: user.id, accountId: account.id }, { limit: 20, ...(before !== undefined ? { before } : {}) });
     return { available: true as const, nextCursor: page.nextCursor, rows: page.rows.map((row) => ({
       id: row.id, at: row.createdAt.toISOString(), by: row.sourceLabel, summary: row.summary,
       kind: row.kind, count: row.ops.length, undone: row.undoneByChangeId !== null,

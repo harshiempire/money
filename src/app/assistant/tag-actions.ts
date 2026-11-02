@@ -37,7 +37,7 @@ export async function saveContextNote(input: { id?: string; body: string }) {
   const actor = await actorFromSession();
   const body = typeof input?.body === "string" ? input.body : "";
   const id = typeof input?.id === "string" ? input.id : undefined;
-  return saveStandingNote(actor, { id, body });
+  return saveStandingNote(actor, { body, ...(id !== undefined ? { id } : {}) });
 }
 
 export async function deleteContextNote(input: { id: string }) {
@@ -215,6 +215,6 @@ export async function rememberPayeeDefault(input: {
   return rememberPayeeDefaultForActor(actor, {
     counterpartyId: typeof input?.counterpartyId === "string" ? input.counterpartyId : "",
     categoryId: typeof input?.categoryId === "string" ? input.categoryId : "",
-    confirmFromCategoryId: typeof confirm === "string" ? confirm : null,
+    ...(confirm !== undefined ? { confirmFromCategoryId: typeof confirm === "string" ? confirm : null } : {}),
   });
 }

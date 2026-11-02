@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
-import type { WriteContext } from "./context";
+import { LedgerError, type WriteContext } from "./context";
 import { runRelationalChange } from "./relational-store";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
@@ -71,7 +71,7 @@ export async function writeOffParticipantShare(
 
     const outstanding = await participantOutstanding(input.splitParticipantId);
     if (outstanding <= 0) {
-      throw new Error("Nothing outstanding on this share to forgive.");
+      throw new LedgerError({ code: "invalid_input", message: "Nothing outstanding on this share to forgive." });
     }
 
     await tx.insert(schema.settlements).values({
@@ -99,7 +99,7 @@ export async function undoWriteOff(ctx: WriteContext, input: { settlementId: str
       .where(eq(schema.settlements.id, input.settlementId))
       .limit(1);
     if (!settlement || settlement.method !== "writeoff") {
-      throw new Error("This settlement is not a writeoff and cannot be undone here.");
+      throw new LedgerError({ code: "invalid_input", message: "This settlement is not a writeoff and cannot be undone here." });
     }
 
     await tx
