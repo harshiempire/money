@@ -42,7 +42,8 @@ const saveNetEventInput = Schema.Struct({
   eventDate: Schema.String,
   inflowTransactionId: Schema.optional(Schema.String),
   outflowTransactionId: Schema.optional(Schema.String),
-  note: Schema.optional(Schema.String),
+  // main also accepted null (the core normalizes it).
+  note: Schema.optional(Schema.NullOr(Schema.String)),
   legs: Schema.Array(NetEventLegSchema),
 });
 export const saveNetEventSpec: ActionSpec<
@@ -76,7 +77,7 @@ export const saveNetEventSpec: ActionSpec<
           ...(input.outflowTransactionId !== undefined
             ? { outflowTransactionId: input.outflowTransactionId }
             : {}),
-          ...(input.note !== undefined ? { note: input.note } : {}),
+          ...(input.note !== undefined ? { note: input.note as string } : {}),
           // The core validates the leg rules; the cast only widens the union for it.
           legs: input.legs.map((leg) => pickNetEventLeg(leg as NetEventLeg)),
         },

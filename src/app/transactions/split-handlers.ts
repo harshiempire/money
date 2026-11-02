@@ -21,7 +21,9 @@ const createSplitInput = Schema.Struct({
   transactionId: Schema.String,
   totalPaise: Schema.Number,
   yourSharePaise: Schema.Number,
-  note: Schema.NullOr(Schema.String),
+  // main accepted an omitted note and forwarded it as undefined (an edit then
+  // keeps the existing note); kept the same way below.
+  note: Schema.optional(Schema.NullOr(Schema.String)),
   participants: Schema.Array(ParticipantInputSchema),
   expectNoExistingSplit: Schema.optional(Schema.Boolean),
 });
@@ -48,7 +50,7 @@ export const createSplitSpec: ActionSpec<
           transactionId: input.transactionId,
           totalPaise: input.totalPaise,
           yourSharePaise: input.yourSharePaise,
-          note: input.note,
+          note: input.note as string | null,
           ...(input.expectNoExistingSplit !== undefined
             ? { expectNoExistingSplit: input.expectNoExistingSplit }
             : {}),

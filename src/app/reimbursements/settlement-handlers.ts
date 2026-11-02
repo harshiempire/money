@@ -14,7 +14,8 @@ import {
 const recordCashSettlementInput = Schema.Struct({
   splitParticipantId: Schema.String,
   amountPaise: Schema.Number,
-  note: Schema.NullOr(Schema.String),
+  // main tolerated an omitted note (the core normalizes it).
+  note: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const recordCashSettlementSpec: ActionSpec<
   typeof recordCashSettlementInput.Type,
@@ -38,7 +39,7 @@ export const recordCashSettlementSpec: ActionSpec<
         {
           splitParticipantId: input.splitParticipantId,
           amountPaise: input.amountPaise,
-          note: input.note,
+          note: input.note as string | null,
         },
       ),
     );
@@ -81,7 +82,8 @@ export const deleteCashSettlementSpec: ActionSpec<
 
 const writeOffParticipantShareInput = Schema.Struct({
   splitParticipantId: Schema.String,
-  note: Schema.NullOr(Schema.String),
+  // main tolerated an omitted note (the core normalizes it).
+  note: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const writeOffParticipantShareSpec: ActionSpec<
   typeof writeOffParticipantShareInput.Type,
@@ -104,7 +106,7 @@ export const writeOffParticipantShareSpec: ActionSpec<
         { actor: { userId: user.id, accountId: account.id }, source: "app" },
         {
           splitParticipantId: input.splitParticipantId,
-          note: input.note,
+          note: input.note as string | null,
         },
       ),
     );

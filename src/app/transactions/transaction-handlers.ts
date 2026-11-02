@@ -58,7 +58,8 @@ export type LinkedTransactionPreview = {
 
 const setTransactionCategoryInput = Schema.Struct({
   transactionId: Schema.String,
-  categoryId: Schema.String,
+  // main also accepted null ("clear"), normalized like "".
+  categoryId: Schema.NullOr(Schema.String),
   expectedCurrentCategoryId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const setTransactionCategorySpec: ActionSpec<
@@ -78,7 +79,7 @@ export const setTransactionCategorySpec: ActionSpec<
         { userId: user.id },
         {
           transactionId: input.transactionId,
-          categoryId: input.categoryId,
+          categoryId: input.categoryId ?? "",
           ...(input.expectedCurrentCategoryId !== undefined
             ? { expectedCurrentCategoryId: input.expectedCurrentCategoryId }
             : {}),
@@ -258,7 +259,8 @@ export const setTransactionNeedsReviewSpec: ActionSpec<
 
 const setTransactionNoteInput = Schema.Struct({
   transactionId: Schema.String,
-  note: Schema.String,
+  // null clears the note, as main accepted.
+  note: Schema.NullOr(Schema.String),
   expectedCurrentNote: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const setTransactionNoteSpec: ActionSpec<

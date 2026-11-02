@@ -211,6 +211,14 @@ dbTest(
   "split actions: create, allocate, clear, delete; exact ledger failures, ownership and schemas",
   () =>
     fixture(async (f) => {
+      failure(
+        await f.call(f.split.createSplitSpec, {
+          ...f.splitInput,
+          participants: [{ personName: "   ", expectedAmountPaise: 6000 }],
+        }),
+        "INVALID",
+        "Person name must not be empty",
+      );
       const share = await f.makeShare();
       expect(share.expectedAmountPaise).toBe(6000);
       expect(f.paths).toEqual(["/transactions", "/reimbursements", "/"]);
@@ -385,6 +393,11 @@ dbTest(
         "FORBIDDEN",
       );
       failure(
+        await f.call(f.owed.createOwedExpenseSpec, { ...input, personName: "  " }),
+        "INVALID",
+        "Person name must not be empty",
+      );
+      failure(
         await f.call(f.owed.createOwedExpenseSpec, {
           ...input,
           amountPaise: "5000",
@@ -408,6 +421,11 @@ dbTest(
           true,
         ),
         "FORBIDDEN",
+      );
+      failure(
+        await f.call(f.owed.updateOwedExpenseSpec, { id: created, personName: " " }),
+        "INVALID",
+        "Person name must not be empty",
       );
       expect(
         await f.call(f.owed.updateOwedExpenseSpec, {
@@ -463,6 +481,22 @@ dbTest(
         "At least one non-zero leg is required",
       );
       failure(await f.call(f.net.saveNetEventSpec, input, true), "FORBIDDEN");
+      failure(
+        await f.call(f.net.saveNetEventSpec, {
+          eventDate: "2026-10-04",
+          legs: [
+            { kind: "receivable", splitParticipantId: share.id, amountPaise: 1000, method: "offset" },
+            {
+              kind: "payable",
+              amountPaise: 1000,
+              method: "offset",
+              newPayable: { personName: "  ", incurredDate: "2026-10-04", amountPaise: 1000, description: "Taxi" },
+            },
+          ],
+        }),
+        "INVALID",
+        "Person name must not be empty",
+      );
       failure(
         await f.call(f.net.saveNetEventSpec, { ...input, eventDate: 42 }),
         "INVALID",
@@ -531,13 +565,21 @@ dbTest(
         }),
         "FORBIDDEN",
       );
-      failure(
+      // null clears the category, as it did on main; then set it back for the
+      // apply-to-payee step below.
+      expect(
         await f.call(f.txns.setTransactionCategorySpec, {
           transactionId: f.debit,
           categoryId: null,
         }),
-        "INVALID",
-      );
+      ).toEqual({ ok: true, data: undefined });
+      expect(await f.read()).toMatchObject({ categoryId: null });
+      expect(
+        await f.call(f.txns.setTransactionCategorySpec, {
+          transactionId: f.debit,
+          categoryId: f.category,
+        }),
+      ).toEqual({ ok: true, data: undefined });
       const applied = unwrap(
         await f.call(f.txns.applyCategoryToCounterpartySpec, {
           transactionId: f.debit,

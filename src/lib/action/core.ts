@@ -84,7 +84,10 @@ export async function runAction<I, IEncoded, A, R, Data = A>(
   raw: unknown,
   options: RunOptions<R, A>,
 ): Promise<ActionResult<Data>> {
-  const program = decodeInput(spec.input, raw).pipe(
+  // Deferred: Schema decoding parses eagerly when called, and it must not run
+  // until the layer (the session check) has been built — anonymous requests
+  // shouldn't get the server to parse their payload.
+  const program = Effect.suspend(() => decodeInput(spec.input, raw)).pipe(
     Effect.flatMap(spec.handler),
     Effect.provide(options.layer),
   );

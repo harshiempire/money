@@ -4,6 +4,7 @@ import type { ExtractTablesWithRelations } from "drizzle-orm";
 import type { PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { db, schema } from "./index";
+import { LedgerError } from "@/lib/ledger/context";
 
 const PG_UNIQUE_VIOLATION = "23505";
 
@@ -23,7 +24,9 @@ export async function getOrCreatePerson(
 ): Promise<string> {
   const trimmed = name.trim();
   if (!trimmed) {
-    throw new Error("Person name must not be empty");
+    // Typed so a server action returns this message and an MCP agent sees
+    // `invalid_input: …`, instead of both getting a generic internal error.
+    throw new LedgerError({ code: "invalid_input", message: "Person name must not be empty" });
   }
 
   const [existing] = await client

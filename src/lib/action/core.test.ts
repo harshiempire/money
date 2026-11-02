@@ -99,6 +99,23 @@ describe("runAction", () => {
     expect(result).toMatchObject({ ok: false, code: "UNAUTHENTICATED" });
   });
 
+  test("decoding never starts when the session check fails", async () => {
+    const calls: string[] = [];
+    const Probe = Schema.declare((u: unknown): u is unknown => {
+      calls.push("decode");
+      return true;
+    });
+    const failingAuth = Layer.effectContext(
+      Effect.sync(() => calls.push("authenticate")).pipe(Effect.andThen(Effect.fail(new Unauthenticated()))),
+    );
+    const result = await runAction({ input: Probe, handler: () => Effect.void }, { big: "payload" }, {
+      name: "t",
+      layer: failingAuth,
+    });
+    expect(result).toMatchObject({ ok: false, code: "UNAUTHENTICATED" });
+    expect(calls).toEqual(["authenticate"]);
+  });
+
   test("malformed input → INVALID naming the field; handler never runs", async () => {
     let ran = false;
     const result = await runAction(

@@ -6,9 +6,10 @@ import { getOrCreateAccountForBank } from "@/db/money-account";
 import { categoryTransactions } from "@/domain/spend/net";
 
 const getCategoryTransactionsInput = Schema.Struct({
-  categoryId: Schema.NullOr(Schema.String),
-  from: Schema.NullOr(Schema.String),
-  to: Schema.NullOr(Schema.String),
+  // main treated omitted filters as absent; forwarded as-is below.
+  categoryId: Schema.optional(Schema.NullOr(Schema.String)),
+  from: Schema.optional(Schema.NullOr(Schema.String)),
+  to: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const getCategoryTransactionsSpec: ActionSpec<
   typeof getCategoryTransactionsInput.Type,
@@ -25,9 +26,10 @@ export const getCategoryTransactionsSpec: ActionSpec<
     return yield* Effect.promise(() =>
       categoryTransactions(
         account.id,
-        input.from,
-        input.to,
-        input.categoryId,
+        // Same runtime values as main (an omitted filter arrives as undefined).
+        input.from as string | null,
+        input.to as string | null,
+        input.categoryId as string | null,
         user.id,
       ),
     );
