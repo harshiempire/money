@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Schema } from "effect";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
@@ -56,15 +56,21 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           })
         )
           stale.push({ target: op.target, id: op.id });
-      } else if (op.target === "counterparty") {
+      } else if (op.target === "counterparty" || op.target === "counterparty_name") {
         const p = schema.counterparties;
         const [row] = await tx
           .select()
           .from(p)
           .where(and(eq(p.id, op.id), eq(p.userId, ctx.actor.userId)))
           .for("update");
-        if (!row || !sameFields(op.after, { defaultCategoryId: row.defaultCategoryId }))
+        if (!row || !sameFields(op.after, op.target === "counterparty" ? { defaultCategoryId: row.defaultCategoryId } : { displayName: row.displayName }))
           stale.push({ target: op.target, id: op.id });
+      } else if (op.target === "standing_note") {
+        const n = schema.assistantContextNotes;
+        const [row] = await tx.select({ userId: n.userId, body: n.body,
+          createdAt: sql<string>`${n.createdAt}::text`, updatedAt: sql<string>`${n.updatedAt}::text` })
+          .from(n).where(and(eq(n.id, op.id), eq(n.userId, ctx.actor.userId))).for("update");
+        if (!sameFields(op.after, row ?? null)) stale.push({ target: op.target, id: op.id });
       } else {
         const current = snapshot.get(`${op.target}:${op.id}`)?.after ?? null;
         if (!sameFields(op.after, current)) stale.push({ target: op.target, id: op.id });
@@ -80,18 +86,24 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           .where(
             and(eq(schema.transactions.id, op.id), eq(schema.transactions.accountId, ctx.actor.accountId)),
           );
-      else if (op.target === "counterparty")
+      else if (op.target === "counterparty" || op.target === "counterparty_name")
         await tx
           .update(schema.counterparties)
           .set(op.after)
           .where(
             and(eq(schema.counterparties.id, op.id), eq(schema.counterparties.userId, ctx.actor.userId)),
           );
+      else if (op.target === "standing_note") {
+        const n = schema.assistantContextNotes;
+        if (!op.after) await tx.delete(n).where(and(eq(n.id, op.id), eq(n.userId, ctx.actor.userId)));
+        else await tx.insert(n).values({ id: op.id, ...op.after,
+          createdAt: sql`${op.after.createdAt}::timestamptz`, updatedAt: sql`${op.after.updatedAt}::timestamptz` });
+      }
     }
     await applyRowOperations(
       tx,
       reversed.filter(
-        (op): op is RowOperation => op.target !== "transaction" && op.target !== "counterparty",
+        (op): op is RowOperation => op.target !== "transaction" && op.target !== "counterparty" && op.target !== "counterparty_name" && op.target !== "standing_note",
       ),
     );
     return {

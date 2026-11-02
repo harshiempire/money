@@ -4,8 +4,9 @@ import { shareRef, owedRef, settlementRef, transactionRef, transactionRev } from
 import { transactionView, rupees } from "./view";
 import type { McpReadModel } from "./read-model";
 import { McpToolError } from "./pagination";
+import { personKey, closePersonNames } from "./person-names";
+export { personKey } from "./person-names";
 
-export const personKey = (name: string) => name.trim().toLowerCase();
 export const leftPaise = (amount: number, settled: number) => Math.max(0, amount - settled);
 export function settlementVia(row: McpReadModel["settlements"][number]): "bank" | "cash" | "writeoff" | "net" {
   return row.netEventId || row.method === "offset" ? "net" : row.method;
@@ -132,7 +133,7 @@ export function getOpenBalances(view: McpReadView, person?: string) {
   const people = person === undefined ? view.people.filter((p) => p.owed_to_you !== "0.00" || p.you_owe !== "0.00")
     : view.people.filter((p) => personKey(p.name) === personKey(person));
   if (person !== undefined && !people.length) {
-    const close = view.people.filter((p) => personKey(p.name).includes(personKey(person)) || personKey(person).includes(personKey(p.name))).map((p) => p.name);
+    const close = closePersonNames(view.people.map(p => p.name), person);
     throw new McpToolError(`Unknown person '${person}'. ${close.length ? `Close names: ${close.join(", ")}.` : "No close names found."}`);
   }
   return { people: people.map((p) => {

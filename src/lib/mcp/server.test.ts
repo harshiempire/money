@@ -8,6 +8,7 @@ import { buildOverview } from "./overview";
 import { resolveMcpPeriod } from "./range";
 import type { PeriodInput } from "./schemas";
 import { readFixture } from "./read-fixtures";
+import { RelationalInputs } from "./relational-schemas";
 
 const phase2Tools = ["get_transactions", "list_people", "get_open_balances", "list_payees", "find_payments", "query", "describe_table"];
 const key = deriveMcpRefKey("protocol-test");
@@ -161,7 +162,7 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
                 "list_standing_notes",
                 ...phase2Tools,
                 "propose_tags",
-                ...(scope === "write" ? ["update_transactions", "set_payee_default", "list_changes", "undo_change"] : []),
+                ...(scope === "write" ? ["update_transactions", "set_payee_default", "list_changes", "undo_change", ...Object.keys(RelationalInputs)] : []),
               ],
         );
         const list = json.result.tools.find((t: { name: string }) => t.name === "list_transactions");
@@ -181,6 +182,15 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
           description: expect.any(String),
         });
         if (scope === "write") {
+          for (const name of Object.keys(RelationalInputs)) {
+            const tool = json.result.tools.find((t: { name: string }) => t.name === name);
+            expect(tool.annotations.readOnlyHint).toBe(false);
+            expect(tool.description).toContain("Refuses");
+            expect(tool.description).toContain("Undo");
+            expect(tool.inputSchema.required).toContain("idempotency_key");
+            expect(tool.inputSchema.properties.reason.maxLength).toBe(200);
+            expect(tool.outputSchema.required).toContain("applied");
+          }
           const update = json.result.tools.find((t: { name: string }) => t.name === "update_transactions");
           expect(update.inputSchema.properties.idempotency_key.pattern).toBe("^[A-Za-z0-9_-]{8,80}$");
           expect(update.inputSchema.properties.rows.minItems).toBe(1);

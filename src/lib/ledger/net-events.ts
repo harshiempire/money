@@ -182,22 +182,28 @@ export async function saveNetEvent(
         throw new NetEventValidationError("INVARIANT_MISMATCH", invariant.message);
       }
 
+      // A share can have both bank and offset legs. Cap their combined amount.
+      const totals = new Map<string, { leg: NetEventLeg; amountPaise: number }>();
+      for (const leg of cleanLegs) {
+        const id = leg.kind === "receivable" ? `share:${leg.splitParticipantId}` : leg.owedExpenseId ? `owed:${leg.owedExpenseId}` : undefined;
+        if (id) totals.set(id, { leg, amountPaise: (totals.get(id)?.amountPaise ?? 0) + leg.amountPaise });
+      }
       await Promise.all(
-        cleanLegs.map(async (leg) => {
+        [...totals.values()].map(async ({ leg, amountPaise }) => {
           if (leg.kind === "receivable") {
             const outstanding = await participantOutstanding(leg.splitParticipantId, input.netEventId);
-            if (leg.amountPaise > outstanding) {
+            if (amountPaise > outstanding) {
               throw new NetEventValidationError(
                 "OVER_ALLOCATION",
-                `Receivable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+                `Combined receivable legs exceed outstanding by ${(amountPaise - outstanding) / 100}`,
               );
             }
           } else if (leg.owedExpenseId) {
             const outstanding = await owedExpenseOutstanding(leg.owedExpenseId, input.netEventId);
-            if (leg.amountPaise > outstanding) {
+            if (amountPaise > outstanding) {
               throw new NetEventValidationError(
                 "OVER_ALLOCATION",
-                `Payable leg exceeds outstanding by ${(leg.amountPaise - outstanding) / 100}`,
+                `Combined payable legs exceed outstanding by ${(amountPaise - outstanding) / 100}`,
               );
             }
           }

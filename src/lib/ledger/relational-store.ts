@@ -5,7 +5,8 @@ import { schema } from "@/db";
 import { getOrCreatePerson } from "@/db/person";
 import { throwForbidden } from "@/lib/auth/forbidden";
 import { LedgerError, type WriteContext } from "./context";
-import { RowOperation, snapshotDiff, orderRowOperations } from "./rules";
+import { RowOperation, snapshotDiff, orderRowOperations, sameFields } from "./rules";
+import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
 import { runChange, type LedgerTx } from "./store";
 
 import type { Snapshot } from "./rules";
@@ -147,16 +148,19 @@ export async function relationalSnapshot(tx: Pick<LedgerTx, "execute">, ctx: Wri
   add("settlement", settlements);
   return result;
 }
-export function relationalHelpers(tx: LedgerTx, ctx: WriteContext, snapshot: Snapshot) {
+export function relationalRows(snapshot: Snapshot) {
   const operations = [...snapshot.values()];
   // These are the locked pre-write rows, not a cache of subsequent mutations.
-  const before = {
+  return {
     splits: operations.flatMap(op => op.target === "split" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     participants: operations.flatMap(op => op.target === "participant" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     settlements: operations.flatMap(op => op.target === "settlement" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     owed: operations.flatMap(op => op.target === "owed_expense" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     people: operations.flatMap(op => op.target === "person" && op.after ? [{ id: op.id, ...op.after.row }] : []),
   };
+}
+export function relationalHelpers(tx: LedgerTx, ctx: WriteContext, snapshot: Snapshot) {
+  const before = relationalRows(snapshot);
   const owned = (target: RowOperation["target"], id: string) => {
     if (!snapshot.has(key(target, id))) throwForbidden();
   };
@@ -234,12 +238,21 @@ export async function runRelationalChange<R extends { revalidate: boolean }>(
     });
   // The authenticated door hashes the external request before resolving refs.
   // Keep that hash intact so replayChange can replay even deleted/changed refs.
-  return runChange<R & { changeId: string | null }>(ctx, { kind }, async (tx) => {
+  return runChange<R & { changeId: string | null; ops: RowOperation[] }>(ctx, { kind, summary: ctx.summary }, async (tx) => {
     await lockRelationalActor(tx, ctx);
     const before = await relationalSnapshot(tx, ctx, true);
+    for (const [id, expected] of Object.entries(ctx.transactionRevs ?? {})) {
+      const [row] = await tx.select().from(schema.transactions)
+        .where(and(eq(schema.transactions.id, id), eq(schema.transactions.accountId, ctx.actor.accountId)));
+      if (!row) throw new LedgerError({ code: "not_found", message: "That transaction isn't available." });
+      const current = transactionRev(deriveMcpRevKey(process.env.AUTH_SECRET), ctx.actor.userId, id, row);
+      if (expected !== current) throw new LedgerError({ code: "stale", message: "Read the transaction again before writing.", current_rev: current });
+    }
+    if (ctx.expectedRelations && !sameFields([...ctx.expectedRelations], [...before]))
+      throw new LedgerError({ code: "stale", message: "Shares, settlements or people changed. Read them again before writing." });
     const value = await work(tx, relationalHelpers(tx, ctx, before));
     const ops = snapshotDiff(before, await relationalSnapshot(tx, ctx));
-    return { ops, result: { ...value, changeId: null } };
+    return { ops, result: { ...value, changeId: null, ops } };
   });
 }
 

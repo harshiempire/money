@@ -6,6 +6,7 @@ import { McpScope, scopeAllows } from "./token";
 import { LedgerError } from "@/lib/ledger/context";
 import type { McpWriteOps } from "./write-ops";
 import { UpdateInput, PayeeInput, ChangesInput, UndoInput, WriteOutput, ChangesOutput } from "./write-schemas";
+import { RelationalInputs, RelationalOutput, RelationalDescriptions, type RelationalTool } from "./relational-schemas";
 import { transactionRef } from "./refs";
 import { validateTagProposal, type StoredTagRow } from "./proposal";
 import { McpToolError, pageTransactions } from "./pagination";
@@ -137,7 +138,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
         "A person can have several UPI handles; do not assume one handle identifies all their payments. " +
         "Never bypass the MCP with DB scripts, app internals or .env files. If a tool is missing, say so. " +
         (principal.scope === "write"
-          ? "Write tools change this account directly. Before writing, read current refs and revs. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. "
+          ? "Write tools change this account directly. Before writing, read current refs and revs. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. For splits and settlements, one clear match means act and name it; several means ask; settle oldest-first unless the owner named a bill. "
           : "Read access to this account. ") +
         "propose_tags stays draft-only; nothing changes until the owner presses Apply in Money.",
     },
@@ -327,6 +328,13 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
       title: "Undo a change", description: "Undo every target of a change together. Refused if a target changed since, or the change was already undone. Undoing an undo restores its previous values.",
       inputSchema: standard(UndoInput), outputSchema: standard(WriteOutput), annotations: { readOnlyHint: false, destructiveHint: false },
     }, (input) => safely(async () => result(await requireWrites().undo(principal, input))));
+    for (const name of Object.keys(RelationalInputs) as RelationalTool[]) {
+      server.registerTool(name, {
+        title: name.replaceAll("_", " "), description: RelationalDescriptions[name],
+        inputSchema: standard(RelationalInputs[name]), outputSchema: standard(RelationalOutput),
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      }, input => safely(async () => result(await requireWrites().relational(principal, name, input))));
+    }
   }
   function requireWrites(): McpWriteOps {
     if (!writes) throw new McpToolError("Write operations aren't available.");

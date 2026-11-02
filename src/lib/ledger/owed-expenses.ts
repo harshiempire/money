@@ -15,6 +15,7 @@ export async function createOwedExpense(
     description: string;
     categoryId?: string | null;
     note?: string | null;
+    sourceInflowTransactionId?: string;
   },
 ) {
   return runRelationalChange(ctx, "create_owed_expense", async (tx, helpers) => {
@@ -35,6 +36,18 @@ export async function createOwedExpense(
       await assertCategoryOwned(user.id, input.categoryId);
     }
 
+    if (input.sourceInflowTransactionId) {
+      await helpers.assertTransactionOwned(user.id, input.sourceInflowTransactionId);
+      const [inflow] = await tx.select().from(schema.transactions).where(eq(schema.transactions.id, input.sourceInflowTransactionId));
+      if (inflow.drCr !== "credit") throw new Error("A source inflow must be a credit.");
+      const linked = helpers.before.owed.filter(row => row.sourceInflowTransactionId === inflow.id);
+      const allocated = helpers.before.settlements.filter(row => row.inflowTransactionId === inflow.id).reduce((sum, row) => sum + row.amountPaise, 0);
+      if (linked.length || inflow.residualDisposition || amountPaise > inflow.amountPaise - allocated)
+        throw new Error("Source inflow is already explained or has insufficient unallocated money.");
+      const [net] = await tx.select({ id: schema.netEvents.id }).from(schema.netEvents).where(eq(schema.netEvents.inflowTransactionId, inflow.id));
+      if (net) throw new Error("Source inflow is part of a net event.");
+    }
+
     const personId = await getOrCreatePerson(user.id, input.personName);
 
     const [created] = await tx
@@ -48,6 +61,7 @@ export async function createOwedExpense(
         description,
         categoryId: input.categoryId ?? null,
         note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
+        sourceInflowTransactionId: input.sourceInflowTransactionId ?? null,
       })
       .returning({ id: schema.owedExpenses.id });
 
@@ -86,6 +100,9 @@ export async function updateOwedExpense(
     if (input.amountPaise !== undefined) {
       const amountPaise = safePaise(input.amountPaise);
       if (amountPaise <= 0) throw new Error("Amount must be positive");
+      const settled = (await helpers.settledAmountByOwedExpenseIds([input.id])).get(input.id) ?? 0;
+      if (amountPaise < settled)
+        throw new Error(`Amount cannot be less than the existing settlements of ₹${(settled / 100).toFixed(2)}.`);
       updates.amountPaise = amountPaise;
     }
     if (input.description !== undefined) {

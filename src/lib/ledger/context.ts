@@ -1,9 +1,14 @@
 import { Schema } from "effect";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
+import type { Snapshot } from "./rules";
 export type WriteContext = (
   | { actor: MoneyActor; source: "app" }
   | { actor: MoneyActor; source: "mcp"; tokenId: string; label: string }
 ) & {
+  summary?: string;
+  /** MCP adapters compute allocations from this actor-scoped snapshot. Recheck under locks. */
+  expectedRelations?: Snapshot;
+  transactionRevs?: Record<string, string>;
   idempotency?: {
     key: string;
     requestHash: string;
@@ -13,5 +18,6 @@ export type WriteContext = (
 export class LedgerError extends Schema.TaggedError<LedgerError>()("LedgerError", {
   code: Schema.String,
   message: Schema.String,
+  current_rev: Schema.optionalKey(Schema.String),
 }) {}
 export const migrationMessage = "Run migration 0014 before using the change log or MCP writes.";

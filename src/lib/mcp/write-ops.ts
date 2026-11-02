@@ -14,8 +14,11 @@ import { deriveMcpRefKey, deriveMcpRevKey, transactionRef, transactionRev } from
 import { mcpReadOps } from "./read-ops";
 import { validateTransactionUpdates, resolveCategoryName } from "./update-validation";
 import type { UpdateInput, PayeeInput, ChangesInput, UndoInput } from "./write-schemas";
+import { mcpRelationalWrite } from "./relational-write-ops";
+import type { RelationalTool } from "./relational-schemas";
 
 export interface McpWriteOps {
+  relational(principal: McpPrincipal, tool: RelationalTool, input: unknown): Promise<Record<string, unknown>>;
   update(principal: McpPrincipal, input: UpdateInput): Promise<Record<string, unknown>>;
   payee(principal: McpPrincipal, input: PayeeInput): Promise<Record<string, unknown>>;
   changes(principal: McpPrincipal, input: typeof ChangesInput.Type): Promise<Record<string, unknown>>;
@@ -82,6 +85,7 @@ function payeeOutput(result: PayeeResult): Record<string, unknown> {
       };
 }
 export const mcpWriteOps: McpWriteOps = {
+  relational: mcpRelationalWrite,
   async update(p, input) {
     const ctx = context(p, "update_transactions", input);
     ctx.idempotency!.renderResult = (result) => editOutput(p, result as EditResult);
@@ -167,7 +171,7 @@ export const mcpWriteOps: McpWriteOps = {
       const refs: string[] = [];
       for (const target of result.stale) {
         if (target.target === "transaction" || target.target === "transaction_residual") refs.push(transactionRef(key.ref, p.actor.userId, target.id));
-        else if (target.target === "counterparty") {
+        else if (target.target === "counterparty" || target.target === "counterparty_name") {
           const rows = await db
             .select({ id: schema.transactions.id })
             .from(schema.transactions)

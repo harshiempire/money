@@ -1,12 +1,14 @@
 /**
  * Throwaway DB only. Never load a .env file:
- * MONEY_LEDGER_TEST_DB=1 DATABASE_URL="$(cat $HOME/.money-scratch/neon-writes/dburl)" \
- *   bun --no-env-file test --conditions react-server src/lib/ledger/ledger.db.test.ts
+ * Set MONEY_LEDGER_TEST_DBURL_FILE to a local file holding the throwaway URL;
+ * the test refuses any other DATABASE_URL and local-dev. Always pass --no-env-file.
  * (`--conditions` must come after `test`; before it, `server-only` throws.)
  * Seeds random private fixtures and deletes them. The missing-table test renames
  * the log only inside a transaction that is always rolled back.
  */
 import { describe, expect, test, mock } from "bun:test";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
 import { requestHash } from "./rules";
@@ -18,6 +20,18 @@ if (enabled && !process.env.DATABASE_URL)
   throw new Error(
     "MONEY_LEDGER_TEST_DB requires an explicitly supplied DATABASE_URL. Do not load .env files.",
   );
+const readUrl = (file: string | undefined) => {
+  if (!file) return null;
+  try {
+    return readFileSync(file, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+};
+if (enabled && process.env.DATABASE_URL !== readUrl(process.env.MONEY_LEDGER_TEST_DBURL_FILE))
+  throw new Error("Ledger DB tests run only against the throwaway URL in MONEY_LEDGER_TEST_DBURL_FILE.");
+if (enabled && process.env.DATABASE_URL === readUrl(`${homedir()}/.money-scratch/local-dev/dburl`))
+  throw new Error("Never run ledger DB tests against local-dev; it holds a copy of real data.");
 
 describe.skipIf(!enabled)("ledger throwaway DB", () => {
   async function fixture(run: (f: Awaited<ReturnType<typeof seed>>) => Promise<void>) {
@@ -1157,6 +1171,186 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     expect(writeoff.note).toBe("gift");
     expect(writeoff.inflowTransactionId).toBeNull();
     expect(forgiven.changeId).toBeTruthy();
+  }), 60000);
+
+  async function phase4Fixture(run: (f: Fixture, api: {
+    call: (tool: import("@/lib/mcp/relational-schemas").RelationalTool, args: object) => Promise<Record<string, unknown>>;
+    undo: (change: unknown, key: string) => Promise<Record<string, unknown>>;
+    txRef: (id: string) => string; rev: (id: string) => Promise<string>;
+    shareRef: (id: string) => string; owedRef: (id: string) => string;
+  }) => Promise<void>) {
+    return fixture(async f => {
+      const { mcpWriteOps } = await import("@/lib/mcp/write-ops");
+      const refs = await import("@/lib/mcp/refs");
+      const previous = process.env.AUTH_SECRET;
+      process.env.AUTH_SECRET = "phase4-adapter-secret";
+      const key = refs.deriveMcpRefKey(process.env.AUTH_SECRET);
+      const principal = { actor: f.actor, scope: "write" as const, tokenId: f.tokenId, label: "Phase 4 agent" };
+      try {
+        await run(f, {
+          call: (tool, args) => mcpWriteOps.relational(principal, tool, args),
+          undo: (change, idempotency_key) => mcpWriteOps.undo(principal, { change_id: String(change), idempotency_key }),
+          txRef: id => refs.transactionRef(key, f.actor.userId, id),
+          rev: async id => refs.transactionRev(refs.deriveMcpRevKey(process.env.AUTH_SECRET), f.actor.userId, id, await f.read(id)),
+          shareRef: id => refs.shareRef(key, f.actor.userId, f.actor.accountId, id),
+          owedRef: id => refs.owedRef(key, f.actor.userId, f.actor.accountId, id),
+        });
+      } finally {
+        if (previous === undefined) delete process.env.AUTH_SECRET;
+        else process.env.AUTH_SECRET = previous;
+      }
+    });
+  }
+  test("phase4 MCP split, oldest-first partials, exact replay/conflict and settlement then split undo", () => phase4Fixture(async (f, api) => {
+    const { RelationalOutput } = await import("@/lib/mcp/relational-schemas");
+    const { Schema } = await import("effect");
+    await f.db.update(f.schema.transactions).set({ drCr: "credit", amountPaise: 6000 }).where(eq(f.schema.transactions.id, f.ids[1]));
+    const ref = api.txRef(f.ids[0]);
+    const input = { ref, rev: await api.rev(f.ids[0]), participants: [{ person: "Kiran", create_person: true }], equal: true, idempotency_key: "p4-create-split", reason: "Lunch split" };
+    const created = await api.call("create_split", input);
+    expect(created.applied).toBe(true); expect(Schema.is(RelationalOutput)(created)).toBe(true);
+    expect((created.refs as string[]).some(ref => ref.startsWith("shr_"))).toBe(true);
+    const bill2 = crypto.randomUUID();
+    await f.db.insert(f.schema.transactions).values({ id: bill2, accountId: f.actor.accountId, txnDate: "2026-10-02", amountPaise: 8000, drCr: "debit", channel: "other", refId: crypto.randomUUID(), rawDescription: "Second bill" });
+    const second = await api.call("create_split", { ref: api.txRef(bill2), rev: await api.rev(bill2), participants: [{ person: " kIrAn " }], equal: true, idempotency_key: "p4-second-split" });
+    expect(second.applied).toBe(true);
+    const bankInput = { inflow_ref: api.txRef(f.ids[1]), person: "Kiran", idempotency_key: "p4-first-bank" };
+    const settled = await api.call("record_settlement", bankInput);
+    expect(settled.applied).toBe(true);
+    expect(settled.allocations).toEqual([
+      { share_ref: (created.refs as string[]).find(ref => ref.startsWith("shr_")), person: "Kiran", amount: "50.00", left: "0.00" },
+      { share_ref: (second.refs as string[]).find(ref => ref.startsWith("shr_")), person: "Kiran", amount: "10.00", left: "30.00" },
+    ]);
+    expect(settled.left_open).toBe("30.00"); expect(settled.unallocated).toBe("0.00");
+    const replacement = await api.call("create_split", { ...input, replace_existing: true, idempotency_key: "p4-refuse-replace" });
+    expect(replacement.applied).toBe(false); expect(JSON.stringify(replacement)).toContain("Kiran");
+    const deletion = await api.call("delete_split", { ref, rev: await api.rev(f.ids[0]), idempotency_key: "p4-refuse-delete" });
+    expect(deletion.applied).toBe(false);
+    const inflow2 = crypto.randomUUID();
+    await f.db.insert(f.schema.transactions).values({ id: inflow2, accountId: f.actor.accountId, txnDate: "2026-10-03", amountPaise: 1500, drCr: "credit", channel: "other", refId: crypto.randomUUID(), rawDescription: "More repayment" });
+    const more = await api.call("record_settlement", { inflow_ref: api.txRef(inflow2), person: "Kiran", idempotency_key: "p4-second-bank" });
+    expect(more.applied).toBe(true); expect(more.left_open).toBe("15.00");
+    process.env.AUTH_SECRET = "rotated-after-write";
+    expect(await api.call("record_settlement", bankInput)).toEqual({ ...settled, replayed: true });
+    process.env.AUTH_SECRET = "phase4-adapter-secret";
+    await expect(api.call("record_settlement", { ...bankInput, person: "Different" })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect((await api.undo(more.change_id, "p4-undo-more")).applied).toBe(true);
+    expect((await api.undo(settled.change_id, "p4-undo-bank")).applied).toBe(true);
+    expect((await api.undo(second.change_id, "p4-undo-second-split")).applied).toBe(true);
+    expect((await api.undo(created.change_id, "p4-undo-first-split")).applied).toBe(true);
+    expect(await f.db.select().from(f.schema.splits).where(inArray(f.schema.splits.transactionId, [bill2, f.ids[0]]))).toHaveLength(0);
+    const history = await f.listChanges(f.actor);
+    expect(history.some(row => row.source === "mcp" && row.summary === "Lunch split")).toBe(true);
+    for (const response of [created, second, settled, more]) {
+      expect(JSON.stringify(response)).not.toContain(f.actor.userId); expect(JSON.stringify(response)).not.toContain(f.ids[0]);
+    }
+  }), 120000);
+
+  test("phase4 MCP rename and standing note have guarded exact undo and undo of undo", () => phase4Fixture(async (f, api) => {
+    const input = { ref: api.txRef(f.ids[0]), display_name: "Rooster X", current_display_name: "Lunch", idempotency_key: "p4-rename-payee" };
+    const renamed = await api.call("rename_payee", input);
+    expect(renamed.applied).toBe(true);
+    expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].displayName).toBe("Rooster X");
+    const refused = await api.call("rename_payee", { ...input, display_name: "Wrong", idempotency_key: "p4-stale-rename" });
+    expect(refused.applied).toBe(false); expect(JSON.stringify(refused)).toContain("stale");
+    expect(await api.call("rename_payee", input)).toEqual({ ...renamed, replayed: true });
+    const undone = await api.undo(renamed.change_id, "p4-undo-rename"); expect(undone.applied).toBe(true);
+    expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].displayName).toBe("Lunch");
+    expect((await api.undo(undone.change_id, "p4-redo-rename")).applied).toBe(true);
+    const noteInput = { body: "  Kiran ravi@bank 123456 always food  ", idempotency_key: "p4-standing-note" };
+    const note = await api.call("add_standing_note", noteInput);
+    expect(note.applied).toBe(true); expect((note.refs as string[])[0]).toStartWith("nte_");
+    const rows = () => f.db.select().from(f.schema.assistantContextNotes).where(eq(f.schema.assistantContextNotes.userId, f.actor.userId));
+    const original = await rows(); expect(original[0].body).toBe(noteInput.body.trim());
+    expect(await api.call("add_standing_note", noteInput)).toEqual({ ...note, replayed: true });
+    const removed = await api.undo(note.change_id, "p4-undo-note"); expect(removed.applied).toBe(true); expect(await rows()).toHaveLength(0);
+    const restored = await api.undo(removed.change_id, "p4-redo-note"); expect(restored.applied).toBe(true); expect(await rows()).toEqual(original);
+    await f.db.update(f.schema.assistantContextNotes).set({ body: "edited later" }).where(eq(f.schema.assistantContextNotes.id, original[0].id));
+    expect((await api.undo(restored.change_id, "p4-stale-note-undo")).applied).toBe(false);
+    const stranger = await api.call("rename_payee", { ...input, ref: api.txRef(f.otherId), idempotency_key: "p4-foreign-payee" }); expect(stranger.applied).toBe(false); expect(JSON.stringify(stranger)).toContain("not_found");
+  }), 90000);
+
+  test("phase4 shared cores cap combined net legs and prevent owed edits below settlements", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const expense = await r.owed.createOwedExpense(f.app, r.expenseInput);
+    const before = await r.snapshot();
+    await expect(r.net.saveNetEvent(f.app, { eventDate: "2026-10-04", inflowTransactionId: f.ids[1], legs: [
+      { kind: "receivable", splitParticipantId: r.share.id, amountPaise: 4000, method: "bank" },
+      { kind: "receivable", splitParticipantId: r.share.id, amountPaise: 3000, method: "offset" },
+      { kind: "payable", owedExpenseId: expense.value, amountPaise: 3000, method: "offset" },
+    ] })).rejects.toThrow("Combined receivable legs");
+    expect(await r.snapshot()).toEqual(before);
+    await expect(r.net.saveNetEvent(f.app, { eventDate: "2026-10-04", legs: [
+      { kind: "receivable", splitParticipantId: r.share.id, amountPaise: 6000, method: "offset" },
+      { kind: "payable", owedExpenseId: expense.value, amountPaise: 3000, method: "offset" },
+      { kind: "payable", owedExpenseId: expense.value, amountPaise: 3000, method: "offset" },
+    ] })).rejects.toThrow("Combined payable legs");
+    expect(await r.snapshot()).toEqual(before);
+    await f.db.insert(f.schema.settlements).values({ owedExpenseId: expense.value, amountPaise: 3000, method: "cash" });
+    const settled = await r.snapshot();
+    await expect(r.owed.updateOwedExpense(f.app, { id: expense.value, amountPaise: 2999 })).rejects.toThrow("existing settlements of ₹30.00");
+    expect(await r.snapshot()).toEqual(settled);
+    expect((await r.owed.updateOwedExpense(f.app, { id: expense.value, amountPaise: 3000 })).changeId).toBeTruthy();
+  }), 60000);
+
+  test("phase4 MCP wrappers cover explicit and incremental allocations, cash/writeoffs, net and owed writes", () => phase4Fixture(async (f, api) => {
+    const r = await relationalFixture(f);
+    const sh = api.shareRef(r.share.id), inflow = api.txRef(f.ids[1]);
+    for (const [tool, args] of [
+      ["record_cash_settlement", { share_ref: api.shareRef("foreign-share"), amount: "1" }],
+      ["delete_owed_expense", { owed_ref: api.owedRef("foreign-expense") }],
+      ["undo_write_off", { settlement_ref: "stl_unknown" }],
+    ] as const) {
+      const refused = await api.call(tool, { ...args, idempotency_key: `p4-unknown-${tool}` });
+      expect(refused.applied).toBe(false); expect(JSON.stringify(refused)).toContain("not_found");
+    }
+    const refuse = await api.call("record_settlement", { inflow_ref: inflow, person: "Nit", idempotency_key: "p4-close-name" });
+    expect(refuse.applied).toBe(false); expect(JSON.stringify(refuse)).toContain("Kiran");
+    const first = await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [{ share_ref: sh, amount: "10" }], idempotency_key: "p4-explicit-bank" }); expect(first.applied).toBe(true);
+    const second = await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [{ share_ref: sh, amount: 10 }], idempotency_key: "p4-increment-bank" }); expect(second.applied).toBe(true); expect(second.unallocated).toBe("20.00");
+    const bankRows = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.ids[1]));
+    expect(bankRows.reduce((n, row) => n + row.amountPaise, 0)).toBe(2000);
+    expect((await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [{ share_ref: sh, amount: "20.01" }], idempotency_key: "p4-over-bank" })).applied).toBe(false);
+    expect((await api.call("clear_settlement", { inflow_ref: inflow, idempotency_key: "p4-clear-bank" })).applied).toBe(true);
+    const cash = await api.call("record_cash_settlement", { share_ref: sh, amount: "5", idempotency_key: "p4-cash-1" }); expect(cash).toMatchObject({ applied: true });
+    expect((await api.call("record_cash_settlement", { share_ref: sh, amount: "55.01", idempotency_key: "p4-over-cash" })).applied).toBe(false);
+    const writeoff = await api.call("write_off_share", { share_ref: sh, idempotency_key: "p4-writeoff" }); expect(writeoff.applied).toBe(true);
+    const stl = (writeoff.refs as string[]).find(ref => ref.startsWith("stl_"))!;
+    expect((await api.call("undo_write_off", { settlement_ref: stl, idempotency_key: "p4-remove-writeoff" })).applied).toBe(true);
+    const add = await api.call("add_owed_expense", { person: "Kiran", date: "2026-10-02", what: "Dinner", amount: "15", idempotency_key: "p4-add-owed" }); expect(add.applied).toBe(true);
+    const owedRef = (add.refs as string[]).find(ref => ref.startsWith("owe_"))!;
+    const update = await api.call("update_owed_expense", { owed_ref: owedRef, amount: "10", what: "Dinner corrected", idempotency_key: "p4-edit-owed" }); expect(update.applied).toBe(true);
+    const net = await api.call("net_settle", { date: "2026-10-04", inflow_ref: inflow, receivables: [{ share_ref: sh, amount: "50" }], payables: [{ owed_ref: owedRef, amount: "10" }], idempotency_key: "p4-net-settle" }); expect(net.applied).toBe(true);
+    expect((await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", idempotency_key: "p4-net-bank-refusal" })).applied).toBe(false);
+    expect((await api.undo(net.change_id, "p4-undo-net")).applied).toBe(true);
+    const deleted = await api.call("delete_owed_expense", { owed_ref: owedRef, idempotency_key: "p4-delete-owed" }); expect(deleted.applied).toBe(true);
+    expect((await api.undo(deleted.change_id, "p4-undo-delete-owed")).applied).toBe(true);
+    const sourced = await api.call("add_owed_expense", { person: "Kiran", date: "2026-10-04", what: "Money to return", amount: "40", source_inflow_ref: inflow, idempotency_key: "p4-source-owed" }); expect(sourced.applied).toBe(true);
+    expect((await api.call("add_owed_expense", { person: "Kiran", date: "2026-10-04", what: "Duplicate", amount: "1", source_inflow_ref: inflow, idempotency_key: "p4-source-duplicate" })).applied).toBe(false);
+    const stale = await api.call("create_split", { ref: api.txRef(f.ids[0]), rev: "stale", equal: true, participants: [{ person: "Kiran" }], idempotency_key: "p4-stale-split" });
+    expect(stale.applied).toBe(false); expect(JSON.stringify(stale)).toContain("current_rev");
+  }), 180000);
+
+  test("phase4 cores recheck snapshot and transaction revisions under relational locks", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const { relationalSnapshot } = await import("./relational-store");
+    const old = await relationalSnapshot(f.db, f.app);
+    const before = (await f.listChanges(f.actor)).length;
+    await f.db.update(f.schema.splitParticipants).set({ expectedAmountPaise: 5999 }).where(eq(f.schema.splitParticipants.id, r.share.id));
+    await expect(r.settlements.recordCashSettlement({ ...f.mcp("p4-stale-snapshot"), expectedRelations: old }, { splitParticipantId: r.share.id, amountPaise: 100, note: null })).rejects.toMatchObject({ code: "stale" });
+    expect((await f.listChanges(f.actor)).length).toBe(before);
+    const previous = process.env.AUTH_SECRET;
+    process.env.AUTH_SECRET = "p4-locked-rev";
+    try {
+      const key = deriveMcpRevKey(process.env.AUTH_SECRET);
+      const rev = transactionRev(key, f.actor.userId, f.ids[0], await f.read());
+      await f.db.update(f.schema.transactions).set({ note: "changed after read" }).where(eq(f.schema.transactions.id, f.ids[0]));
+      await expect(r.splits.deleteSplit({ ...f.mcp("p4-stale-core-rev"), transactionRevs: { [f.ids[0]]: rev } }, { transactionId: f.ids[0], expectNoSettlements: true })).rejects.toMatchObject({ code: "stale", current_rev: transactionRev(key, f.actor.userId, f.ids[0], await f.read()) });
+      expect((await f.listChanges(f.actor)).length).toBe(before);
+    } finally {
+      if (previous === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = previous;
+    }
   }), 60000);
 
 });
