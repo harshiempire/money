@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { deleteCashSettlement, recordCashSettlement } from "./actions";
+import { callAction } from "@/lib/action/result";
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
 const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
@@ -75,19 +76,24 @@ function CashSettlementForm({
   const submit = () => {
     if (!isValid) return;
     startTransition(async () => {
-      await recordCashSettlement({
-        splitParticipantId,
-        amountPaise: parsedPaise,
-        note,
-      });
-      onClose();
+      const result = await callAction(() =>
+        recordCashSettlement({
+          splitParticipantId,
+          amountPaise: parsedPaise,
+          note,
+        }),
+      );
+      // Before: a failure was an uncaught throw (error boundary).
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 
   const remove = (settlementId: string) => {
     startTransition(async () => {
-      await deleteCashSettlement({ settlementId });
-      onClose();
+      const result = await callAction(() => deleteCashSettlement({ settlementId }));
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 

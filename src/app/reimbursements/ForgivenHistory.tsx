@@ -4,6 +4,7 @@ import { useTransition } from "react";
 import { formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import { undoWriteOff } from "./actions";
+import { callAction } from "@/lib/action/result";
 
 export interface ForgivenHistoryItem {
   settlementId: string;
@@ -46,14 +47,10 @@ export function ForgivenHistory({
     );
     if (!ok) return;
     startTransition(async () => {
-      try {
-        await undoWriteOff({ settlementId: item.settlementId });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to undo forgiveness";
-        console.error("[undoWriteOff]", error);
-        window.alert(message);
-      }
+      const result = await callAction(() =>
+        undoWriteOff({ settlementId: item.settlementId }),
+      );
+      if (!result.ok) window.alert(result.message);
     });
   };
 
