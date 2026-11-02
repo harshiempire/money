@@ -36,6 +36,16 @@ describe("runAction", () => {
     expect(revalidated).toBe(true);
   });
 
+  test("onSuccess receives the handler's result (for revalidateWhen)", async () => {
+    let seen: unknown;
+    await runAction(spec(() => Effect.succeed({ revalidate: false })), good, {
+      name: "t",
+      layer: signedIn,
+      onSuccess: (data) => (seen = data),
+    });
+    expect(seen).toEqual({ revalidate: false });
+  });
+
   test("no session → UNAUTHENTICATED; handler and onSuccess never run", async () => {
     let ran = false;
     let revalidated = false;

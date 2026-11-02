@@ -13,13 +13,18 @@ export interface ActionSpec<I, IEncoded, A, R> {
   readonly handler: (input: I) => Effect.Effect<A, ActionError, R>;
   /** Paths to revalidate — only after the handler succeeds. */
   readonly revalidate?: readonly string[];
+  /**
+   * Optional: revalidate only when this returns true for the handler's result
+   * (e.g. a ledger core's `result.revalidate` — false when nothing changed).
+   */
+  readonly revalidateWhen?: (data: A) => boolean;
 }
 
-export interface RunOptions<R> {
+export interface RunOptions<R, A = unknown> {
   /** Used in server logs, e.g. "createSplit". */
   readonly name: string;
   readonly layer: Layer.Layer<R, ActionError>;
-  readonly onSuccess?: () => void;
+  readonly onSuccess?: (data: A) => void;
   /**
    * Called with every defect before it's swallowed. Next's `redirect()` /
    * `notFound()` work by throwing; the Next wrapper passes `unstable_rethrow`
@@ -51,7 +56,7 @@ export const decodeInput = <I, IEncoded>(
 export async function runAction<I, IEncoded, A, R>(
   spec: ActionSpec<I, IEncoded, A, R>,
   raw: unknown,
-  options: RunOptions<R>,
+  options: RunOptions<R, A>,
 ): Promise<ActionResult<A>> {
   const program = decodeInput(spec.input, raw).pipe(
     Effect.flatMap(spec.handler),
@@ -61,7 +66,7 @@ export async function runAction<I, IEncoded, A, R>(
   const exit = await Effect.runPromiseExit(program);
 
   if (Exit.isSuccess(exit)) {
-    options.onSuccess?.();
+    options.onSuccess?.(exit.value);
     return { ok: true, data: exit.value };
   }
 

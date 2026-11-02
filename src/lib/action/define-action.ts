@@ -40,7 +40,7 @@ export function defineAction<I, IEncoded, A>(
       name,
       layer: Layer.merge(CurrentUserLive, DbLive),
       rethrow: unstable_rethrow,
-      onSuccess: () => spec.revalidate?.forEach((p) => revalidatePath(p)),
+      onSuccess: (data) => revalidateFor(spec, data),
     });
 }
 
@@ -57,7 +57,7 @@ export function definePublicAction<I, IEncoded, A>(
       name,
       layer: DbLive,
       rethrow: unstable_rethrow,
-      onSuccess: () => spec.revalidate?.forEach((p) => revalidatePath(p)),
+      onSuccess: (data) => revalidateFor(spec, data),
     });
 }
 
@@ -79,6 +79,14 @@ export function asFormAction<I>(
       ? { error: result.message }
       : { error: result.message, field: result.field };
   };
+}
+
+function revalidateFor<A>(
+  spec: { readonly revalidate?: readonly string[]; readonly revalidateWhen?: (data: A) => boolean },
+  data: A,
+): void {
+  if (spec.revalidateWhen && !spec.revalidateWhen(data)) return;
+  spec.revalidate?.forEach((p) => revalidatePath(p));
 }
 
 const CurrentUserLive = Layer.effect(
