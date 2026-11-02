@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { setTransactionNeedsReview } from "./actions";
+import { callAction } from "@/lib/action/result";
 
 export function ReviewLaterButton({
   transactionId,
@@ -23,10 +24,13 @@ export function ReviewLaterButton({
       }
       onClick={() => {
         startTransition(async () => {
-          await setTransactionNeedsReview({
-            transactionId,
-            needsReview: !needsReview,
-          });
+          const result = await callAction(() =>
+            setTransactionNeedsReview({
+              transactionId,
+              needsReview: !needsReview,
+            }),
+          );
+          if (!result.ok) window.alert(result.message);
         });
       }}
       className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide disabled:opacity-50 ${

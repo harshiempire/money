@@ -17,15 +17,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LEGACY = new Set([
-  // Rebuild on the ledger cores (feat/effect-actions-v2): remove each file as it moves to defineAction.
-  "src/app/auth/actions.ts",
-  "src/app/import/actions.ts",
-  "src/app/reimbursements/actions.ts",
-  "src/app/reimbursements/owed-expense-actions.ts",
-  "src/app/spend/actions.ts",
-  "src/app/transactions/actions.ts",
-  "src/app/transactions/net-event-actions.ts",
-  "src/app/transactions/split-actions.ts",
   // Follow-ups, not in this PR.
   "src/app/assistant/actions.ts",
   "src/app/assistant/proposed-tag-actions.ts",

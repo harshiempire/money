@@ -7,10 +7,8 @@ import {
   formatPaiseSigned,
 } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
-import {
-  getLinkedTransactionPreview,
-  type LinkedTransactionPreview,
-} from "./actions";
+import { getLinkedTransactionPreview, type LinkedTransactionPreview } from "./actions";
+import { callAction } from "@/lib/action/result";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 
 function scrollToTransaction(id: string) {
@@ -59,12 +57,9 @@ export function LinkedTransactionLink({
     setPreview(null);
     dialogRef.current?.showModal();
     startTransition(async () => {
-      try {
-        const data = await getLinkedTransactionPreview({ transactionId });
-        setPreview(data);
-      } catch {
-        setError("Could not load this transaction.");
-      }
+      const result = await callAction(() => getLinkedTransactionPreview({ transactionId }));
+      if (result.ok) setPreview(result.data);
+      else setError(result.code === "INTERNAL" ? "Could not load this transaction." : result.message);
     });
   };
 

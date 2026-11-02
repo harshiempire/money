@@ -14,6 +14,10 @@ import { deleteNetEvent, saveNetEvent } from "@/app/transactions/net-event-actio
 import { loadAssistantTxns } from "@/app/assistant/actions";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
 import { formatPaise } from "@/lib/format";
+// The transaction/split/net actions return ActionResult; unwrap() throws on
+// failure (keeping the server message) so a card never reports a write that
+// didn't happen.
+import { unwrap } from "@/lib/action/result";
 import { netBalance, splitBalance, typedPaise } from "@/lib/assistant/card-math";
 import type { CategoryLite, OpDraft, TxnCardData, UndoInfo } from "@/lib/assistant/types";
 
@@ -44,18 +48,20 @@ export async function applyDraft(
   switch (draft.op) {
     case "note": {
       const note = draft.note.trim();
-      await setTransactionNote({ transactionId: draft.txnId, note, expectedCurrentNote: draft.currentNote });
+      unwrap(await setTransactionNote({ transactionId: draft.txnId, note, expectedCurrentNote: draft.currentNote }));
       return {
         undo: { kind: "note", prevNote: draft.currentNote, appliedNote: note },
         message: draft.currentNote ? "Note replaced." : "Note added.",
       };
     }
     case "cat": {
-      await setTransactionCategory({
-        transactionId: draft.txnId,
-        categoryId: draft.categoryId,
-        expectedCurrentCategoryId: draft.currentCategoryId,
-      });
+      unwrap(
+        await setTransactionCategory({
+          transactionId: draft.txnId,
+          categoryId: draft.categoryId,
+          expectedCurrentCategoryId: draft.currentCategoryId,
+        }),
+      );
       const name = categories.find((c) => c.id === draft.categoryId)?.name;
       return {
         undo: { kind: "cat", prevCategoryId: draft.currentCategoryId, appliedCategoryId: draft.categoryId },
@@ -70,7 +76,7 @@ export async function applyDraft(
       if (fresh?.categoryId !== draft.categoryId) {
         throw new Error("This payment's category changed since the card was made. Ask again for a fresh card.");
       }
-      const { updated, ids } = await applyCategoryToCounterparty({ transactionId: draft.txnId });
+      const { updated, ids } = unwrap(await applyCategoryToCounterparty({ transactionId: draft.txnId }));
       const name = categories.find((c) => c.id === draft.categoryId)?.name ?? "that category";
       return {
         undo: { kind: "cat_all", ids, categoryId: draft.categoryId },
@@ -84,14 +90,16 @@ export async function applyDraft(
         .filter((p) => p.name.trim() && p.amt.trim())
         .map((p) => ({ personName: p.name.trim(), expectedAmountPaise: typedPaise(p.amt) }))
         .filter((p) => p.expectedAmountPaise > 0);
-      await createSplit({
-        transactionId: draft.txnId,
-        totalPaise: draft.totalPaise,
-        yourSharePaise: balance.yourSharePaise,
-        note: null,
-        participants,
-        expectNoExistingSplit: true,
-      });
+      unwrap(
+        await createSplit({
+          transactionId: draft.txnId,
+          totalPaise: draft.totalPaise,
+          yourSharePaise: balance.yourSharePaise,
+          note: null,
+          participants,
+          expectNoExistingSplit: true,
+        }),
+      );
       const owes = participants.map((p) => `${p.personName} owes you ${formatPaise(p.expectedAmountPaise)}`).join(", ");
       return {
         undo: { kind: "split" },
@@ -111,12 +119,14 @@ export async function applyDraft(
         inflowTransactionId: draft.txnId,
         inflowAmountPaise: draft.inflowPaise,
       });
-      const { netEventId } = await saveNetEvent({
-        eventDate: draft.eventDate,
-        inflowTransactionId: draft.txnId,
-        note: draft.note.trim() || undefined,
-        legs,
-      });
+      const { netEventId } = unwrap(
+        await saveNetEvent({
+          eventDate: draft.eventDate,
+          inflowTransactionId: draft.txnId,
+          note: draft.note.trim() || undefined,
+          legs,
+        }),
+      );
       const r = draft.recv.filter((l) => typedPaise(l.val) > 0).length;
       const p = draft.pay.filter((l) => typedPaise(l.val) > 0).length;
       return {
@@ -132,20 +142,24 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
   switch (undo.kind) {
     case "note": {
       if (draft.op !== "note") throw new Error("That card doesn't match.");
-      await setTransactionNote({
-        transactionId: draft.txnId,
-        note: undo.prevNote ?? "",
-        expectedCurrentNote: undo.appliedNote,
-      });
+      unwrap(
+        await setTransactionNote({
+          transactionId: draft.txnId,
+          note: undo.prevNote ?? "",
+          expectedCurrentNote: undo.appliedNote,
+        }),
+      );
       return undo.prevNote ? "Put the previous note back." : "Note removed.";
     }
     case "cat": {
       if (draft.op !== "cat") throw new Error("That card doesn't match.");
-      await setTransactionCategory({
-        transactionId: draft.txnId,
-        categoryId: undo.prevCategoryId ?? "",
-        expectedCurrentCategoryId: undo.appliedCategoryId || null,
-      });
+      unwrap(
+        await setTransactionCategory({
+          transactionId: draft.txnId,
+          categoryId: undo.prevCategoryId ?? "",
+          expectedCurrentCategoryId: undo.appliedCategoryId || null,
+        }),
+      );
       return "Category put back.";
     }
     case "cat_all": {
@@ -154,7 +168,7 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
       for (const id of undo.ids) {
         try {
           // Only rows still carrying the category we set — anything re-categorized since is left alone.
-          await setTransactionCategory({ transactionId: id, categoryId: "", expectedCurrentCategoryId: undo.categoryId });
+          unwrap(await setTransactionCategory({ transactionId: id, categoryId: "", expectedCurrentCategoryId: undo.categoryId }));
           reverted++;
         } catch {
           skipped++;
@@ -173,11 +187,11 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
         throw new Error("This split was edited in the table since. Change it there instead.");
       }
       // The server refuses if any money was settled against it in the meantime.
-      await deleteSplit({ transactionId: draft.txnId, expectNoSettlements: true });
+      unwrap(await deleteSplit({ transactionId: draft.txnId, expectNoSettlements: true }));
       return "Split removed.";
     }
     case "net":
-      await deleteNetEvent({ netEventId: undo.netEventId });
+      unwrap(await deleteNetEvent({ netEventId: undo.netEventId }));
       return "Net event reversed.";
     case "context_note": {
       const removed = await deleteContextNote({ id: undo.id });

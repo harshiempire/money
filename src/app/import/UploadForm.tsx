@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { uploadStatement, type ImportResult } from "./actions";
+import { uploadStatement } from "./actions";
+import type { ImportSuccess } from "./import-handlers";
+
+// What the result panel renders (unchanged from before the action returned
+// ActionResult).
+type ImportResult = ({ ok: true } & ImportSuccess) | { ok: false; error: string };
+
+// Shown for crashes and network failures, as before.
+const UPLOAD_FAILED = "We couldn't complete that upload. Please try again.";
 
 export function UploadForm() {
   const [pending, startTransition] = useTransition();
@@ -18,12 +26,10 @@ export function UploadForm() {
           setResult(null);
           try {
             const r = await uploadStatement(fd);
-            setResult(r);
+            if (r.ok) setResult({ ok: true, ...r.data });
+            else setResult({ ok: false, error: r.code === "INTERNAL" ? UPLOAD_FAILED : r.message });
           } catch {
-            setResult({
-              ok: false,
-              error: "We couldn't complete that upload. Please try again.",
-            });
+            setResult({ ok: false, error: UPLOAD_FAILED });
           }
         });
       }}

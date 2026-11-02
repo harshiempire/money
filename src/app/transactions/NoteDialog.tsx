@@ -5,8 +5,9 @@ import {
   applyNoteToTransactions,
   getNoteCandidates,
   setTransactionNote,
-  type NoteCandidate,
 } from "./actions";
+import { callAction } from "@/lib/action/result";
+import type { NoteCandidate } from "./actions";
 import { formatDate, formatPaiseSigned } from "@/lib/format";
 
 export function NoteButton({
@@ -23,12 +24,14 @@ export function NoteButton({
   const [candidates, setCandidates] = useState<NoteCandidate[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const open = () => {
     setDraft(note ?? "");
     setPicked(new Set());
     setFeedback(null);
+    setError(null);
     setCandidates(null);
     dialogRef.current?.showModal();
   };
@@ -41,8 +44,9 @@ export function NoteButton({
     if (!dlg) return;
     const onOpen = async () => {
       if (candidates !== null) return;
-      const list = await getNoteCandidates({ transactionId });
-      setCandidates(list);
+      const list = await callAction(() => getNoteCandidates({ transactionId }));
+      if (list.ok) setCandidates(list.data);
+      else setError(list.message);
     };
     // The native <dialog> doesn't fire an "open" event we can rely on; do it
     // imperatively from `open()` above instead. Kept as effect to react to
@@ -60,13 +64,27 @@ export function NoteButton({
   };
 
   const save = () => {
+    setError(null);
     startTransition(async () => {
-      await setTransactionNote({ transactionId, note: draft });
+      const saved = await callAction(() =>
+        setTransactionNote({ transactionId, note: draft }),
+      );
+      if (!saved.ok) {
+        setError(saved.message);
+        return;
+      }
       if (picked.size > 0 && draft.trim().length > 0) {
-        const r = await applyNoteToTransactions({
-          transactionIds: [...picked],
-          note: draft,
-        });
+        const applied = await callAction(() =>
+          applyNoteToTransactions({
+            transactionIds: [...picked],
+            note: draft,
+          }),
+        );
+        if (!applied.ok) {
+          setError(`Saved here, but not on the other rows: ${applied.message}`);
+          return;
+        }
+        const r = applied.data;
         setFeedback(
           `Saved here and on ${r.updated} other row${r.updated === 1 ? "" : "s"}`,
         );
@@ -89,8 +107,9 @@ export function NoteButton({
         onClick={async () => {
           open();
           if (hasCounterparty && candidates === null) {
-            const list = await getNoteCandidates({ transactionId });
-            setCandidates(list);
+            const list = await callAction(() => getNoteCandidates({ transactionId }));
+            if (list.ok) setCandidates(list.data);
+            else setError(list.message);
           }
         }}
         title={hasNote ? note ?? "" : "Add a note"}
@@ -236,6 +255,7 @@ export function NoteButton({
               {feedback}
             </p>
           )}
+          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
 
           <footer className="mt-5 flex items-center justify-between gap-2">
             <button

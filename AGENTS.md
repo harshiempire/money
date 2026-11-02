@@ -244,6 +244,7 @@ bun run dev
 bun run security:check   # supply-chain preflight (also runs before dev/build)
 bun run typecheck
 bun run check:actions
+DATABASE_URL="$(cat ~/.money-scratch/ledger-test/dburl)" bun run test:actions-db   # server actions on the local Docker test DB; skipped on any other DB
 bun run build
 bun run db:generate    # after schema.ts changes
 bun run db:migrate

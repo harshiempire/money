@@ -7,6 +7,7 @@ import {
   type SettlementBreakdown,
 } from "@/lib/splits/settlement-breakdown";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
+import { callAction } from "@/lib/action/result";
 import { createSplit, deleteSplit } from "./split-actions";
 
 export interface ExistingSplit {
@@ -287,21 +288,17 @@ function SplitForm({
         : 0;
     }
     startTransition(async () => {
-      try {
-        await createSplit({
+      const result = await callAction(() =>
+        createSplit({
           transactionId,
           totalPaise: Number.isFinite(totalPaise) ? totalPaise : 0,
           yourSharePaise,
           note: note.trim() || null,
           participants: cleaned,
-        });
-        onClose();
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to save split";
-        console.error("[createSplit]", err);
-        window.alert(msg);
-      }
+        }),
+      );
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 
@@ -323,15 +320,9 @@ function SplitForm({
       if (!ok) return;
     }
     startTransition(async () => {
-      try {
-        await deleteSplit({ transactionId });
-        onClose();
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to remove split";
-        console.error("[deleteSplit]", err);
-        window.alert(msg);
-      }
+      const result = await callAction(() => deleteSplit({ transactionId }));
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 
