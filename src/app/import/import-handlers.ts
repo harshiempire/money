@@ -13,7 +13,9 @@ import { CurrentUser, query, type Db } from "@/lib/action/services";
 /**
  * Statement upload handler behind ./actions.ts.
  *
- * Same steps and messages as the pre-Effect version. What changed is how
+ * Same steps and messages as the pre-Effect version, except that a failed
+ * save no longer echoes the database error (see PersistError below). What
+ * changed in the migration itself is how
  * failures travel: the ingest pipeline's tagged errors are mapped with
  * catchTags to typed action errors instead of being folded into an
  * `{ ok: false, error }` value, so the action returns the standard
@@ -80,11 +82,17 @@ export const uploadStatementSpec: ActionSpec<FormData, FormData, ImportSuccess, 
           ),
         ParseError: (err) =>
           Effect.fail(new Invalid({ message: `Parse failed at ${err.stage}: ${err.detail}`, field: "file" })),
+        // The cause is a database error whose text includes the SQL and every
+        // row's values (drizzle's "Failed query: ... params: ..."). Until
+        // 2026-11-02 it was sent to the browser as "Database error: <cause>".
+        // Log it on the server; the user gets a fixed, retryable message.
         PersistError: (err) =>
-          Effect.fail(
-            new Unavailable({
-              message: `Database error: ${String((err as { cause?: unknown }).cause ?? "unknown")}`,
-            }),
+          Effect.logError("uploadStatement: saving the statement failed", err.cause).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new Unavailable({ message: "We couldn't save this statement. Please try again." }),
+              ),
+            ),
           ),
       }),
     );
