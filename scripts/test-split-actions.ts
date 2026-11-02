@@ -105,6 +105,10 @@ try {
   expect("total ≠ transaction amount → INVALID with validator message", r.code === "INVALID" && !!r.message, r);
   let s = await state(debit.id, credit.id);
   expect("…and nothing was written", !s.split, s);
+  r = await call(specs.createSplitSpec, { transactionId: debit.id, totalPaise: 100000, yourSharePaise: 40000, note: null, participants: [{ personName: "Asha", expectedAmountPaise: 30000 }, { personName: " asha", expectedAmountPaise: 30000 }] });
+  s = await state(debit.id, credit.id);
+  expect("same person twice ('Asha' / ' asha') → INVALID", r.code === "INVALID" && r.message === "asha appears twice in this split. Each person may only have one share.", r);
+  expect("…and nothing was written", !s.split, s);
 
   r = await call(specs.createSplitSpec, { transactionId: debit.id, totalPaise: 100000, yourSharePaise: 40000, note: "dinner", participants });
   s = await state(debit.id, credit.id);
