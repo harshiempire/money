@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { autoDetectTransfers } from "./actions";
+import { callAction } from "@/lib/action/result";
 
 export function AutoDetectButton() {
   const [pending, startTransition] = useTransition();
@@ -15,7 +16,13 @@ export function AutoDetectButton() {
         onClick={() => {
           setResult(null);
           startTransition(async () => {
-            const r = await autoDetectTransfers();
+            const outcome = await callAction(() => autoDetectTransfers());
+            if (!outcome.ok) {
+              // Before: a failure was an uncaught throw (error boundary).
+              setResult(outcome.message);
+              return;
+            }
+            const r = outcome.data;
             setResult(
               r.pairs === 0
                 ? "No new pairs found"

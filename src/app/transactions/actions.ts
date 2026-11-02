@@ -1,187 +1,33 @@
 "use server";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { getOrCreateAccountForBank } from "@/db/money-account";
-import { detectTransferPairs } from "@/domain/transfers/detect";
+import { defineAction } from "@/lib/action/define-action";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
-import {
-  assertCategoryOwned,
-  assertCounterpartyOwned,
-  assertTransactionOwned,
-  assertTransactionsOwned,
-} from "@/lib/auth/ownership";
+import { assertTransactionOwned } from "@/lib/auth/ownership";
 import { counterpartyLabel } from "@/lib/format";
 import { summarizeSplitSettlement } from "@/lib/splits/settlement-status";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
+import {
+  applyCategoryToCounterpartySpec,
+  applyNoteToTransactionsSpec,
+  autoDetectTransfersSpec,
+  setTransactionCategorySpec,
+  setTransactionNeedsReviewSpec,
+  setTransactionNoteSpec,
+  setTransactionTransferSpec,
+} from "./transaction-handlers";
 
-export async function setTransactionCategory(input: {
-  transactionId: string;
-  categoryId: string;
-}) {
-  const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-  const newCategoryId = input.categoryId === "" ? null : input.categoryId;
-  if (newCategoryId) {
-    await assertCategoryOwned(user.id, newCategoryId);
-  }
-  const isTransfer = newCategoryId
-    ? await categoryIsTransfer(newCategoryId, user.id)
-    : false;
+// Edits: logic lives in ./transaction-handlers.ts.
+export const setTransactionCategory = defineAction("setTransactionCategory", setTransactionCategorySpec);
+export const applyCategoryToCounterparty = defineAction("applyCategoryToCounterparty", applyCategoryToCounterpartySpec);
+export const setTransactionTransfer = defineAction("setTransactionTransfer", setTransactionTransferSpec);
+export const setTransactionNeedsReview = defineAction("setTransactionNeedsReview", setTransactionNeedsReviewSpec);
+export const setTransactionNote = defineAction("setTransactionNote", setTransactionNoteSpec);
+export const applyNoteToTransactions = defineAction("applyNoteToTransactions", applyNoteToTransactionsSpec);
+export const autoDetectTransfers = defineAction("autoDetectTransfers", autoDetectTransfersSpec);
 
-  await db
-    .update(schema.transactions)
-    .set({ categoryId: newCategoryId, isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
-
-  revalidatePath("/transactions");
-  revalidatePath("/");
-}
-
-export async function applyCategoryToCounterparty(input: {
-  transactionId: string;
-}) {
-  const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-
-  const [txn] = await db
-    .select({
-      counterpartyId: schema.transactions.counterpartyId,
-      categoryId: schema.transactions.categoryId,
-    })
-    .from(schema.transactions)
-    .where(eq(schema.transactions.id, input.transactionId))
-    .limit(1);
-  if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0 };
-
-  const isTransfer = await categoryIsTransfer(txn.categoryId, user.id);
-
-  await assertCounterpartyOwned(user.id, txn.counterpartyId);
-
-  await db
-    .update(schema.counterparties)
-    .set({ defaultCategoryId: txn.categoryId })
-    .where(
-      and(
-        eq(schema.counterparties.id, txn.counterpartyId),
-        eq(schema.counterparties.userId, user.id),
-      ),
-    );
-
-  const updated = await db
-    .update(schema.transactions)
-    .set({ categoryId: txn.categoryId, isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.counterpartyId, txn.counterpartyId),
-        eq(schema.transactions.accountId, accountId),
-        isNull(schema.transactions.categoryId),
-      ),
-    )
-    .returning({ id: schema.transactions.id });
-
-  revalidatePath("/transactions");
-  revalidatePath("/");
-  return { updated: updated.length };
-}
-
-async function categoryIsTransfer(
-  categoryId: string,
-  userId: string,
-): Promise<boolean> {
-  const [cat] = await db
-    .select({ kind: schema.categories.kind })
-    .from(schema.categories)
-    .where(
-      and(
-        eq(schema.categories.id, categoryId),
-        eq(schema.categories.userId, userId),
-      ),
-    )
-    .limit(1);
-  return cat?.kind === "transfer" || cat?.kind === "investment";
-}
-
-export async function setTransactionTransfer(input: {
-  transactionId: string;
-  isTransfer: boolean;
-}) {
-  const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-  await db
-    .update(schema.transactions)
-    .set({ isTransfer: input.isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
-  revalidatePath("/transactions");
-  revalidatePath("/review");
-  revalidatePath("/");
-}
-
-export async function setTransactionNeedsReview(input: {
-  transactionId: string;
-  needsReview: boolean;
-}) {
-  const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-  await db
-    .update(schema.transactions)
-    .set({ needsReview: input.needsReview })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
-  revalidatePath("/transactions");
-  revalidatePath("/review");
-  revalidatePath("/");
-}
-
-export async function setTransactionNote(input: {
-  transactionId: string;
-  note: string;
-}) {
-  const user = await requireCurrentUserAction();
-  const { accountId } = await assertTransactionOwned(
-    user.id,
-    input.transactionId,
-  );
-  const cleaned = input.note.trim();
-  await db
-    .update(schema.transactions)
-    .set({ note: cleaned === "" ? null : cleaned })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
-  revalidatePath("/transactions");
-  revalidatePath("/");
-}
+// Reads (not migrated yet).
 
 export interface NoteCandidate {
   id: string;
@@ -236,56 +82,6 @@ export async function getNoteCandidates(input: {
       rawDescription: r.rawDescription,
       currentNote: r.currentNote,
     }));
-}
-
-export async function applyNoteToTransactions(input: {
-  transactionIds: string[];
-  note: string;
-}): Promise<{ updated: number }> {
-  const user = await requireCurrentUserAction();
-  const cleaned = input.note.trim();
-  if (input.transactionIds.length === 0) return { updated: 0 };
-  await assertTransactionsOwned(user.id, input.transactionIds);
-  const updated = await db
-    .update(schema.transactions)
-    .set({ note: cleaned === "" ? null : cleaned })
-    .where(inArray(schema.transactions.id, input.transactionIds))
-    .returning({ id: schema.transactions.id });
-  revalidatePath("/transactions");
-  revalidatePath("/");
-  return { updated: updated.length };
-}
-
-export async function autoDetectTransfers(): Promise<{ pairs: number }> {
-  const user = await requireCurrentUserAction();
-  const account = await getOrCreateAccountForBank(user.id, "bob");
-  const rows = await db
-    .select({
-      id: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      amountPaise: schema.transactions.amountPaise,
-      drCr: schema.transactions.drCr,
-      channel: schema.transactions.channel,
-      counterpartyId: schema.transactions.counterpartyId,
-      isTransfer: schema.transactions.isTransfer,
-    })
-    .from(schema.transactions)
-    .where(eq(schema.transactions.accountId, account.id));
-
-  const pairs = detectTransferPairs(rows);
-  if (pairs.length === 0) {
-    revalidatePath("/transactions");
-    return { pairs: 0 };
-  }
-  const ids = pairs.flatMap((p) => [p.debitId, p.creditId]);
-  await db
-    .update(schema.transactions)
-    .set({ isTransfer: true })
-    .where(inArray(schema.transactions.id, ids));
-  revalidatePath("/transactions");
-  revalidatePath("/");
-  revalidatePath("/timeline");
-  return { pairs: pairs.length };
 }
 
 export type LinkedTransactionPreview = {
