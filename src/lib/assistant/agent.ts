@@ -762,7 +762,7 @@ async function agentLoop(ctx: TurnContext, state: TurnState): Promise<TurnOutput
   let access = await getChatgptAccess(ctx.userId);
   if (!access.ok) return { messages: [], txnIds: [], focusTxnId: ctx.focusTxnId, limits: null, failure: access.failure };
 
-  const [current] = ctx.focusTxnId ? await loadTxnCards(ctx.accountId, ctx.userId, [ctx.focusTxnId]) : [];
+  const [current] = ctx.focusTxnId ? await loadTxnCards(ctx.accountId, ctx.userId, [ctx.focusTxnId], { forModel: true }) : [];
   if (current) state.txnIds.add(current.id);
   const system = instructions({ ...ctx, focusTxnId: current?.id ?? null }, current ?? null);
   const items: ResponseItem[] = [

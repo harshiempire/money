@@ -1,17 +1,13 @@
 "use server";
-
-import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { db, schema } from "@/db";
+import { getOrCreateAccountForBank } from "@/db/money-account";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
 import {
-  assertSettlementOwned,
-  assertSplitParticipantOwned,
-} from "@/lib/auth/ownership";
-import { participantOutstanding } from "@/lib/splits/outstanding";
-
-const safePaise = (n: number): number =>
-  Number.isFinite(n) ? Math.round(n) : 0;
+  recordCashSettlement as recordCashSettlementForActor,
+  deleteCashSettlement as deleteCashSettlementForActor,
+  writeOffParticipantShare as writeOffParticipantShareForActor,
+  undoWriteOff as undoWriteOffForActor,
+} from "@/lib/ledger/settlements";
 
 export async function recordCashSettlement(input: {
   splitParticipantId: string;
@@ -19,113 +15,69 @@ export async function recordCashSettlement(input: {
   note: string | null;
 }) {
   const user = await requireCurrentUserAction();
-  await assertSplitParticipantOwned(user.id, input.splitParticipantId);
-
-  const [participant] = await db
-    .select({
-      expectedAmountPaise: schema.splitParticipants.expectedAmountPaise,
-    })
-    .from(schema.splitParticipants)
-    .where(eq(schema.splitParticipants.id, input.splitParticipantId))
-    .limit(1);
-  if (!participant) return;
-
-  const existing = await db
-    .select({ amountPaise: schema.settlements.amountPaise })
-    .from(schema.settlements)
-    .where(eq(schema.settlements.splitParticipantId, input.splitParticipantId));
-
-  const alreadySettled = existing.reduce(
-    (sum, row) => sum + Number(row.amountPaise),
-    0,
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const result = await recordCashSettlementForActor(
+    { actor: { userId: user.id, accountId: account.id }, source: "app" },
+    {
+      splitParticipantId: input.splitParticipantId,
+      amountPaise: input.amountPaise,
+      note: input.note,
+    },
   );
-  const outstanding = Math.max(
-    0,
-    Number(participant.expectedAmountPaise) - alreadySettled,
-  );
-  const amountPaise = Math.min(safePaise(input.amountPaise), outstanding);
-  if (amountPaise <= 0) return;
-
-  await db.insert(schema.settlements).values({
-    splitParticipantId: input.splitParticipantId,
-    amountPaise,
-    method: "cash",
-    note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
-  });
-
-  revalidatePath("/reimbursements");
-  revalidatePath("/transactions");
-  revalidatePath("/");
+  if (result.revalidate) {
+    revalidatePath("/reimbursements");
+    revalidatePath("/transactions");
+    revalidatePath("/");
+  }
 }
 
 export async function deleteCashSettlement(input: { settlementId: string }) {
   const user = await requireCurrentUserAction();
-  await assertSettlementOwned(user.id, input.settlementId);
-
-  await db
-    .delete(schema.settlements)
-    .where(
-      and(
-        eq(schema.settlements.id, input.settlementId),
-        eq(schema.settlements.method, "cash"),
-      ),
-    );
-
-  revalidatePath("/reimbursements");
-  revalidatePath("/transactions");
-  revalidatePath("/");
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const result = await deleteCashSettlementForActor(
+    { actor: { userId: user.id, accountId: account.id }, source: "app" },
+    {
+      settlementId: input.settlementId,
+    },
+  );
+  if (result.revalidate) {
+    revalidatePath("/reimbursements");
+    revalidatePath("/transactions");
+    revalidatePath("/");
+  }
 }
 
-export async function writeOffParticipantShare(input: {
-  splitParticipantId: string;
-  note: string | null;
-}) {
+export async function writeOffParticipantShare(input: { splitParticipantId: string; note: string | null }) {
   const user = await requireCurrentUserAction();
-  await assertSplitParticipantOwned(user.id, input.splitParticipantId);
-
-  const outstanding = await participantOutstanding(input.splitParticipantId);
-  if (outstanding <= 0) {
-    throw new Error("Nothing outstanding on this share to forgive.");
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const result = await writeOffParticipantShareForActor(
+    { actor: { userId: user.id, accountId: account.id }, source: "app" },
+    {
+      splitParticipantId: input.splitParticipantId,
+      note: input.note,
+    },
+  );
+  if (result.revalidate) {
+    revalidatePath("/reimbursements");
+    revalidatePath("/transactions");
+    revalidatePath("/people");
+    revalidatePath("/");
   }
-
-  await db.insert(schema.settlements).values({
-    splitParticipantId: input.splitParticipantId,
-    amountPaise: outstanding,
-    method: "writeoff",
-    inflowTransactionId: null,
-    note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
-  });
-
-  revalidatePath("/reimbursements");
-  revalidatePath("/transactions");
-  revalidatePath("/people");
-  revalidatePath("/");
 }
 
 export async function undoWriteOff(input: { settlementId: string }) {
   const user = await requireCurrentUserAction();
-  await assertSettlementOwned(user.id, input.settlementId);
-
-  const [settlement] = await db
-    .select({ method: schema.settlements.method })
-    .from(schema.settlements)
-    .where(eq(schema.settlements.id, input.settlementId))
-    .limit(1);
-  if (!settlement || settlement.method !== "writeoff") {
-    throw new Error("This settlement is not a writeoff and cannot be undone here.");
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const result = await undoWriteOffForActor(
+    { actor: { userId: user.id, accountId: account.id }, source: "app" },
+    {
+      settlementId: input.settlementId,
+    },
+  );
+  if (result.revalidate) {
+    revalidatePath("/reimbursements");
+    revalidatePath("/transactions");
+    revalidatePath("/people");
+    revalidatePath("/");
   }
-
-  await db
-    .delete(schema.settlements)
-    .where(
-      and(
-        eq(schema.settlements.id, input.settlementId),
-        eq(schema.settlements.method, "writeoff"),
-      ),
-    );
-
-  revalidatePath("/reimbursements");
-  revalidatePath("/transactions");
-  revalidatePath("/people");
-  revalidatePath("/");
 }

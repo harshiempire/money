@@ -1,6 +1,7 @@
 import "server-only";
 import { type SQL, and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { uncategorizedCondition } from "./uncategorized";
 
 /**
  * The single source of truth for "net personal spend" semantics:
@@ -239,8 +240,8 @@ export async function loadPeriodTxnMetrics(
         personalDebitGross: sql<number>`coalesce(sum(${personalDebitGrossExpr}), 0)::bigint`,
         yourShareDebit: sql<number>`coalesce(sum(${yourShareDebitExpr}), 0)::bigint`,
         netCredit: sql<number>`coalesce(sum(${netCreditExpr}), 0)::bigint`,
-        uncatNet: sql<number>`coalesce(sum(${netSelfExpr}) filter (where ${schema.transactions.categoryId} is null), 0)::bigint`,
-        uncatCount: sql<number>`count(*) filter (where ${schema.transactions.categoryId} is null)::int`,
+        uncatNet: sql<number>`coalesce(sum(${netSelfExpr}) filter (where ${uncategorizedCondition(schema.transactions.categoryId)}), 0)::bigint`,
+        uncatCount: sql<number>`count(*) filter (where ${uncategorizedCondition(schema.transactions.categoryId)})::int`,
         reviewCount: sql<number>`count(*) filter (where ${schema.transactions.needsReview})::int`,
       })
       .from(schema.transactions)

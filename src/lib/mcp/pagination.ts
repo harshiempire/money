@@ -1,0 +1,62 @@
+import { Result, Schema } from "effect";
+import type { MoneyActor } from "@/lib/assistant/actor-ops";
+import { transactionRef, transactionRev } from "./refs";
+import type { ListTransactionsInput } from "./schemas";
+import { transactionView, type McpTransaction } from "./view";
+
+import { isUncategorized } from "@/domain/spend/uncategorized";
+import { resolveMcpPeriod } from "./range";
+
+const Cursor = Schema.Struct({ after: Schema.String.check(Schema.isPattern(/^txn_[A-Za-z0-9_-]{22}$/)) });
+export class McpToolError extends Error {}
+
+export function pageTransactions(
+  rows: McpTransaction[],
+  input: ListTransactionsInput,
+  actor: MoneyActor,
+  key: Uint8Array,
+  revKey: Uint8Array = key,
+) {
+  const payee = input.payee?.toLowerCase();
+  const period = resolveMcpPeriod(input);
+  const views = rows
+    .filter(
+      (r) =>
+        (!period.from || r.txnDate >= period.from) &&
+        (!period.to || r.txnDate.slice(0, 10) <= period.to) &&
+        (!input.direction || r.drCr === (input.direction === "paid" ? "debit" : "credit")) &&
+        (input.category === undefined || r.category === input.category) &&
+        (!input.uncategorized || isUncategorized(r)),
+    )
+    .sort((a, b) => b.txnDate.localeCompare(a.txnDate) || b.id.localeCompare(a.id))
+    .map((r) => transactionView(r, transactionRef(key, actor.userId, r.id), transactionRev(revKey, actor.userId, r.id, r)))
+    .filter((r) => !payee || [r.payee, r.handle, r.raw_description].some((text) => text?.toLowerCase().includes(payee)));
+  let start = 0;
+  if (input.cursor !== undefined) {
+    try {
+      if (!/^[A-Za-z0-9_-]{1,256}$/.test(input.cursor)) throw new Error();
+      const bytes = Buffer.from(input.cursor, "base64url");
+      if (bytes.toString("base64url") !== input.cursor) throw new Error();
+      const raw: unknown = JSON.parse(bytes.toString("utf8"));
+      const decoded = Schema.decodeUnknownResult(Cursor)(raw);
+      if (Result.isFailure(decoded)) throw new Error();
+      const index = views.findIndex((v) => v.ref === decoded.success.after);
+      if (index < 0) throw new Error();
+      start = index + 1;
+    } catch {
+      throw new McpToolError(
+        "That cursor is no longer available. Start with a new list_transactions request.",
+      );
+    }
+  }
+  const transactions = views.slice(start, start + (input.limit ?? 50));
+  const last = transactions.at(-1);
+  const next_cursor =
+    last && start + transactions.length < views.length
+      ? Buffer.from(JSON.stringify({ after: last.ref })).toString("base64url")
+      : null;
+  return {
+    transactions,
+    next_cursor,
+  };
+}

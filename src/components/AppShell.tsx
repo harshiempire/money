@@ -40,7 +40,10 @@ const NAV_GROUPS = [
   },
   {
     label: "Data",
-    items: [{ href: "/import", label: "Import", icon: IconUpload }],
+    items: [
+      { href: "/import", label: "Import", icon: IconUpload },
+      { href: "/connections", label: "Connections", icon: IconSwap },
+    ],
   },
 ] as const;
 
@@ -56,6 +59,7 @@ const MORE_LINKS = [
   { href: "/timeline", label: "Timeline", icon: IconClock },
   { href: "/people", label: "People", icon: IconUsers },
   { href: "/import", label: "Import", icon: IconUpload },
+  { href: "/connections", label: "Connections", icon: IconSwap },
 ] as const;
 
 const WIDTH_CLASS = {

@@ -4,17 +4,16 @@
  * MoneyActor. Nothing here signs a session in or talks to a model.
  */
 import "server-only";
+import { setPayeeDefault } from "@/lib/ledger/payee-default";
+import { LedgerError } from "@/lib/ledger/context";
 import { and, eq, gte, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { loadCategories } from "@/lib/assistant/data";
 import { isMissingTable } from "@/lib/db/pg-errors";
-import { ForbiddenError } from "@/lib/auth/forbidden";
-import { assertCategoryOwned, assertCounterpartyOwned } from "@/lib/auth/ownership";
 import { setCategoryForActor } from "@/lib/transactions/category-for-actor";
 import { runTagApply, runTagUndo, type AppliedTag, type TagApplyRequest, type TagApplyResult, type TagUndoResult } from "./tag-apply";
 import {
   assembleTagChunk,
-  decideRememberDefault,
   standingNoteModelWarning,
   standingNotesForModel,
   type ContextNote,
@@ -161,42 +160,21 @@ export async function rememberPayeeDefaultForActor(
   input: { counterpartyId: string; categoryId: string; confirmFromCategoryId?: string | null },
 ): Promise<RememberPayeeResult> {
   if (!input.counterpartyId || !input.categoryId) return { ok: false, error: "Pick a payee and a category." };
-  try {
-    await assertCounterpartyOwned(actor.userId, input.counterpartyId);
-    await assertCategoryOwned(actor.userId, input.categoryId);
-  } catch (err) {
-    if (err instanceof ForbiddenError) return { ok: false, error: "That payee or category isn't available." };
+  const result = await setPayeeDefault({ actor, source: "app" }, {
+    counterpartyId: input.counterpartyId, categoryId: input.categoryId,
+    guard: { confirmFromCategoryId: input.confirmFromCategoryId ?? null },
+  }).catch((err) => {
+    if (err instanceof LedgerError && ["not_found", "unknown_category"].includes(err.code)) return null;
     throw err;
-  }
-  const [payee] = await db
-    .select({ defaultCategoryId: schema.counterparties.defaultCategoryId })
-    .from(schema.counterparties)
-    .where(and(eq(schema.counterparties.id, input.counterpartyId), eq(schema.counterparties.userId, actor.userId)))
-    .limit(1);
-  const decision = decideRememberDefault({
-    currentCategoryId: payee?.defaultCategoryId ?? null,
-    nextCategoryId: input.categoryId,
-    confirmFromCategoryId: input.confirmFromCategoryId,
   });
-  if (decision.action === "unchanged") return { ok: true };
-  if (decision.action === "confirm") {
-    const ids = [decision.existingCategoryId, input.categoryId];
-    const names = await db
-      .select({ id: schema.categories.id, name: schema.categories.name })
-      .from(schema.categories)
+  if (!result) return { ok: false, error: "That payee or category isn't available." };
+  if (result.confirm && result.currentCategoryId) {
+    const ids = [result.currentCategoryId, input.categoryId];
+    const names = await db.select({ id: schema.categories.id, name: schema.categories.name }).from(schema.categories)
       .where(and(eq(schema.categories.userId, actor.userId), inArray(schema.categories.id, ids)));
     const nameOf = (id: string) => names.find((row) => row.id === id)?.name ?? "another category";
-    return {
-      ok: false,
-      confirm: true,
-      existingCategoryId: decision.existingCategoryId,
-      existingCategoryName: nameOf(decision.existingCategoryId),
-      nextCategoryName: nameOf(input.categoryId),
-    };
+    return { ok: false, confirm: true, existingCategoryId: result.currentCategoryId,
+      existingCategoryName: nameOf(result.currentCategoryId), nextCategoryName: nameOf(input.categoryId) };
   }
-  await db
-    .update(schema.counterparties)
-    .set({ defaultCategoryId: input.categoryId })
-    .where(and(eq(schema.counterparties.id, input.counterpartyId), eq(schema.counterparties.userId, actor.userId)));
   return { ok: true };
 }

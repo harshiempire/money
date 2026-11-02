@@ -5,6 +5,7 @@ import { db, schema } from "@/db";
 import { isMissingTable } from "@/lib/db/pg-errors";
 import { counterpartyLabel } from "@/lib/format";
 import type { ContextNote, TagFact, UntaggedMonth } from "./tag-batch";
+import { userChosenDisplayName } from "./model-view";
 
 export type { ContextNote, UntaggedMonth };
 
@@ -27,6 +28,8 @@ function toFact(row: {
   isTransfer: boolean;
   counterpartyId: string | null;
   displayName: string | null;
+  counterpartyKind: string | null;
+  counterpartyKey: string | null;
   parsedPurpose: string | null;
   rawDescription: string;
   note: string | null;
@@ -42,9 +45,9 @@ function toFact(row: {
     categoryId: row.categoryId,
     isTransfer: row.isTransfer,
     counterpartyId: row.counterpartyId,
-    displayName: row.displayName,
+    displayName: userChosenDisplayName({ kind: row.counterpartyKind, key: row.counterpartyKey, displayName: row.displayName }),
     parsedPurpose: row.parsedPurpose,
-    label: counterpartyLabel(row.rawDescription),
+    label: row.channel === "upi" ? "Payee" : counterpartyLabel(row.rawDescription),
     note: row.note,
     bankRefId: row.bankRefId,
     defaultCategoryId: row.defaultCategoryId,
@@ -63,6 +66,8 @@ export async function loadTagFacts(accountId: string, userId: string, extra: SQL
       isTransfer: t.isTransfer,
       counterpartyId: t.counterpartyId,
       displayName: schema.counterparties.displayName,
+      counterpartyKind: schema.counterparties.kind,
+      counterpartyKey: schema.counterparties.key,
       parsedPurpose: t.parsedPurpose,
       rawDescription: t.rawDescription,
       note: t.note,

@@ -4,6 +4,7 @@ import { db, schema } from "@/db";
 import type { DateWindow } from "@/lib/dates/partial-date";
 import { counterpartyLabel } from "@/lib/format";
 import type { CandidateRow } from "@/lib/assistant/rank";
+import { userChosenDisplayName } from "@/lib/assistant/model-view";
 
 const t = schema.transactions;
 
@@ -76,6 +77,8 @@ export async function findTransactionCandidates(input: {
       parsedPurpose: t.parsedPurpose,
       note: t.note,
       counterpartyDisplayName: schema.counterparties.displayName,
+      counterpartyKind: schema.counterparties.kind,
+      counterpartyKey: schema.counterparties.key,
     })
     .from(t)
     .leftJoin(
@@ -91,8 +94,12 @@ export async function findTransactionCandidates(input: {
     txnDate: r.txnDate,
     amountPaise: Number(r.amountPaise),
     drCr: r.drCr,
-    label: r.counterpartyDisplayName ?? counterpartyLabel(r.rawDescription),
-    counterpartyDisplayName: r.counterpartyDisplayName,
+    label: userChosenDisplayName({
+      kind: r.counterpartyKind, key: r.counterpartyKey, displayName: r.counterpartyDisplayName,
+    }) ?? (r.channel === "upi" ? "Payee" : counterpartyLabel(r.rawDescription)),
+    counterpartyDisplayName: userChosenDisplayName({
+      kind: r.counterpartyKind, key: r.counterpartyKey, displayName: r.counterpartyDisplayName,
+    }),
     channel: r.channel,
     rawDescription: r.rawDescription,
     parsedPurpose: r.parsedPurpose,

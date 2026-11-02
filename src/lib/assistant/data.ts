@@ -9,7 +9,7 @@ import {
   loadOpenPayablesForUser,
   loadOpenReceivablesForAccount,
 } from "@/lib/net-events/load-net-settle-data";
-import { modelSafePayee } from "./model-view";
+import { modelSafePayee, userChosenDisplayName } from "./model-view";
 import type { QueryData } from "./query-tables";
 import type { CategoryLite, NetLine, TxnCardData } from "./types";
 
@@ -19,7 +19,12 @@ const t = schema.transactions;
  * Card data for transactions in this account. Ids outside the account are
  * silently dropped — the caller can't learn anything about other tenants.
  */
-export async function loadTxnCards(accountId: string, userId: string, ids: string[]): Promise<TxnCardData[]> {
+export async function loadTxnCards(
+  accountId: string,
+  userId: string,
+  ids: string[],
+  options: { forModel?: boolean } = {},
+): Promise<TxnCardData[]> {
   const unique = [...new Set(ids)].slice(0, 50);
   if (unique.length === 0) return [];
 
@@ -36,6 +41,8 @@ export async function loadTxnCards(accountId: string, userId: string, ids: strin
       categoryId: t.categoryId,
       needsReview: t.needsReview,
       counterpartyDisplayName: schema.counterparties.displayName,
+      counterpartyKind: schema.counterparties.kind,
+      counterpartyKey: schema.counterparties.key,
     })
     .from(t)
     .leftJoin(
@@ -84,7 +91,14 @@ export async function loadTxnCards(accountId: string, userId: string, ids: strin
       amountPaise: Number(r.amountPaise),
       drCr: r.drCr,
       channel: r.channel,
-      label: r.counterpartyDisplayName ?? counterpartyLabel(r.rawDescription),
+      // Keep the owner's card label intact; CURRENT gets only a model-safe name.
+      label: options.forModel ? modelSafePayee({
+        counterpartyDisplayName: userChosenDisplayName({
+          kind: r.counterpartyKind, key: r.counterpartyKey, displayName: r.counterpartyDisplayName,
+        }),
+        parsedPurpose: r.parsedPurpose,
+        label: r.channel === "upi" ? "Payee" : counterpartyLabel(r.rawDescription),
+      }) : r.counterpartyDisplayName ?? counterpartyLabel(r.rawDescription),
       purpose: r.parsedPurpose,
       note: r.note,
       categoryId: r.categoryId,
@@ -167,6 +181,8 @@ export async function loadQueryData(accountId: string, userId: string): Promise<
         isTransfer: t.isTransfer,
         category: schema.categories.name,
         counterpartyDisplayName: schema.counterparties.displayName,
+        counterpartyKind: schema.counterparties.kind,
+        counterpartyKey: schema.counterparties.key,
       })
       .from(t)
       .leftJoin(
@@ -215,9 +231,11 @@ export async function loadQueryData(accountId: string, userId: string): Promise<
       paise: Number(r.amountPaise),
       direction: r.drCr === "debit" ? "paid" : "received",
       payee: modelSafePayee({
-        counterpartyDisplayName: r.counterpartyDisplayName,
+        counterpartyDisplayName: userChosenDisplayName({
+          kind: r.counterpartyKind, key: r.counterpartyKey, displayName: r.counterpartyDisplayName,
+        }),
         parsedPurpose: r.parsedPurpose,
-        label: counterpartyLabel(r.rawDescription),
+        label: r.channel === "upi" ? "Payee" : counterpartyLabel(r.rawDescription),
       }),
       note: r.note?.slice(0, 200) ?? null,
       category: r.category,

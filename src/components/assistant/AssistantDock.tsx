@@ -11,6 +11,10 @@ import {
   type TurnResult,
 } from "@/app/assistant/actions";
 import { setTransactionNeedsReview } from "@/app/transactions/actions";
+import {
+  openProposedTagDraft,
+  resolveProposedTagDraft,
+} from "@/app/assistant/proposed-tag-actions";
 import type { ChatMessage, HistoryTurn, OpDraft, TurnMessage, TxnCardData } from "@/lib/assistant/types";
 import type { AiLimits } from "@/lib/ai/failure";
 import {
@@ -122,9 +126,15 @@ export function AssistantDock() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
+  const [dismissingDraft, setDismissingDraft] = useState<string | null>(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [batch, setBatch] = useState<{
     year: number;
     month: number;
+    draftId?: string;
+    notice?: string;
+    summary?: string;
     label: string;
     total: number;
     loaded: number;
@@ -151,6 +161,7 @@ export function AssistantDock() {
   const inputRef = useRef<HTMLInputElement>(null);
   const drag = useRef<{ x: number; y: number; r: number; b: number } | null>(null);
   const batchGen = useRef(0);
+  const draftInFlight = useRef(false);
 
   // ─── Persistence ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -194,7 +205,7 @@ export function AssistantDock() {
 
   useEffect(() => {
     if (!open || !hydrated) return;
-    if (!boot) getAssistantBootstrap().then(setBoot).catch(() => {});
+    getAssistantBootstrap().then(setBoot).catch(() => {});
     // Cards may be stale after navigating or editing in the table.
     refreshTxns(Object.keys(txns)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -525,6 +536,93 @@ export function AssistantDock() {
     if (next) setBoot(next);
   };
 
+  const openProposedBatch = async (draftId: string) => {
+    if (draftInFlight.current || batch?.phase === "applying") return;
+    const gen = ++batchGen.current;
+    setDismissingDraft(null);
+    setDraftError(null);
+    setBatch({
+      year: 0,
+      month: 0,
+      draftId,
+      label: "proposed tags",
+      total: 0,
+      loaded: 0,
+      rows: [],
+      txns: {},
+      phase: "loading",
+      applyDone: 0,
+      applyTotal: 0,
+      suggester: "model",
+      result: null,
+      undoRows: [],
+    });
+    try {
+      const res = await openProposedTagDraft({ draftId });
+      if (gen !== batchGen.current) return;
+      if (!res.ok) {
+        setBatch((b) => (b ? { ...b, phase: "review", error: res.error } : b));
+        return;
+      }
+      setBatch((b) =>
+        b
+          ? {
+              ...b,
+              draftId: res.draftId,
+              label: res.label,
+              total: res.total,
+              summary: [
+                `${res.sourceLabel} proposed ${res.total} tag${res.total === 1 ? "" : "s"}`,
+                res.title,
+                "nothing is saved until you press Apply",
+              ]
+                .filter(Boolean)
+                .join(" · "),
+              loaded: res.rows.length,
+              rows: res.rows,
+              txns: Object.fromEntries(res.txns.map((txn) => [txn.id, txn])),
+              phase: "review",
+              notice:
+                res.changed > 0
+                  ? res.changed === 1
+                    ? "1 row changed since this was proposed and was left out."
+                    : `${res.changed} rows changed since this was proposed and were left out.`
+                  : undefined,
+            }
+          : b,
+      );
+    } catch (e) {
+      if (gen !== batchGen.current) return;
+      setBatch((b) =>
+        b ? { ...b, phase: "review", error: errorText(e, "Couldn't open those proposed tags.") } : b,
+      );
+    }
+  };
+
+  const dismissProposedDraft = async (draftId: string) => {
+    if (draftInFlight.current || dismissingDraft !== draftId) return;
+    draftInFlight.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    try {
+      const res = await resolveProposedTagDraft({ draftId, status: "dismissed" });
+      if (!res.ok) {
+        setDraftError(res.error);
+        return;
+      }
+      setDismissingDraft(null);
+      setBoot((b) =>
+        b ? { ...b, proposedDrafts: b.proposedDrafts.filter((draft) => draft.id !== draftId) } : b,
+      );
+      await refreshBoot();
+    } catch (e) {
+      setDraftError(errorText(e, "Couldn't dismiss that draft. Try again."));
+    } finally {
+      draftInFlight.current = false;
+      setDraftBusy(false);
+    }
+  };
+
   const applyBatch = async (selected: { transactionId: string; categoryId: string; expectedCurrentCategoryId: string | null }[]) => {
     if (!batch) return;
     const total = selected.length;
@@ -607,6 +705,25 @@ export function AssistantDock() {
       },
       undoRows: applied,
     });
+    if (batch.draftId && applied.length > 0) {
+      try {
+        const res = await resolveProposedTagDraft({ draftId: batch.draftId, status: "applied" });
+        if (!res.ok) {
+          setBatch((b) =>
+            b && b.draftId === batch.draftId
+              ? { ...b, error: `Tags saved, but the draft couldn't be marked applied. ${res.error}` }
+              : b,
+          );
+        }
+      } catch (e) {
+        setBatch((b) =>
+          b && b.draftId === batch.draftId
+            ? { ...b, error: errorText(e, "Tags saved, but the draft couldn't be marked applied.") }
+            : b,
+        );
+      }
+      await refreshBoot();
+    }
   };
 
   const undoBatch = async () => {
@@ -656,6 +773,7 @@ export function AssistantDock() {
 
   const suggestions = (focus ? FOCUS_SUGGESTIONS : START_SUGGESTIONS).filter((s) => !used.includes(s)).slice(0, 3);
   const categories = boot?.categories ?? [];
+  const proposedDrafts = [...(boot?.proposedDrafts ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const aiBanner =
     boot && boot.aiState !== "ready"
@@ -840,6 +958,68 @@ export function AssistantDock() {
                   </button>
               ))}
             </div>
+            {proposedDrafts.length > 0 && (
+              <div className="space-y-1">
+                {proposedDrafts.slice(0, 3).map((draft) => (
+                  <div key={draft.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      disabled={busy || draftBusy || Boolean(batch)}
+                      onClick={() => void openProposedBatch(draft.id)}
+                      title={draft.title ?? undefined}
+                      className={
+                        "min-w-0 break-words text-left text-neutral-700 underline underline-offset-2 " +
+                        "disabled:opacity-50 dark:text-neutral-300"
+                      }
+                    >
+                      Review {draft.rowCount} proposed tag{draft.rowCount === 1 ? "" : "s"} ·{" "}
+                      {draft.sourceLabel}
+                    </button>
+                    {dismissingDraft === draft.id ? (
+                      <div className="flex w-full flex-wrap items-center gap-2 text-[11px] text-neutral-500">
+                        <span>Dismiss this draft? Transactions stay as they are.</span>
+                        <button
+                          type="button"
+                          disabled={draftBusy}
+                          onClick={() => void dismissProposedDraft(draft.id)}
+                          className="text-red-600 underline disabled:opacity-50 dark:text-red-400"
+                        >
+                          Yes, dismiss
+                        </button>
+                        <button
+                          type="button"
+                          disabled={draftBusy}
+                          onClick={() => setDismissingDraft(null)}
+                          className="underline"
+                        >
+                          Keep draft
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={draftBusy || Boolean(batch)}
+                        onClick={() => {
+                          setDismissingDraft(draft.id);
+                          setDraftError(null);
+                        }}
+                        className="text-[11px] text-neutral-500 underline disabled:opacity-50"
+                      >
+                        Dismiss
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {proposedDrafts.length > 3 && (
+                  <p className="text-[11px] text-neutral-500">and {proposedDrafts.length - 3} more</p>
+                )}
+              </div>
+            )}
+            {draftError && (
+              <p role="alert" className="text-[11px] text-red-600 dark:text-red-400">
+                {draftError}
+              </p>
+            )}
             <form onSubmit={onSubmit} className="flex items-center gap-2">
               <input
                 ref={inputRef}
@@ -860,7 +1040,7 @@ export function AssistantDock() {
 
       {batch && (
         <TagReview
-          key={`${batch.year}-${batch.month}`}
+          key={batch.draftId ?? `${batch.year}-${batch.month}`}
           label={batch.label}
           total={batch.total}
           loaded={batch.loaded}
@@ -872,6 +1052,8 @@ export function AssistantDock() {
           txns={batch.txns}
           categories={boot?.categories ?? []}
           error={batch.error}
+          notice={batch.notice}
+          summary={batch.summary}
           suggester={batch.suggester}
           result={batch.result}
           onCancel={() => {

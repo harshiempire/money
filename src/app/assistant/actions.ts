@@ -17,6 +17,7 @@ import { loadCounterpartyPersonHints } from "@/lib/people/counterparty-person-hi
 import { resolveDefaultPersonFilter } from "@/lib/people/match-counterparty";
 import { counterpartyLabel } from "@/lib/format";
 import type { CategoryLite, HistoryTurn, OpDraft, TurnMessage, TxnCardData } from "@/lib/assistant/types";
+import { listDrafts, type ProposedDraftSummary } from "@/lib/mcp/draft-store";
 
 export type AiState = "ready" | "off" | "not_migrated" | "not_connected" | "reconnect";
 
@@ -27,6 +28,7 @@ export interface AssistantBootstrap {
   /** Newest first. The first entry is the Tag button's default month. */
   untaggedMonths: UntaggedMonth[];
   contextNotes: ContextNote[];
+  proposedDrafts: ProposedDraftSummary[];
 }
 
 export type TurnResult =
@@ -58,13 +60,14 @@ export async function getAssistantBootstrap(): Promise<AssistantBootstrap> {
   const user = await requireCurrentUserAction();
   const account = await getOrCreateAccountForBank(user.id, "bob");
   const actor = actorFor(user.id, account.id);
-  const [aiState, categories, untaggedMonths, contextNotes] = await Promise.all([
+  const [aiState, categories, untaggedMonths, contextNotes, proposedDrafts] = await Promise.all([
     aiStateFor(user.id),
     loadCategories(user.id),
     listUntaggedMonthsForActor(actor),
     readStandingNotes(actor),
+    listDrafts(actor),
   ]);
-  return { aiState, accountName: account.name, categories, untaggedMonths, contextNotes };
+  return { aiState, accountName: account.name, categories, untaggedMonths, contextNotes, proposedDrafts };
 }
 
 function cleanHistory(raw: unknown): HistoryTurn[] {

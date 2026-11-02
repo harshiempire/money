@@ -13,6 +13,7 @@ import {
   pgEnum,
   primaryKey,
   check,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 export const drCrEnum = pgEnum("dr_cr", ["debit", "credit"]);
@@ -148,13 +149,15 @@ export const counterparties = pgTable(
     key: text("key").notNull(),
     displayName: text("display_name"),
     defaultCategoryId: text("default_category_id"),
+    personId: text("person_id").references(() => persons.id, { onDelete: "set null" }),
     isSelf: boolean("is_self").default(false).notNull(),
     isFamily: boolean("is_family").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key)],
+  (t) => [uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key),
+    index("counterparty_user_person_idx").on(t.userId, t.personId)],
 );
 
 export const categories = pgTable(
@@ -507,3 +510,69 @@ export const assistantContextNotes = pgTable(
   },
   (t) => [index("assistant_context_note_user_idx").on(t.userId, t.createdAt)],
 );
+
+export const mcpTokens = pgTable(
+  "mcp_token",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    accountId: text("account_id").notNull().references(() => moneyAccounts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    tokenHint: text("token_hint").notNull(),
+    scope: text("scope").notNull(),
+    userTokenVersion: integer("user_token_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("mcp_token_hash_uniq").on(t.tokenHash),
+    index("mcp_token_user_created_idx").on(t.userId, t.createdAt),
+    check("mcp_token_scope_check", sql`${t.scope} in ('read', 'propose', 'write')`),
+  ],
+);
+
+export const mcpTagDrafts = pgTable(
+  "mcp_tag_draft",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    accountId: text("account_id").notNull().references(() => moneyAccounts.id, { onDelete: "cascade" }),
+    tokenId: text("token_id").references(() => mcpTokens.id, { onDelete: "set null" }),
+    sourceLabel: text("source_label").notNull(),
+    title: text("title"),
+    status: text("status").notNull().default("pending"),
+    rows: jsonb("rows").notNull(),
+    rejectedCount: integer("rejected_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("mcp_tag_draft_user_status_created_idx").on(t.userId, t.status, t.createdAt),
+    check("mcp_tag_draft_status_check", sql`${t.status} in ('pending', 'applied', 'dismissed')`),
+  ],
+);
+
+export const ledgerChanges = pgTable("ledger_change", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull().references(() => moneyAccounts.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  tokenId: text("token_id").references(() => mcpTokens.id, { onDelete: "set null" }),
+  sourceLabel: text("source_label").notNull(),
+  kind: text("kind").notNull(),
+  summary: text("summary"),
+  ops: jsonb("ops").notNull(),
+  undoesChangeId: text("undoes_change_id").references((): AnyPgColumn => ledgerChanges.id, { onDelete: "set null" }),
+  undoneByChangeId: text("undone_by_change_id").references((): AnyPgColumn => ledgerChanges.id, { onDelete: "set null" }),
+  idempotencyKey: text("idempotency_key"),
+  requestHash: text("request_hash"),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  check("ledger_change_source_check", sql`${t.source} in ('app', 'mcp')`),
+  check("ledger_change_summary_check", sql`${t.summary} is null or length(${t.summary}) <= 200`),
+  index("ledger_change_user_created_idx").on(t.userId, t.createdAt.desc()),
+  uniqueIndex("ledger_change_user_idempotency_uniq").on(t.userId, t.idempotencyKey).where(sql`${t.idempotencyKey} is not null`),
+]);

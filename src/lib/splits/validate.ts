@@ -70,17 +70,17 @@ export function validateNoDuplicateParticipants(
   // Same person by name: getOrCreatePerson matches names trimmed and
   // case-insensitively, so "Asha" and "asha " land on ONE person record and
   // two shares would silently merge into a single balance.
-  const seenNames = new Set<string>();
+  const seenNames = new Map<string, string>();
   for (const p of participants) {
     const key = p.personName.trim().toLowerCase();
     if (!key) continue;
     if (seenNames.has(key)) {
       return {
         ok: false,
-        message: `${p.personName.trim()} appears twice in this split. Each person may only have one share.`,
+        message: `${seenNames.get(key)} appears twice in this split. Each person may only have one share.`,
       };
     }
-    seenNames.add(key);
+    seenNames.set(key, p.personName.trim());
   }
   return OK;
 }

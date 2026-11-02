@@ -7,12 +7,13 @@ import { getOrCreateAccountForBank } from "@/db/money-account";
 import { detectTransferPairs } from "@/domain/transfers/detect";
 import { requireCurrentUserAction } from "@/lib/auth/require-current-user";
 import {
-  assertCategoryOwned,
   assertCounterpartyOwned,
   assertTransactionOwned,
   assertTransactionsOwned,
 } from "@/lib/auth/ownership";
-import { categoryIsTransfer, setCategoryForActor } from "@/lib/transactions/category-for-actor";
+import { setCategoryForActor } from "@/lib/transactions/category-for-actor";
+import { editTransactionFields, type EditResult } from "@/lib/ledger/transaction-fields";
+import { setPayeeDefault } from "@/lib/ledger/payee-default";
 import { counterpartyLabel } from "@/lib/format";
 import { summarizeSplitSettlement } from "@/lib/splits/settlement-status";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
@@ -59,31 +60,22 @@ export async function applyCategoryToCounterparty(input: {
     .limit(1);
   if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0, ids: [] as string[] };
 
-  const isTransfer = await categoryIsTransfer(txn.categoryId, user.id);
-
+  const actor = { userId: user.id, accountId };
   await assertCounterpartyOwned(user.id, txn.counterpartyId);
-
-  await db
-    .update(schema.counterparties)
-    .set({ defaultCategoryId: txn.categoryId })
-    .where(
-      and(
-        eq(schema.counterparties.id, txn.counterpartyId),
-        eq(schema.counterparties.userId, user.id),
-      ),
-    );
-
-  const updated = await db
-    .update(schema.transactions)
-    .set({ categoryId: txn.categoryId, isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.counterpartyId, txn.counterpartyId),
-        eq(schema.transactions.accountId, accountId),
-        isNull(schema.transactions.categoryId),
-      ),
-    )
-    .returning({ id: schema.transactions.id });
+  const [payee] = await db.select({ defaultCategoryId: schema.counterparties.defaultCategoryId })
+    .from(schema.counterparties).where(and(eq(schema.counterparties.id, txn.counterpartyId), eq(schema.counterparties.userId, user.id)));
+  const defaultResult = await setPayeeDefault({ actor, source: "app" }, {
+    counterpartyId: txn.counterpartyId, categoryId: txn.categoryId,
+    guard: { currentDefaultCategoryId: payee?.defaultCategoryId ?? null },
+  });
+  if (defaultResult.confirm) throw new Error("The payee default changed. Try again.");
+  const candidates = await db.select({ id: schema.transactions.id }).from(schema.transactions).where(and(
+    eq(schema.transactions.counterpartyId, txn.counterpartyId), eq(schema.transactions.accountId, accountId), isNull(schema.transactions.categoryId)));
+  const result = await editTransactionFields({ actor, source: "app" }, {
+    kind: "transaction_fields", partial: true,
+    edits: candidates.map((row) => ({ transactionId: row.id, set: { categoryId: txn.categoryId }, guard: { categoryId: null } })),
+  });
+  const updated = result.rows.map((row) => ({ id: row.transactionId }));
 
   revalidatePath("/transactions");
   revalidatePath("/");
@@ -99,15 +91,9 @@ export async function setTransactionTransfer(input: {
     user.id,
     input.transactionId,
   );
-  await db
-    .update(schema.transactions)
-    .set({ isTransfer: input.isTransfer })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
+  assertEdit(await editTransactionFields({ actor: { userId: user.id, accountId }, source: "app" }, {
+    kind: "transaction_fields", edits: [{ transactionId: input.transactionId, set: { isTransfer: input.isTransfer } }],
+  }));
   revalidatePath("/transactions");
   revalidatePath("/review");
   revalidatePath("/");
@@ -122,15 +108,9 @@ export async function setTransactionNeedsReview(input: {
     user.id,
     input.transactionId,
   );
-  await db
-    .update(schema.transactions)
-    .set({ needsReview: input.needsReview })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
+  assertEdit(await editTransactionFields({ actor: { userId: user.id, accountId }, source: "app" }, {
+    kind: "transaction_fields", edits: [{ transactionId: input.transactionId, set: { needsReview: input.needsReview } }],
+  }));
   revalidatePath("/transactions");
   revalidatePath("/review");
   revalidatePath("/");
@@ -150,26 +130,13 @@ export async function setTransactionNote(input: {
     user.id,
     input.transactionId,
   );
-  if (input.expectedCurrentNote !== undefined) {
-    const [current] = await db
-      .select({ note: schema.transactions.note })
-      .from(schema.transactions)
-      .where(eq(schema.transactions.id, input.transactionId))
-      .limit(1);
-    if ((current?.note ?? "").trim() !== (input.expectedCurrentNote ?? "").trim()) {
-      throw new Error("The note changed since this card was made. Ask again to get a fresh card.");
-    }
-  }
-  const cleaned = input.note.trim();
-  await db
-    .update(schema.transactions)
-    .set({ note: cleaned === "" ? null : cleaned })
-    .where(
-      and(
-        eq(schema.transactions.id, input.transactionId),
-        eq(schema.transactions.accountId, accountId),
-      ),
-    );
+  const result = await editTransactionFields({ actor: { userId: user.id, accountId }, source: "app" }, {
+    kind: "transaction_fields", edits: [{ transactionId: input.transactionId, set: { note: input.note },
+      ...(input.expectedCurrentNote !== undefined ? { guard: { note: input.expectedCurrentNote } } : {}),
+    }],
+  });
+  if (result.errors?.some((e) => e.code === "stale")) throw new Error("The note changed since this card was made. Ask again to get a fresh card.");
+  assertEdit(result);
   revalidatePath("/transactions");
   revalidatePath("/");
 }
@@ -237,11 +204,12 @@ export async function applyNoteToTransactions(input: {
   const cleaned = input.note.trim();
   if (input.transactionIds.length === 0) return { updated: 0 };
   await assertTransactionsOwned(user.id, input.transactionIds);
-  const updated = await db
-    .update(schema.transactions)
-    .set({ note: cleaned === "" ? null : cleaned })
-    .where(inArray(schema.transactions.id, input.transactionIds))
-    .returning({ id: schema.transactions.id });
+  const account = await getOrCreateAccountForBank(user.id, "bob");
+  const result = await editTransactionFields({ actor: { userId: user.id, accountId: account.id }, source: "app" }, {
+    kind: "transaction_fields", edits: [...new Set(input.transactionIds)].map((transactionId) => ({ transactionId, set: { note: cleaned } })),
+  });
+  assertEdit(result);
+  const updated = result.rows;
   revalidatePath("/transactions");
   revalidatePath("/");
   return { updated: updated.length };
@@ -269,10 +237,9 @@ export async function autoDetectTransfers(): Promise<{ pairs: number }> {
     return { pairs: 0 };
   }
   const ids = pairs.flatMap((p) => [p.debitId, p.creditId]);
-  await db
-    .update(schema.transactions)
-    .set({ isTransfer: true })
-    .where(inArray(schema.transactions.id, ids));
+  assertEdit(await editTransactionFields({ actor: { userId: user.id, accountId: account.id }, source: "app" }, {
+    kind: "transaction_fields", edits: [...new Set(ids)].map((transactionId) => ({ transactionId, set: { isTransfer: true } })),
+  }));
   revalidatePath("/transactions");
   revalidatePath("/");
   revalidatePath("/timeline");
@@ -414,4 +381,8 @@ export async function getLinkedTransactionPreview(input: {
     note: txn.note,
     split,
   };
+}
+
+function assertEdit(result: EditResult): void {
+  if (result.errors?.length) throw new Error(result.errors[0].message);
 }

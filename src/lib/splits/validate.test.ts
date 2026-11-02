@@ -135,7 +135,7 @@ describe("validateNoDuplicateParticipants — collapsing ids (finding 4)", () =>
   test("treats names case- and space-insensitively, like person matching", () => {
     const r = validateNoDuplicateParticipants([p(100, "Asha"), p(100, "  asha ")]);
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("asha appears twice");
+    expect(r.ok === false && r.message).toContain("Asha appears twice");
   });
 
   test("still allows different people", () => {

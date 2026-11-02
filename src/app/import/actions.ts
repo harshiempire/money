@@ -1,6 +1,6 @@
 "use server";
 
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
@@ -42,7 +42,7 @@ export async function uploadStatement(
   const buf = Buffer.from(await file.arrayBuffer());
 
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       ingestStatement({
         accountId: account.id,
         filename: file.name,
@@ -53,8 +53,8 @@ export async function uploadStatement(
     ),
   );
 
-  if (Either.isLeft(result)) {
-    const err = result.left;
+  if (Result.isFailure(result)) {
+    const err = result.failure;
     const msg =
       err._tag === "AdapterNotFound"
         ? "No bank adapter recognized this file. Try the generic CSV mapper."
@@ -89,7 +89,7 @@ export async function uploadStatement(
       .from(schema.imports)
       .where(
         and(
-          eq(schema.imports.id, result.right.importId),
+          eq(schema.imports.id, result.success.importId),
           eq(schema.imports.accountId, account.id),
         ),
       )
@@ -103,23 +103,23 @@ export async function uploadStatement(
       .where(
         and(
           eq(schema.transactions.accountId, account.id),
-          eq(schema.transactions.sourceImportId, result.right.importId),
+          eq(schema.transactions.sourceImportId, result.success.importId),
         ),
       ),
   ]);
 
   const imported = importRow[0];
-  const reviewHref = `/transactions?import=${encodeURIComponent(result.right.importId)}&attention=1&all=1`;
+  const reviewHref = `/transactions?import=${encodeURIComponent(result.success.importId)}&attention=1&all=1`;
   const statementHref =
     imported?.periodStart && imported.periodEnd
       ? `/transactions?from=${encodeURIComponent(imported.periodStart)}&to=${encodeURIComponent(imported.periodEnd)}`
-      : `/transactions?import=${encodeURIComponent(result.right.importId)}&all=1`;
+      : `/transactions?import=${encodeURIComponent(result.success.importId)}&all=1`;
 
   revalidatePath("/import");
   revalidatePath("/transactions");
   return {
     ok: true,
-    summary: result.right,
+    summary: result.success,
     bank: account.bank,
     categorizedCount: counts[0]?.categorizedCount ?? 0,
     needsAttentionCount: counts[0]?.needsAttentionCount ?? 0,

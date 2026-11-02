@@ -16,7 +16,8 @@ export const authConfig = {
       if (
         pathname.startsWith("/login") ||
         pathname.startsWith("/register") ||
-        pathname.startsWith("/api/auth")
+        pathname.startsWith("/api/auth") ||
+        pathname === "/api/mcp"
       ) {
         return true;
       }

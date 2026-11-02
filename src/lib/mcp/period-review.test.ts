@@ -1,0 +1,63 @@
+import { expect, test } from "bun:test";
+import { Schema } from "effect";
+import { suggestCategories, reviewPeriod, SuggestCategoriesOutput, ReviewPeriodOutput } from "./period-review";
+import { fixtureTxn, fixtureView, readFixture } from "./read-fixtures";
+
+const categories = [{ id: "food", name: "Food", kind: "spend" }, { id: "travel", name: "Travel", kind: "spend" }];
+test("category suggestions mark only defaults, two earlier payments or explicit notes sure; conflicts and weak history need answers", () => {
+  const model = readFixture(); model.transactions = []; model.payees = [];
+  model.splits = []; model.shares = []; model.settlements = []; model.owed = []; model.netEvents = [];
+  const add = (id: string, key: string, extra: Parameters<typeof fixtureTxn>[1] = {}) => model.transactions.push(fixtureTxn(id, { txnDate: "2026-08-03", counterpartyKey: key, displayName: key, ...extra }));
+  add("default", "default@bank", { defaultCategory: "Food" });
+  add("h1", "history@bank", { txnDate: "2026-06-01", category: "Food", categoryId: "food" });
+  add("h2", "history@bank", { txnDate: "2026-07-01", category: "Food", categoryId: "food" });
+  add("history", "history@bank");
+  add("future", "history@bank", { txnDate: "2026-09-01", category: "Travel", categoryId: "travel" });
+  add("weak1", "weak@bank", { txnDate: "2026-07-01", category: "Food", categoryId: "food" });
+  add("weak", "weak@bank");
+  add("c1", "conflict@bank", { txnDate: "2026-07-01", category: "Food", categoryId: "food" });
+  add("c2", "conflict@bank", { txnDate: "2026-07-02", category: "Travel", categoryId: "travel" });
+  add("conflict", "conflict@bank", { defaultCategory: "Food", note: "Food" });
+  add("note", "note@bank", { note: "Food with kiran@bank 123456" });
+  add("partial-note", "partial-note@bank", { note: "Foodie" });
+  add("two-notes", "two-notes@bank", { note: "Food and Travel" });
+  for (let i = 0; i < 3; i++) add(`unsure${i}`, "unsure@bank", { drCr: "credit", isTransfer: true });
+  for (let i = 0; i < 2; i++) add(`generic-past${i}`, "generic", { txnDate: "2026-07-01", displayName: "Payee", category: "Food", categoryId: "food" });
+  add("generic", "generic", { displayName: "Payee" });
+  const view = fixtureView(model), result = suggestCategories(view, categories, { month: "2026-08" });
+  const row = (id: string) => result.rows.find(r => r.ref === view.transactions[model.transactions.findIndex(t => t.id === id)].ref)!;
+  expect(row("default")).toMatchObject({ suggestion: "Food", source: "payee_default", sure: true, conflict: [] });
+  expect(row("history")).toMatchObject({ suggestion: "Food", source: "history", sure: true });
+  expect(row("weak")).toMatchObject({ suggestion: "Food", source: "history", sure: false });
+  expect(row("conflict")).toMatchObject({ suggestion: null, source: null, sure: false, conflict: ["Food", "Travel"] });
+  expect(row("note")).toMatchObject({ suggestion: "Food", source: "note", sure: true });
+  for (const id of ["partial-note", "two-notes", "generic", "unsure0"]) expect(row(id)).toMatchObject({ suggestion: null, source: null, sure: false });
+  expect(result.unsure_groups[0]).toMatchObject({ payee: "unsure@bank", count: 3 });
+  expect(result.unsure_groups[0].refs).toHaveLength(3);
+  expect(result.rows.every(r => r.rev.startsWith("rev_"))).toBe(true);
+  expect(Schema.is(SuggestCategoriesOutput)(result)).toBe(true);
+  expect(suggestCategories(view, categories, { from: "2026-08-03", to: "2026-08-03" }).rows).toHaveLength(result.rows.length);
+});
+
+test("period review returns four counted lists using bill dates, all settlements, known-person inflows and exact repeats", () => {
+  const model = readFixture();
+  model.transactions.push(...["a", "b", "c"].map((id, i) => fixtureTxn(`repeat-${id}`, { txnDate: "2026-08-10", amountPaise: 27258, counterpartyKey: `different${i}@bank` })));
+  model.transactions.push(...["a", "b"].map(id => fixtureTxn(`pair-${id}`, { txnDate: "2026-08-11", amountPaise: 999, counterpartyKey: "pair@bank" })));
+  model.transactions.push(fixtureTxn("noted", { txnDate: "2026-08-10", amountPaise: 27258, note: "Explained" }));
+  model.transactions.push(fixtureTxn("categorized", { txnDate: "2026-08-10", amountPaise: 27258, category: "Food", categoryId: "food" }));
+  model.transactions.push(fixtureTxn("outside", { txnDate: "2026-09-01", amountPaise: 27258 }));
+  // A bill inside the period; its later settlements still count.
+  model.transactions[0].txnDate = "2026-08-01";
+  const view = fixtureView(model), result = reviewPeriod(view, { month: "2026-08" });
+  for (const value of Object.values(result)) expect(value.count).toBe(value.rows.length);
+  expect(result.open_shares.rows).toHaveLength(1);
+  expect(result.open_shares.rows[0]).toMatchObject({ date: "2026-08-01", left: "194.00" });
+  expect(result.unlinked_inflows.rows.map(t => t.date)).toEqual(["2026-08-03"]);
+  expect(result.unlinked_inflows.rows[0].via).toBe("seen");
+  const repeatRefs = new Set(result.repeated_amounts.rows.map(t => t.ref));
+  expect(view.transactions.filter(t => ["272.58", "9.99"].includes(t.amount) && !t.note && !t.category && t.date.startsWith("2026-08")).every(t => repeatRefs.has(t.ref))).toBe(true);
+  expect(view.transactions.filter(t => t.note || t.category || t.date === "2026-09-01").every(t => !repeatRefs.has(t.ref))).toBe(true);
+  expect(result.uncategorized.rows.some(t => t.note === "Explained")).toBe(true);
+  expect(Schema.is(ReviewPeriodOutput)(result)).toBe(true);
+  expect(reviewPeriod(view, { from: "2026-08-10", to: "2026-08-11" }).open_shares.count).toBe(0);
+});
