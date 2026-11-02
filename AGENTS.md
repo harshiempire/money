@@ -90,7 +90,35 @@ const account = await getOrCreateAccountForBank(user.id, "bob");
 
 ### Server actions (must stay secured)
 
-**Rule:** First line = `requireCurrentUserAction()`; then ownership asserts for every client-supplied id. Never trust `userId` or `accountId` from the client.
+**Actions use `defineAction`** ([`src/lib/action/`](src/lib/action/)): authentication, input decoding, production-safe results. Money writes then call the shared ledger cores through `fromLedger`. Migration plan: [`docs/plans/effect-tanstack-adoption.md`](docs/plans/effect-tanstack-adoption.md).
+
+```ts
+"use server";
+import { Effect, Schema } from "effect";
+import { defineAction } from "@/lib/action/define-action";
+import { fromLedger } from "@/lib/action/ledger";
+import { CurrentUser } from "@/lib/action/services";
+
+export const deleteSplit = defineAction("deleteSplit", {
+  input: Schema.Struct({ transactionId: Schema.String }), // decodes the raw arg; undeclared fields are dropped
+  revalidate: ["/transactions", "/reimbursements", "/"],   // only on success
+  handler: Effect.fn("deleteSplit")(function* (input) {
+    const user = yield* CurrentUser;                        // from the session, never from input
+    const account = yield* Effect.promise(() => getOrCreateAccountForBank(user.id, "bob"));
+    return yield* fromLedger(() =>
+      deleteSplitForActor({ actor: { userId: user.id, accountId: account.id }, source: "app" }, input),
+    );
+  }),
+});
+```
+
+- Returns `ActionResult<T>` = `{ ok: true, data } | { ok: false, code, message, field? }`. **Never `throw new Error(msg)` for an expected failure:** Next replaces thrown messages with a digest in production (verified 2026-11-02). In handlers, fail with `Invalid` / `Conflict` / `NotFound` / `Forbidden` / `Unavailable` from [`errors.ts`](src/lib/action/errors.ts). In ledger cores, throw `LedgerError` with a code; [`fromLedger`](src/lib/action/ledger.ts) maps every `LedgerErrorCode` (exhaustive switch, so a new code fails typecheck until mapped) and `ForbiddenError` → FORBIDDEN. Anything else is a defect: logged, generic message.
+- Clients call actions through `callAction()` / `useAction()` and render `result.message`, or `unwrap(result)` where a throw is wanted (assistant `ops.ts`, TanStack Query). Never read `err.message` from a thrown action error.
+- No session → `UNAUTHENTICATED` before input is decoded. `definePublicAction` (no `CurrentUser`) is for session-less actions only (registration); `asFormAction` adapts an action for `useActionState` and keeps the no-JS form post working.
+- The input schema must never carry `userId` / `accountId`; take them from `CurrentUser`.
+- `bun run check:actions` fails on any unwrapped export in a `"use server"` file outside its shrinking legacy list.
+
+**Legacy actions (still on that list):** first line = `requireCurrentUserAction()`; then ownership asserts for every client-supplied id. Never trust `userId` or `accountId` from the client.
 
 | File | Exports |
 |------|---------|
@@ -191,7 +219,7 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 ## Security checklist (when adding features)
 
 - [ ] New page: `requireCurrentUser()` + scope queries by `account.id` / `user.id`
-- [ ] New server action: `requireCurrentUserAction()` + ownership assert on every id from client
+- [ ] New server action: `defineAction(...)` with an input `Schema`; ownership checked on every id from the client (in the ledger core, or `owns.*`); expected failures returned, never thrown
 - [ ] Never accept `accountId` / `userId` from FormData for authorization — resolve from session
 - [ ] Import/upload: bind to `getOrCreateAccountForBank(sessionUser.id, "bob")` only
 - [ ] Credentials `authorize`: fail closed if `!passwordHash`
@@ -215,6 +243,7 @@ On 2026-09-25 a config-injection worm force-pushed an obfuscated payload into ev
 bun run dev
 bun run security:check   # supply-chain preflight (also runs before dev/build)
 bun run typecheck
+bun run check:actions
 bun run build
 bun run db:generate    # after schema.ts changes
 bun run db:migrate
@@ -308,13 +337,22 @@ POST, GET and DELETE authenticate by bearer token, independently of session cook
 
 This repository uses the Effect Typescript library.
 
-It is on Effect 4: ingest uses `Result` instead of `Either` and `Effect.result` instead of `Effect.either`.
+It is on Effect 4 (`effect@4.1.1`, pinned exactly in package.json, bun.lock and pnpm-lock.yaml): ingest uses `Result` instead of `Either` and `Effect.result` instead of `Effect.either`.
 
 Before writing any Effect code, first read `node_modules/effect/AGENTS.md`
 **completely**, and follow the links in the file when required.
 
 If you need to learn more about particular Effect apis and concepts that the
 guide doesn't cover, search through the source code in `node_modules/effect/src`.
+
+House rules on top of that guide:
+
+- Errors are `Schema.TaggedError` (see [`src/lib/action/errors.ts`](src/lib/action/errors.ts), [`src/lib/ledger/context.ts`](src/lib/ledger/context.ts)); services are `Context.Service` with an id like `"money/lib/action/Db"`.
+- Reusable effect-returning functions use `Effect.fn("name")` / `Effect.fnUntraced`, not a plain function wrapping `Effect.gen`.
+- Untrusted input is decoded with `Schema` (`defineAction`'s `input`), never hand-parsed.
+- Effect runs on the server. Client components use [`result.ts`](src/lib/action/result.ts) / [`use-action.ts`](src/lib/action/use-action.ts) (no Effect import). Planned exception: forms may import an action's input `Schema` (via `Schema.toStandardSchemaV1`); check route sizes in `next build` when adding one.
+- Skills: [`.claude/skills/effect-ts`](.claude/skills/effect-ts/SKILL.md) and [`.claude/skills/effect-v3-to-v4`](.claude/skills/effect-v3-to-v4/SKILL.md), vendored from `Effect-TS/skills` (see `.claude/skills/EFFECT-SKILLS-SOURCE.md`).
+- Upgrading Effect: bump the exact pinned version, update both lockfiles (Vercel installs with pnpm, frozen lockfile), re-read `node_modules/effect/AGENTS.md`, then `bun run typecheck && bun test && bun run build`.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

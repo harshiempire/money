@@ -8,7 +8,8 @@ export type CurrentUser = {
   email: string | null;
 };
 
-async function sessionUser(): Promise<CurrentUser | null> {
+/** The session's user, or null. Never throws. Used by `defineAction`. */
+export async function sessionUser(): Promise<CurrentUser | null> {
   try {
     const session = await auth();
     if (!session || typeof session !== "object" || !("user" in session)) {
