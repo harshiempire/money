@@ -24,7 +24,18 @@ export async function setTransactionCategory(input: {
   expectedCurrentCategoryId?: string | null;
 }) {
   const user = await requireCurrentUserAction();
-  await setCategoryForActor({ userId: user.id }, input);
+  // Only the declared fields: passing `input` through let a browser request
+  // add `isTransfer` and force the transfer flag.
+  await setCategoryForActor(
+    { userId: user.id },
+    {
+      transactionId: input.transactionId,
+      categoryId: input.categoryId,
+      ...(input.expectedCurrentCategoryId !== undefined
+        ? { expectedCurrentCategoryId: input.expectedCurrentCategoryId }
+        : {}),
+    },
+  );
   revalidatePath("/transactions");
   revalidatePath("/");
 }

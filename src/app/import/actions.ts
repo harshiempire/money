@@ -64,7 +64,13 @@ export async function uploadStatement(
             : "Incorrect PDF password. Check the password your bank sent with the statement."
           : err._tag === "ParseError"
             ? `Parse failed at ${err.stage}: ${err.detail}`
-            : `Database error: ${String((err as { cause?: unknown }).cause ?? "unknown")}`;
+            : "We couldn't save this statement. Please try again.";
+    // The cause is a database error whose text includes the SQL and every
+    // row's values (drizzle's "Failed query: ... params: ..."). Log it here;
+    // never send it to the browser.
+    if (err._tag === "PersistError") {
+      console.error("[import] saving the statement failed", (err as { cause?: unknown }).cause);
+    }
     return { ok: false, error: msg };
   }
 

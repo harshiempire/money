@@ -103,6 +103,14 @@ export async function saveNetEvent(input: {
           "Bank receivable legs require an inflow transaction",
         );
       }
+    } else if (leg.owedExpenseId && leg.newPayable) {
+      // Such a leg was validated (and ownership-checked) as the existing
+      // payable, yet the transaction still created the new one — skipping its
+      // description/amount checks and the ownership check on its categoryId.
+      throw new NetEventValidationError(
+        "INVALID_LEG",
+        "A payable leg must either use an existing payable or create a new one, not both",
+      );
     } else if (leg.owedExpenseId) {
       if (leg.method !== "offset") {
         throw new NetEventValidationError(
