@@ -52,7 +52,9 @@ Rules this encodes (update AGENTS.md in the same PR):
 
 Tests: `bun test` a `defineAction` with a fake `CurrentUser` / `Db` layer, covering unauthenticated → `Unauthenticated`, invalid input → `Invalid`, a defect becoming a generic message, and revalidation skipped on failure.
 
-Open check: `"use server"` files may only export async functions. Confirm that `export const x = defineAction(...)` (which returns an async function) passes the Next 16 compiler. If it doesn't, the pattern becomes `export async function x(i) { return run(xDef, i) }`.
+Open check, resolved 2026-11-02: `export const x = defineAction(...)` builds under Turbopack, and the action returns its `ActionResult` in `next start`.
+
+**Status: done** on `feat/effect-actions`. Contents: `src/lib/action/{result,errors,services,validation,core,define-action,ownership,use-action}.ts`, 14 tests in `core.test.ts`, `scripts/check-actions.ts` (`bun run check:actions`), and AGENTS.md updated. No action is migrated yet; 2a is the first real use.
 
 ## Phase 2: migrate actions (one PR per file, riskiest first)
 

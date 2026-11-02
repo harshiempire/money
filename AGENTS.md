@@ -90,7 +90,36 @@ const account = await getOrCreateAccountForBank(user.id, "bob");
 
 ### Server actions (must stay secured)
 
-**Rule:** First line = `requireCurrentUserAction()`; then ownership asserts for every client-supplied id. Never trust `userId` or `accountId` from the client.
+**New and migrated actions use `defineAction`** ([`src/lib/action/`](src/lib/action/)). Migration plan: [`docs/plans/effect-tanstack-adoption.md`](docs/plans/effect-tanstack-adoption.md).
+
+```ts
+"use server";
+import { Effect, Schema } from "effect";
+import { defineAction } from "@/lib/action/define-action";
+import { owns } from "@/lib/action/ownership";
+import { check } from "@/lib/action/validation";
+import { query, transaction } from "@/lib/action/services";
+
+export const deleteThing = defineAction("deleteThing", {
+  input: Schema.Struct({ transactionId: Schema.String }), // decodes the raw arg
+  revalidate: ["/transactions", "/"],                     // only on success
+  handler: (input) => Effect.gen(function* () {
+    yield* owns.transaction(input.transactionId);         // user from session
+    yield* check(validateSomething(input));               // { ok, message } → Invalid
+    yield* transaction((tx) => Effect.promise(() => tx.delete(...)));
+  }),
+});
+```
+
+- Returns `ActionResult<T>` = `{ ok: true, data } | { ok: false, code, message, field? }`. **Never `throw new Error(msg)` for an expected failure** — Next replaces thrown messages with a digest in production (verified 2026-11-02). Fail with `Invalid` / `Conflict` / `NotFound` / `Forbidden` from `errors.ts` instead.
+- Clients call it with `useAction(action)` ([`use-action.ts`](src/lib/action/use-action.ts)) and render `error.message`; or `unwrap(result)` where a throw is wanted (TanStack Query).
+- No session → `UNAUTHENTICATED` before input is even decoded. Defects (bugs, DB outages) are logged server-side and return a generic message.
+- `owns.*` takes the user from `CurrentUser`; the input schema must never carry `userId` / `accountId`.
+- A typed failure inside `transaction(...)` rolls it back.
+- `definePublicAction` is for session-less actions (registration) only.
+- `bun run check:actions` fails on any bare `export async function` in a `"use server"` file outside its shrinking legacy list.
+
+**Legacy actions (not yet migrated):** first line = `requireCurrentUserAction()`; then ownership asserts for every client-supplied id. Never trust `userId` or `accountId` from the client.
 
 | File | Exports |
 |------|---------|
@@ -177,7 +206,7 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 ## Security checklist (when adding features)
 
 - [ ] New page: `requireCurrentUser()` + scope queries by `account.id` / `user.id`
-- [ ] New server action: `requireCurrentUserAction()` + ownership assert on every id from client
+- [ ] New server action: `defineAction(...)` with an input `Schema` + `owns.*` on every id from client; expected failures returned, never thrown
 - [ ] Never accept `accountId` / `userId` from FormData for authorization — resolve from session
 - [ ] Import/upload: bind to `getOrCreateAccountForBank(sessionUser.id, "bob")` only
 - [ ] Credentials `authorize`: fail closed if `!passwordHash`
@@ -190,6 +219,7 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 ```bash
 bun run dev
 bun run typecheck
+bun run check:actions
 bun run build
 bun run db:generate    # after schema.ts changes
 bun run db:migrate
