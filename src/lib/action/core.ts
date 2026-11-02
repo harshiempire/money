@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, Option, ParseResult, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema, SchemaIssue } from "effect";
 import { Invalid, toFailure, type ActionError } from "./errors";
 import { GENERIC_ERROR_MESSAGE, type ActionResult } from "./result";
 
@@ -9,7 +9,7 @@ import { GENERIC_ERROR_MESSAGE, type ActionResult } from "./result";
 
 export interface ActionSpec<I, IEncoded, A, R> {
   /** Every argument from the browser is decoded with this before use. */
-  readonly input: Schema.Schema<I, IEncoded, never>;
+  readonly input: Schema.Codec<I, IEncoded>;
   readonly handler: (input: I) => Effect.Effect<A, ActionError, R>;
   /** Paths to revalidate — only after the handler succeeds. */
   readonly revalidate?: readonly string[];
@@ -29,19 +29,22 @@ export interface RunOptions<R> {
   readonly log?: (message: string) => void;
 }
 
+const formatIssue = SchemaIssue.makeFormatterStandardSchemaV1();
+
 /** Decode untrusted input; a mismatch becomes `Invalid` naming the field. */
 export const decodeInput = <I, IEncoded>(
-  schema: Schema.Schema<I, IEncoded, never>,
+  schema: Schema.Codec<I, IEncoded>,
   raw: unknown,
 ): Effect.Effect<I, Invalid> =>
-  Schema.decodeUnknown(schema, { errors: "first", onExcessProperty: "ignore" })(
-    raw,
-  ).pipe(
+  Schema.decodeUnknownEffect(schema, {
+    errors: "first",
+    onExcessProperty: "ignore",
+  })(raw).pipe(
     Effect.mapError((err) => {
-      const [issue] = ParseResult.ArrayFormatter.formatErrorSync(err);
-      const field = issue?.path.map(String).join(".");
+      const [issue] = formatIssue(err.issue).issues;
+      const field = issue?.path?.map(String).join(".");
       const message = issue?.message ?? "The request was malformed.";
-      return field ? new Invalid({ message, field }) : new Invalid({ message });
+      return new Invalid(field ? { message, field } : { message });
     }),
   );
 
@@ -62,11 +65,13 @@ export async function runAction<I, IEncoded, A, R>(
     return { ok: true, data: exit.value };
   }
 
-  const failure = Cause.failureOption(exit.cause);
+  const failure = Cause.findErrorOption(exit.cause);
   if (Option.isSome(failure)) return toFailure(failure.value);
 
   // A defect: a bug, a DB outage, or a Next control-flow throw.
-  for (const defect of Cause.defects(exit.cause)) options.rethrow?.(defect);
+  for (const reason of exit.cause.reasons.filter(Cause.isDieReason)) {
+    options.rethrow?.(reason.defect);
+  }
   (options.log ?? console.error)(
     `[action:${options.name}] ${Cause.pretty(exit.cause)}`,
   );

@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Schema } from "effect";
 
 /**
  * The unified shape that every bank adapter outputs. Everything downstream
@@ -68,26 +68,28 @@ export interface ParsedStatement {
 
 // ─── Tagged errors (Effect) ──────────────────────────────────────────────────
 
-export class AdapterNotFound extends Data.TaggedError("AdapterNotFound")<{
-  readonly mime: string;
-  readonly hint: string;
-}> {}
+export class AdapterNotFound extends Schema.TaggedError<AdapterNotFound>()(
+  "AdapterNotFound",
+  { mime: Schema.String, hint: Schema.String },
+) {}
 
-export class ParseError extends Data.TaggedError("ParseError")<{
-  readonly bank: string;
-  readonly stage: string;
-  readonly detail: string;
-}> {}
+export class ParseError extends Schema.TaggedError<ParseError>()("ParseError", {
+  bank: Schema.String,
+  stage: Schema.String,
+  detail: Schema.String,
+}) {}
 
-export class PdfPasswordError extends Data.TaggedError("PdfPasswordError")<{
-  readonly reason: "required" | "incorrect";
-}> {}
+export class PdfPasswordError extends Schema.TaggedError<PdfPasswordError>()(
+  "PdfPasswordError",
+  { reason: Schema.Literals(["required", "incorrect"]) },
+) {}
 
-export class DedupeConflict extends Data.TaggedError("DedupeConflict")<{
-  readonly refId: string;
-  readonly reason: string;
-}> {}
+export class DedupeConflict extends Schema.TaggedError<DedupeConflict>()(
+  "DedupeConflict",
+  { refId: Schema.String, reason: Schema.String },
+) {}
 
-export class PersistError extends Data.TaggedError("PersistError")<{
-  readonly cause: unknown;
-}> {}
+export class PersistError extends Schema.TaggedError<PersistError>()(
+  "PersistError",
+  { cause: Schema.Defect() },
+) {}

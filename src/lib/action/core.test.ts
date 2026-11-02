@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Result, Schema } from "effect";
 import { runAction, type ActionSpec } from "./core";
 import { Forbidden, Invalid, Unauthenticated } from "./errors";
 import { CurrentUser, Db, transaction, type Database } from "./services";
@@ -183,10 +183,10 @@ describe("transaction", () => {
     const { state, layer } = fakeDb();
     const error = new Invalid({ message: "A person name is required." });
     const result = await Effect.runPromise(
-      transaction(() => Effect.fail(error)).pipe(Effect.either, Effect.provide(layer)),
+      transaction(() => Effect.fail(error)).pipe(Effect.result, Effect.provide(layer)),
     );
-    expect(result._tag).toBe("Left");
-    expect(result._tag === "Left" && result.left).toBe(error);
+    expect(Result.isFailure(result)).toBe(true);
+    expect(Result.isFailure(result) && result.failure).toBe(error);
     expect(state).toEqual({ committed: 0, rolledBack: 1 });
   });
 

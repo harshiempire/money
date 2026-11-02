@@ -31,7 +31,7 @@ const guard =
         try: () => assert(user.id, ...args),
         catch: (err) => err,
       }).pipe(
-        Effect.catchAll((err) =>
+        Effect.catch((err) =>
           err instanceof ForbiddenError
             ? Effect.fail(new Forbidden())
             : Effect.die(err),

@@ -4,7 +4,7 @@ This file is the **source of truth** for AI agents and contributors working on t
 
 ## What this app is
 
-Personal finance tracker (Next.js App Router): Bank of Baroda PDF import, transactions, categories, splits/reimbursements, dashboard/net spend. Stack: **Bun**, **Next.js 16**, **Drizzle ORM**, **Neon Postgres** (via `postgres` TCP driver + `drizzle-orm/postgres-js`), **Auth.js v5** (next-auth beta), **Effect** (ingest pipeline).
+Personal finance tracker (Next.js App Router): Bank of Baroda PDF import, transactions, categories, splits/reimbursements, dashboard/net spend. Stack: **Bun**, **Next.js 16**, **Drizzle ORM**, **Neon Postgres** (via `postgres` TCP driver + `drizzle-orm/postgres-js`), **Auth.js v5** (next-auth beta), **Effect v4** (`effect@4.1.1`, pinned; ingest pipeline + server actions via `defineAction`).
 
 Multi-tenant by `user_id`: every domain row belongs to a user. One special legacy user id holds pre-auth data (see below).
 
@@ -228,6 +228,27 @@ bun run baseline-migrations
 bun run bootstrap-owner
 bun run db:studio
 ```
+
+---
+
+## Learning more about Effect
+
+This repository uses the Effect Typescript library (v4).
+
+Before writing any Effect code, first read `node_modules/effect/AGENTS.md`
+**completely**, and follow the links in the file when required.
+
+If you need to learn more about particular Effect apis and concepts that the
+guide doesn't cover, search through the source code in `node_modules/effect/src`.
+
+House rules on top of that guide:
+
+- Errors are `Schema.TaggedError` (see [`src/domain/canonical.ts`](src/domain/canonical.ts), [`src/lib/action/errors.ts`](src/lib/action/errors.ts)); services are `Context.Service` with an id like `"money/lib/action/Db"`.
+- Reusable effect-returning functions use `Effect.fn("name")` / `Effect.fnUntraced`, not a plain function wrapping `Effect.gen`.
+- Untrusted input is decoded with `Schema` (`defineAction`'s `input`), never hand-parsed.
+- Effect runs on the server. Client components call actions through [`use-action.ts`](src/lib/action/use-action.ts) / [`result.ts`](src/lib/action/result.ts) (no Effect import). The one planned exception: forms may import an action's input `Schema` (via `Schema.toStandardSchemaV1`) so client and server validate with the same rules. Check route sizes in `next build` when adding one.
+- Skills: [`.claude/skills/effect-ts`](.claude/skills/effect-ts/SKILL.md), plus [`.claude/skills/effect-v3-to-v4`](.claude/skills/effect-v3-to-v4/SKILL.md) for reference (migration done 2026-11-02). Vendored from `Effect-TS/skills`; see `.claude/skills/EFFECT-SKILLS-SOURCE.md`.
+- Upgrading Effect: bump the exact pinned version, re-read `node_modules/effect/AGENTS.md` for changes, then `bun run typecheck && bun test && bun run build`.
 
 ---
 

@@ -1,29 +1,33 @@
-import { Data } from "effect";
+import { Schema } from "effect";
 import type { ActionFailure } from "./result";
 
 /** No signed-in user. */
-export class Unauthenticated extends Data.TaggedError("Unauthenticated")<{}> {}
+export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
+  "Unauthenticated",
+  {},
+) {}
 
 /**
  * The record isn't the caller's — or doesn't exist. Deliberately the same
  * answer for both, so ids can't be probed.
  */
-export class Forbidden extends Data.TaggedError("Forbidden")<{}> {}
+export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
-export class NotFound extends Data.TaggedError("NotFound")<{
-  readonly message: string;
-}> {}
+export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {
+  message: Schema.String,
+}) {}
 
 /** The request itself is wrong: bad amounts, missing fields, broken rules. */
-export class Invalid extends Data.TaggedError("Invalid")<{
-  readonly message: string;
-  readonly field?: string;
-}> {}
+export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
+  message: Schema.String,
+  /** Dotted path of the offending input field, when known. */
+  field: Schema.optional(Schema.String),
+}) {}
 
 /** The request is well-formed but the current data won't allow it. */
-export class Conflict extends Data.TaggedError("Conflict")<{
-  readonly message: string;
-}> {}
+export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
+  message: Schema.String,
+}) {}
 
 export type ActionError =
   | Unauthenticated

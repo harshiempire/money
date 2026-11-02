@@ -19,7 +19,7 @@ Decided 2026-11-02: no rewrite to TanStack Start. Stay on Next.js; keep Effect h
 - About 36 `throw new Error(msg)` for expected failures. Next 16 docs (`01-getting-started/10-error-handling.md`): "model expected errors as return values". In prod, thrown messages are replaced by a digest.
 - Validators already return `{ ok: true } | { ok: false; message }` (`src/lib/splits/validate.ts`, `src/lib/net-events/validate.ts`). `NetEventValidationError` already carries a `code`. These lift into Effect almost for free.
 - 16 client files call actions; 17 `catch` blocks read `err.message`.
-- Effect `^3.22` is installed. `Schema` lives in `effect` (no new dependency).
+- Effect is on **v4** (`effect@4.1.1`, pinned exactly; migrated 2026-11-02 with the official `effect-v3-to-v4` skill). `Schema` lives in `effect` (no new dependency). Effect code follows `node_modules/effect/AGENTS.md`; see AGENTS.md "Learning more about Effect".
 
 ---
 
@@ -36,9 +36,9 @@ New `src/lib/action/`:
 
 | File | Contents |
 |---|---|
-| `errors.ts` | `Data.TaggedError`s: `Unauthenticated`, `Forbidden`, `NotFound`, `Invalid { message, field? }`, `Conflict { message }`. Map the existing `ForbiddenError` / `NetEventValidationError` into them. |
+| `errors.ts` | `Schema.TaggedError`s: `Unauthenticated`, `Forbidden`, `NotFound`, `Invalid { message, field? }`, `Conflict { message }`. Map the existing `ForbiddenError` / `NetEventValidationError` into them. |
 | `result.ts` | `type ActionResult<T> = { ok: true; data: T } \| { ok: false; code: string; message: string; field?: string }`. Client-safe (no `server-only`). |
-| `services.ts` | `CurrentUser` (Context.Tag, built from `auth()`), `Db` (wraps `db`, plus `withTransaction` that rolls back on a typed failure), `Revalidate` (collects paths; runs `revalidatePath` only on success). |
+| `services.ts` | `CurrentUser` (`Context.Service`, built from `auth()`), `Db` (wraps `db`, plus `withTransaction` that rolls back on a typed failure), `Revalidate` (collects paths; runs `revalidatePath` only on success). |
 | `define-action.ts` | `defineAction({ input: Schema, handler: (input) => Effect<A, E, CurrentUser \| Db> })`. It decodes input, provides layers, catches defects (logs them and returns a generic message), and maps tagged errors to `ActionResult`. |
 | `ownership.ts` | Effect versions of `assertTransactionOwned` etc. that fail with `Forbidden`. Same SQL as `src/lib/auth/ownership.ts`. |
 | `validation.ts` | `fromValidation(v: Validation) => Effect<void, Invalid>` adapter for the existing pure validators. |
@@ -74,7 +74,7 @@ Done when: zero `throw new Error` for expected cases in action files, zero `err.
 
 ## Phase 3: TanStack Form on the dialogs (one PR per dialog)
 
-Dependency: `@tanstack/react-form`. Validation uses the Phase 1 input schemas through Standard Schema (`Schema.standardSchemaV1(...)`), so client and server rules are the same code.
+Dependency: `@tanstack/react-form`. Validation uses the Phase 1 input schemas through Standard Schema (`Schema.toStandardSchemaV1(...)`, the v4 name), so client and server rules are the same code.
 
 | Order | Dialog | Lines / useState | Win |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Dependency: `@tanstack/react-form`. Validation uses the Phase 1 input schemas th
 
 Server `Invalid { field }` errors get mapped back onto the matching form field.
 
-Watch: bundle size. Importing `effect/Schema` into client components adds weight. Measure `next build` route sizes before and after 3a. If the increase is too large, keep pure validators shared and use Schema only on the server.
+Watch: bundle size. Importing `effect/Schema` into client components adds weight (v4 tree-shakes far better than v3, but measure). Measure `next build` route sizes before and after 3a. If the increase is too large, keep pure validators shared and use Schema only on the server.
 
 ## Phase 4: TanStack Table for bulk review (2 PRs)
 

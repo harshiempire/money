@@ -4,7 +4,7 @@
  * Usage: bun run scripts/compare-bob-pdfs.ts <old.pdf> <new.pdf> [password]
  */
 import { readFileSync } from "node:fs";
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import { bobAdapter } from "../src/domain/adapters/bob/parser";
 import { extractPdfText } from "../src/domain/pdf/extract";
 
@@ -25,13 +25,13 @@ async function analyzePdf(label: string, path: string, password?: string) {
   log("file loaded", { label, path, bytes: buf.length });
 
   const detected = await Effect.runPromise(
-    Effect.either(bobAdapter.detect(buf, "application/pdf", ctx)),
+    Effect.result(bobAdapter.detect(buf, "application/pdf", ctx)),
   );
-  if (Either.isLeft(detected)) {
-    log("detect failed", { label, error: String(detected.left) });
+  if (Result.isFailure(detected)) {
+    log("detect failed", { label, error: String(detected.failure) });
     return null;
   }
-  log("detect result", { label, detected: detected.right });
+  log("detect result", { label, detected: detected.success });
 
   const { text, totalPages } = await extractPdfText(new Uint8Array(buf), {
     password: ctx.pdfPassword,
@@ -65,10 +65,10 @@ async function analyzePdf(label: string, path: string, password?: string) {
   });
 
   const parsed = await Effect.runPromise(
-    Effect.either(bobAdapter.parse(buf, ctx)),
+    Effect.result(bobAdapter.parse(buf, ctx)),
   );
-  if (Either.isLeft(parsed)) {
-    const err = parsed.left;
+  if (Result.isFailure(parsed)) {
+    const err = parsed.failure;
     log("parse failed", {
       label,
       tag: err._tag,
@@ -78,7 +78,7 @@ async function analyzePdf(label: string, path: string, password?: string) {
     return { label, parseFailed: true as const };
   }
 
-  const { meta, rows } = parsed.right;
+  const { meta, rows } = parsed.success;
   const txnDates = rows.map((r) => r.txnDate).filter((d) => d !== rows[0]?.txnDate || rows[0]?.channel !== "opening");
   const uniqueRefs = new Set(rows.map((r) => r.refId).filter(Boolean));
 
