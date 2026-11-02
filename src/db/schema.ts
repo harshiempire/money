@@ -149,13 +149,15 @@ export const counterparties = pgTable(
     key: text("key").notNull(),
     displayName: text("display_name"),
     defaultCategoryId: text("default_category_id"),
+    personId: text("person_id").references(() => persons.id, { onDelete: "set null" }),
     isSelf: boolean("is_self").default(false).notNull(),
     isFamily: boolean("is_family").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key)],
+  (t) => [uniqueIndex("counterparty_user_key_uniq").on(t.userId, t.key),
+    index("counterparty_user_person_idx").on(t.userId, t.personId)],
 );
 
 export const categories = pgTable(

@@ -56,14 +56,17 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           })
         )
           stale.push({ target: op.target, id: op.id });
-      } else if (op.target === "counterparty" || op.target === "counterparty_name") {
+      } else if (op.target === "counterparty" || op.target === "counterparty_name" || op.target === "counterparty_person") {
         const p = schema.counterparties;
         const [row] = await tx
           .select()
           .from(p)
           .where(and(eq(p.id, op.id), eq(p.userId, ctx.actor.userId)))
           .for("update");
-        if (!row || !sameFields(op.after, op.target === "counterparty" ? { defaultCategoryId: row.defaultCategoryId } : { displayName: row.displayName }))
+        if (!row || !sameFields(op.after, op.target === "counterparty" ? { defaultCategoryId: row.defaultCategoryId } : op.target === "counterparty_person" ? { personId: row.personId } : { displayName: row.displayName }))
+          stale.push({ target: op.target, id: op.id });
+        if (op.target === "counterparty_person" && op.before.personId && !snapshot.has(`person:${op.before.personId}`) &&
+          !ops.some(person => person.target === "person" && person.id === op.before.personId && person.before !== null))
           stale.push({ target: op.target, id: op.id });
       } else if (op.target === "standing_note") {
         const n = schema.assistantContextNotes;
@@ -78,6 +81,8 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
     }
     if (stale.length) return { ops: [], refused: true, result: { changeId: null, stale } };
     const reversed = inverse(ops);
+    // Restore a newly created person before restoring its payee FK (undo of undo).
+    await applyRowOperations(tx, reversed.filter((op): op is RowOperation => op.target === "person" && op.after !== null));
     for (const op of reversed) {
       if (op.target === "transaction")
         await tx
@@ -86,7 +91,7 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           .where(
             and(eq(schema.transactions.id, op.id), eq(schema.transactions.accountId, ctx.actor.accountId)),
           );
-      else if (op.target === "counterparty" || op.target === "counterparty_name")
+      else if (op.target === "counterparty" || op.target === "counterparty_name" || op.target === "counterparty_person")
         await tx
           .update(schema.counterparties)
           .set(op.after)
@@ -103,7 +108,7 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
     await applyRowOperations(
       tx,
       reversed.filter(
-        (op): op is RowOperation => op.target !== "transaction" && op.target !== "counterparty" && op.target !== "counterparty_name" && op.target !== "standing_note",
+        (op): op is RowOperation => op.target !== "transaction" && op.target !== "counterparty" && op.target !== "counterparty_name" && op.target !== "counterparty_person" && op.target !== "standing_note" && !(op.target === "person" && op.after !== null),
       ),
     );
     return {

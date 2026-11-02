@@ -6,7 +6,7 @@ export interface McpReadModel {
   /** Credits linked to any allocation/event/source expense, even when its target is outside this account. */
   linkedInflows?: string[];
   people: Array<{ name: string }>;
-  payees: Array<{ key: string; kind: string; displayName: string | null; defaultCategory: string | null; isSelf: boolean; isFamily: boolean }>;
+  payees: Array<{ person?: string | null; key: string; kind: string; displayName: string | null; defaultCategory: string | null; isSelf: boolean; isFamily: boolean }>;
   splits: Array<{ id: string; transactionId: string; totalPaise: number; yourSharePaise: number }>;
   shares: Array<{ id: string; splitId: string; personName: string; expectedAmountPaise: number }>;
   owed: Array<{ id: string; personName: string; incurredDate: string; description: string; amountPaise: number; sourceInflowTransactionId: string | null }>;

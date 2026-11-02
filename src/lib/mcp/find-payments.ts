@@ -48,6 +48,7 @@ export function findPayments(view: McpReadView, rawInput: FindPaymentsInput) {
     }
     if (person) {
       const signals: string[] = [];
+      if (txn.person && personKey(txn.person) === person) signals.push(`payee linked to ${known?.name ?? txn.person}`);
       if (txn.split?.shares.some((s) => personKey(s.person) === person)) signals.push(`has a split with ${known?.name ?? input.person!.trim()}`);
       if (txn.note?.toLowerCase().includes(person)) signals.push(`note mentions ${known?.name ?? input.person!.trim()}`);
       if (seenKeys.has(view.transactionKeys.get(txn.ref) ?? "")) signals.push(`handle seen settling ${known!.name}'s shares or owed expenses`);
@@ -55,7 +56,7 @@ export function findPayments(view: McpReadView, rawInput: FindPaymentsInput) {
       score += 35 + (signals.length - 1) * 5; reasons.push(...signals);
     }
     const { split, settles: _settles, net_event: _event, owed_expenses: _owed, ...base } = txn;
-    return [{ ...base, score, reasons, split_summary: split ? { total: split.total, your_share: split.your_share, shares: split.shares.map((s) => ({ person: s.person, expected: s.expected, left: s.left })) } : null }];
+    return [{ ...base, via: person && txn.person && personKey(txn.person) === person ? "linked" as const : person && seenKeys.has(view.transactionKeys.get(txn.ref) ?? "") ? "seen" as const : null, score, reasons, split_summary: split ? { total: split.total, your_share: split.your_share, shares: split.shares.map((s) => ({ person: s.person, expected: s.expected, left: s.left })) } : null }];
   }).sort((a, b) => b.score - a.score || b.date.localeCompare(a.date) || a.ref.localeCompare(b.ref));
   return { candidates: candidates.slice(0, input.limit ?? 10) };
 }

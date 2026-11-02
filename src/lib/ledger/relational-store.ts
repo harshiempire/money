@@ -77,6 +77,7 @@ export async function relationalSnapshot(tx: Pick<LedgerTx, "execute">, ctx: Wri
     net: TimestampRows<typeof n.$inferSelect>;
     settlements: TimestampRows<typeof st.$inferSelect>;
     personUses: Array<Pick<typeof sp.$inferSelect, "id" | "personId">>;
+    payeeUses: Array<{ id: string; personId: string }>;
   }>(sql`
     with ${sql.join(ctes, sql`, `)},
     ledger_person_uses as materialized (
@@ -91,9 +92,12 @@ export async function relationalSnapshot(tx: Pick<LedgerTx, "execute">, ctx: Wri
       ${jsonRows("ledger_owed", getTableColumns(o))} as owed,
       ${jsonRows("ledger_net", getTableColumns(n))} as net,
       ${jsonRows("ledger_settlements", getTableColumns(st))} as settlements,
-      ${jsonRows("ledger_person_uses", { id: sp.id, personId: sp.personId })} as "personUses"
+      ${jsonRows("ledger_person_uses", { id: sp.id, personId: sp.personId })} as "personUses",
+      (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'personId', person_id) order by id), '[]'::jsonb)
+        from ${schema.counterparties} where ${schema.counterparties.userId} = ${ctx.actor.userId}
+          and ${schema.counterparties.personId} in (select id from ledger_people)) as "payeeUses"
   `);
-  const { transactions, persons, splits, participants, owed, net, settlements, personUses } = data;
+  const { transactions, persons, splits, participants, owed, net, settlements, personUses, payeeUses } = data;
   const result: Snapshot = new Map();
   const add = (
     target: RowOperation["target"],
@@ -130,6 +134,7 @@ export async function relationalSnapshot(tx: Pick<LedgerTx, "execute">, ctx: Wri
     ],
   );
   add("person", persons, (id) => [
+    ...payeeUses.filter((r) => r.personId === id).map((r) => key("counterparty_person", r.id)),
     ...personUses.filter((r) => r.personId === id).map((r) => key("participant", r.id)),
     ...owed.filter((r) => r.personId === id).map((r) => key("owed_expense", r.id)),
   ]);

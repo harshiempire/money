@@ -5,6 +5,8 @@ import { transactionView, rupees } from "./view";
 import type { McpReadModel } from "./read-model";
 import { McpToolError } from "./pagination";
 import { personKey, closePersonNames } from "./person-names";
+import { isUncategorized } from "@/domain/spend/uncategorized";
+import { suggestPersonPayees } from "./person-links";
 export { personKey } from "./person-names";
 
 export const leftPaise = (amount: number, settled: number) => Math.max(0, amount - settled);
@@ -75,7 +77,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     const split = splits.find((s) => s.txn_ref === base.ref);
     const eventIndex = model.netEvents.findIndex((e) => e.inflowTransactionId === t.id || e.outflowTransactionId === t.id);
     const event = eventIndex < 0 ? null : netEvents[eventIndex];
-    return { ...base,
+    return { ...base, person: model.payees.find(p => p.key === t.counterpartyKey)?.person ?? base.person,
       split: split ? { total: split.total, your_share: split.your_share,
         shares: shares.filter((s) => s.txn_ref === base.ref).map((s) => ({ ref: s.ref, person: s.person, expected: s.expected, settled: s.settled, left: s.left,
           settlements: settlements.filter((st) => st.share_ref === s.ref).map((st) => ({ ref: st.ref, amount: st.amount, date: st.date, via: st.via, inflow_ref: st.inflow_ref })) })) } : null,
@@ -104,6 +106,8 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
       you_owe: rupees(personOwed.reduce((n, o) => n + leftPaise(o.amountPaise, settled("owed", o.id)), 0)),
       open_share_count: personShares.filter((s) => leftPaise(s.expectedAmountPaise, settled("share", s.id)) > 0).length,
       last_activity_date: dates.at(-1) ?? null,
+      linked_payees: model.payees.filter(p => p.person && same(p.person)).map(p => ({ key: p.key, handle: p.kind === "upi_handle" ? p.key : null, display_name: p.displayName })),
+      suggested_payees: suggestPersonPayees(name, model.payees, [...seen.values()].map(s => ({ key: s.key, count: s.inflows.size }))),
       seen_handles: [...seen.values()].map((s) => ({ key: s.key, handle: s.handle, display_name: s.display_name, count: s.inflows.size, last_date: s.dates.sort().at(-1)! }))
         .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)),
     };
@@ -111,7 +115,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
   const payees = model.payees.map((p) => {
     const rows = model.transactions.filter((t) => t.counterpartyKey === p.key);
     const dates = rows.map((t) => t.txnDate).sort();
-    return { key: p.key, kind: p.kind, handle: p.kind === "upi_handle" ? p.key : null, display_name: p.displayName,
+    return { person: p.person ?? null, key: p.key, kind: p.kind, handle: p.kind === "upi_handle" ? p.key : null, display_name: p.displayName,
       default_category: p.defaultCategory, is_self: p.isSelf, is_family: p.isFamily, row_count: rows.length,
       paid_total: rupees(rows.filter((t) => t.drCr === "debit").reduce((n, t) => n + t.amountPaise, 0)),
       received_total: rupees(rows.filter((t) => t.drCr === "credit").reduce((n, t) => n + t.amountPaise, 0)),
@@ -121,7 +125,8 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
   }).sort((a, b) => b.row_count - a.row_count || a.key.localeCompare(b.key));
   const transactionKeys = new Map(model.transactions.map((t) => [txRef(t.id)!, t.counterpartyKey]));
   const linkedInflowRefs = new Set((model.linkedInflows ?? []).flatMap((id) => txRef(id) ? [txRef(id)!] : []));
-  return { transactions, transactionKeys, linkedInflowRefs, shares, owed, settlements, splits, netEvents, people, payees };
+  const uncategorizedRefs = new Set(model.transactions.filter(isUncategorized).map(t => txRef(t.id)!));
+  return { transactions, transactionKeys, linkedInflowRefs, uncategorizedRefs, shares, owed, settlements, splits, netEvents, people, payees };
 }
 export type McpReadView = ReturnType<typeof buildReadView>;
 
@@ -142,12 +147,25 @@ export function getOpenBalances(view: McpReadView, person?: string) {
       ...view.shares.filter((s) => same(s.person) && s.left !== "0.00").map(({ person: _p, ...s }) => ({ kind: "share" as const, ...s })),
       ...view.owed.filter((o) => same(o.person) && o.left !== "0.00").map(({ person: _p, ...o }) => ({ kind: "owed" as const, ...o })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.ref.localeCompare(b.ref));
-    const keys = new Set(p.seen_handles.map((h) => h.key));
-    const unlinked = view.transactions.filter((t) => t.direction === "received" && keys.has(view.transactionKeys.get(t.ref) ?? "") && !view.linkedInflowRefs.has(t.ref) && !t.settles.length && !t.net_event && !t.owed_expenses.length)
+    const unlinked = unlinkedInflows(view, p.name)
       .sort((a, b) => b.date.localeCompare(a.date) || a.ref.localeCompare(b.ref)).slice(0, 20)
-      .map((t) => ({ txn_ref: t.ref, date: t.date, amount: t.amount, handle: t.handle }));
+      .map((t) => ({ txn_ref: t.ref, date: t.date, amount: t.amount, handle: t.handle, via: t.via }));
     return { name: p.name, owed_to_you: p.owed_to_you, you_owe: p.you_owe, lines, unlinked_inflows: unlinked };
   }) };
+}
+
+/** Confirmed links and settlement evidence only; suggested links never qualify. */
+export function unlinkedInflows(view: McpReadView, person?: string) {
+  return view.transactions.flatMap(t => {
+    if (t.direction !== "received" || view.linkedInflowRefs.has(t.ref) || t.settles.length || t.net_event || t.owed_expenses.length) return [];
+    const key = view.transactionKeys.get(t.ref);
+    const people = view.people.flatMap(p => {
+      if (person !== undefined && personKey(p.name) !== personKey(person)) return [];
+      const via = p.linked_payees.some(h => h.key === key) ? "linked" as const : p.seen_handles.some(h => h.key === key) ? "seen" as const : null;
+      return via ? [{ person: p.name, via }] : [];
+    });
+    return people.length ? [{ ...t, via: people.some(p => p.via === "linked") ? "linked" as const : "seen" as const, people }] : [];
+  });
 }
 
 const PayeeCursor = Schema.Struct({ after: Schema.String });

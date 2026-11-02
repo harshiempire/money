@@ -13,9 +13,11 @@ export const MCP_QUERY_TABLES: QueryTableSpec[] = [
   table("transactions", "Every bank row in the selected account. No owed expenses. category IS NULL means uncategorized, including credits and transfers.", [
     ["ref", T, "Opaque txn_ reference, valid in every MCP tool."], ["date", T, "Bank date YYYY-MM-DD."], ["amount_paise", I, "Full bank amount as positive integer paise; includes transfers and other people's split shares."], ["direction", T, "paid for debit, received for credit."],
     ["payee", T, "Display name, else purpose, key, bank label."], ["handle", T, "Full UPI key for upi_handle, else null."], ["raw_description", T, "Full unredacted bank description."], ["purpose", T, "Parsed bank remark; truncated to 1–4 letters by bank. Do not infer meaning."], ["note", T, "Full owner note, or null."], ["category", T, "Full category name, or null."], ["is_transfer", I, "1 for own-account transfer, else 0."], ["needs_review", I, "1 when flagged for review, else 0."],
+    ["person", T, "Confirmed linked person; else one learned name or a JSON array for multiple learned names; else null."], ["via", T, "linked for confirmed person, seen for settlement evidence, else null."],
   ]),
-  table("payees", "Counterparties appearing in this account. Associations are learned from settlements, not confirmed.", [
+  table("payees", "Counterparties appearing in this account. person and via distinguish confirmed links from settlement evidence.", [
     ["key", T, "Full counterparty key."], ["kind", T, "Counterparty kind."], ["handle", T, "Key when kind is upi_handle, else null."], ["display_name", T, "Full display name or null."], ["default_category", T, "Full default category name or null."], ["is_self", I, "1 if self, else 0."], ["is_family", I, "1 if family, else 0."], ["seen_person", T, "JSON array of people whose shares/owed expenses this key's inflows settled; learned, not confirmed."],
+    ["person", T, "Confirmed linked person; else one learned name or a JSON array for multiple learned names; else null."], ["via", T, "linked for confirmed person, seen for settlement evidence, else null."],
   ], "payees.handle = transactions.handle (UPI); json_each is not allowed, use list_payees for individual associations"),
   table("people", "Saved and historical names grouped case-insensitively after trim, including zero balances.", [
     ["name", T, "Canonical trimmed name."], ["owed_to_you_paise", I, "Sum of max(0, expected minus ALL settlements including writeoffs) over this account's shares."], ["you_owe_paise", I, "Sum of max(0, amount minus ALL settlements) over user-owned owed expenses across accounts."],
@@ -42,9 +44,10 @@ export function describeMcpTable(name: string) {
   return { table: t.name, about: t.about, columns: t.columns, joins: t.joins ?? null };
 }
 export function buildMcpQueryTables(view: McpReadView, categories: readonly { name: string; kind: string }[], notes: readonly string[]): SandboxTable[] {
+  const association = (p: { person: string | null; seen_person: string[] } | undefined): SqlValue[] => p?.person ? [p.person, "linked"] : p?.seen_person.length ? [p.seen_person.length === 1 ? p.seen_person[0] : JSON.stringify(p.seen_person), "seen"] : [null, null];
   const rows: Record<string, SqlValue[][]> = {
-    transactions: view.transactions.map((t) => [t.ref, t.date, amountPaise(t.amount), t.direction, t.payee, t.handle, t.raw_description, t.purpose, t.note, t.category, Number(t.transfer), Number(t.needs_review)]),
-    payees: view.payees.map((p) => [p.key, p.kind, p.handle, p.display_name, p.default_category, Number(p.is_self), Number(p.is_family), JSON.stringify(p.seen_person)]),
+    transactions: view.transactions.map((t) => [t.ref, t.date, amountPaise(t.amount), t.direction, t.payee, t.handle, t.raw_description, t.purpose, t.note, t.category, Number(t.transfer), Number(t.needs_review), ...association(view.payees.find(p => p.key === view.transactionKeys.get(t.ref)))]),
+    payees: view.payees.map((p) => [p.key, p.kind, p.handle, p.display_name, p.default_category, Number(p.is_self), Number(p.is_family), JSON.stringify(p.seen_person), ...association(p)]),
     people: view.people.map((p) => [p.name, amountPaise(p.owed_to_you), amountPaise(p.you_owe)]),
     splits: view.splits.map((s) => [s.txn_ref, amountPaise(s.total), amountPaise(s.your_share)]),
     shares: view.shares.map((s) => [s.ref, s.txn_ref, s.person, amountPaise(s.expected), amountPaise(s.settled), amountPaise(s.left)]),

@@ -153,13 +153,14 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         const { json } = await call(scope, "tools/list");
         expect(json.result.tools.map((t: { name: string }) => t.name)).toEqual(
           scope === "read"
-            ? ["get_overview", "list_categories", "list_transactions", "get_period_summary", "list_standing_notes", ...phase2Tools]
+            ? ["get_overview", "list_categories", "list_transactions", "get_period_summary", "list_standing_notes", "suggest_categories", "review_period", ...phase2Tools]
             : [
                 "get_overview",
                 "list_categories",
                 "list_transactions",
                 "get_period_summary",
                 "list_standing_notes",
+                "suggest_categories", "review_period",
                 ...phase2Tools,
                 "propose_tags",
                 ...(scope === "write" ? ["update_transactions", "set_payee_default", "list_changes", "undo_change", ...Object.keys(RelationalInputs)] : []),
@@ -237,7 +238,7 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         expect(list.inputSchema.required ?? []).toEqual([]);
       }
       for (const deniedScope of ["read", "propose"] as const) {
-        for (const name of ["update_transactions", "set_payee_default", "list_changes", "undo_change"]) {
+        for (const name of ["update_transactions", "set_payee_default", "list_changes", "undo_change", "link_person"]) {
           const deniedWrite = await call(deniedScope, "tools/call", { name, arguments: {} });
           expect(deniedWrite.json.error ?? deniedWrite.json.result?.isError).toBeTruthy();
         }
@@ -465,6 +466,28 @@ for (const scope of ["read", "propose", "write"] as const) {
       expect(unknown.json.result.isError).toBe(true); expect(unknown.json.result.content[0].text).toContain("Ravi Teja");
       const refused = await call(scope, "tools/call", { name: "query", arguments: { sql: "select * from sqlite_schema" } });
       expect(refused.json.result.isError).toBe(true);
+    } finally { await handler.close(); }
+  });
+}
+
+for (const scope of ["read", "propose", "write"] as const) {
+  test(`phase 5 read tools execute and reject mixed periods for ${scope}`, async () => {
+    const { handler, call } = fixture();
+    try {
+      for (const name of ["suggest_categories", "review_period"]) {
+        const { json } = await call(scope, "tools/call", { name, arguments: { month: "2026-08" } });
+        expect(json.result.isError).not.toBe(true);
+        const data = json.result.structuredContent;
+        if (name === "suggest_categories") {
+          expect(data.rows.length).toBeGreaterThan(0);
+          expect(data.unsure_groups.length).toBeGreaterThan(0);
+        } else {
+          expect(data.uncategorized.count).toBeGreaterThan(0);
+          expect(data.unlinked_inflows.rows[0].via).toBe("seen");
+        }
+        const bad = await call(scope, "tools/call", { name, arguments: { month: "2026-08", from: "2026-08-01" } });
+        expect(bad.json.error ?? bad.json.result?.isError).toBeTruthy();
+      }
     } finally { await handler.close(); }
   });
 }

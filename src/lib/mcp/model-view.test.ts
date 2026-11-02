@@ -44,7 +44,7 @@ test("open balances are oldest first, include partials, exclude linked inflows a
   const response = getOpenBalances(view, " kIrAn "); const person = response.people[0];
   expect(person.lines.map((l) => l.date)).toEqual(["2026-04-20", "2026-05-01", "2026-07-31", "2026-08-05"]);
   expect(person.lines[0]).toMatchObject({ kind: "share", expected: "6.00", settled: "4.00", left: "2.00" });
-  expect(person.unlinked_inflows).toEqual([{ txn_ref: view.transactions.find((t) => t.date === "2026-08-03")!.ref, date: "2026-08-03", amount: "100.00", handle: "kiranrao@o" }]);
+  expect(person.unlinked_inflows).toEqual([{ txn_ref: view.transactions.find((t) => t.date === "2026-08-03")!.ref, date: "2026-08-03", amount: "100.00", handle: "kiranrao@o", via: "seen" }]);
   expect(getOpenBalances(view).people.map((p) => p.name)).toEqual(["Kiran", "Only Historical"]);
   expect(getOpenBalances(view, "No Activity").people[0].lines).toEqual([]);
   expect(() => getOpenBalances(view, "Ravi")).toThrow("Close names: Ravi Teja");

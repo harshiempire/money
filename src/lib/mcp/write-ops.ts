@@ -171,7 +171,7 @@ export const mcpWriteOps: McpWriteOps = {
       const refs: string[] = [];
       for (const target of result.stale) {
         if (target.target === "transaction" || target.target === "transaction_residual") refs.push(transactionRef(key.ref, p.actor.userId, target.id));
-        else if (target.target === "counterparty" || target.target === "counterparty_name") {
+        else if (target.target === "counterparty" || target.target === "counterparty_name" || target.target === "counterparty_person") {
           const rows = await db
             .select({ id: schema.transactions.id })
             .from(schema.transactions)

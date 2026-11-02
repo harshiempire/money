@@ -28,6 +28,7 @@ import {
 
 import type { McpReadModel } from "./read-model";
 import { buildReadView, getTransactions, getOpenBalances, pagePayees } from "./model-view";
+import { suggestCategories, reviewPeriod, SuggestCategoriesOutput, ReviewPeriodOutput } from "./period-review";
 import { findPayments } from "./find-payments";
 import { buildMcpQueryTables, describeMcpTable, formatMcpQueryResult } from "./query-tables";
 import { createQuerySandbox } from "@/lib/assistant/query-sandbox";
@@ -140,6 +141,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
         (principal.scope === "write"
           ? "Write tools change this account directly. Before writing, read current refs and revs. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. For splits and settlements, one clear match means act and name it; several means ask; settle oldest-first unless the owner named a bill. "
           : "Read access to this account. ") +
+        "Confirm person↔payee links with the owner before link_person; use suggest_categories for new statements and review_period for what did I miss. " +
         "propose_tags stays draft-only; nothing changes until the owner presses Apply in Money.",
     },
   );
@@ -218,16 +220,27 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
       }),
   );
   const loadView = async () => buildReadView(await ops.readModel(actor), actor, key, revKey);
+  server.registerTool("suggest_categories", {
+    title: "Suggest sure categories", description: "Read uncategorized bank rows for a month OR inclusive from/to (neither means all time). Deterministic suggestions only: payee default, earlier same-payee history or an explicit category in the owner note. Conflicts are not sure. Save sure rows with update_transactions and report the change id; ask the owner about unsure_groups, largest first.",
+    inputSchema: standard(PeriodInput), outputSchema: standard(SuggestCategoriesOutput), annotations: read,
+  }, input => safely(async () => {
+    const [view, categories] = await Promise.all([loadView(), ops.listCategories(actor)]);
+    return result(suggestCategories(view, categories, input));
+  }));
+  server.registerTool("review_period", {
+    title: "Review a period", description: "What did I miss: uncategorized bank rows, open shares on bills in the period, unexplained inflows from confirmed or learned payees, and repeated exact amounts with no note or category (3 in period or 2 from one payee). Month OR inclusive from/to; neither means all time. Each list includes count and refs. Offer to fix one list at a time.",
+    inputSchema: standard(PeriodInput), outputSchema: standard(ReviewPeriodOutput), annotations: read,
+  }, input => safely(async () => result(reviewPeriod(await loadView(), input))));
   server.registerTool("get_transactions", {
     title: "Get transaction details", description: "Read 1–50 txn_ refs with the full bank view, splits, participant shares, every settlement allocation, linked net event and sourced owed expenses. Unknown refs are listed without failing the batch.",
     inputSchema: standard(GetTransactionsInput), outputSchema: standard(GetTransactionsOutput), annotations: read,
   }, (input) => safely(async () => result(getTransactions(await loadView(), input.refs))));
   server.registerTool("list_people", {
-    title: "List people and learned handles", description: "Read every saved or historical person, open balances, share count and last activity. seen_handles are learned from settlements, not confirmed: a person may pay from several keys and one key may pay for several people.",
+    title: "List people and learned handles", description: "Read every saved or historical person, confirmed linked_payees, suggested_payees with reasons, open balances, share count and last activity. seen_handles are learned from settlements, not confirmed: a person may pay from several keys and one key may pay for several people.",
     inputSchema: standard(EmptyInput), outputSchema: standard(PeopleOutput), annotations: read,
   }, () => safely(async () => result({ people: (await loadView()).people })));
   server.registerTool("get_open_balances", {
-    title: "Get open balances", description: "Read outstanding split shares (they owe you) and user-owned owed expenses (you owe them), with oldest-first lines and up to 20 newest unlinked credits from learned handles per person. Optional person is a case-insensitive exact name; unknown names return close names.",
+    title: "Get open balances", description: "Read outstanding split shares (they owe you) and user-owned owed expenses (you owe them), with oldest-first lines and up to 20 newest unlinked credits from confirmed or learned handles per person. Optional person is a case-insensitive exact name; unknown names return close names.",
     inputSchema: standard(OpenBalancesInput), outputSchema: standard(OpenBalancesOutput), annotations: read,
   }, (input) => safely(async () => result(getOpenBalances(await loadView(), input.person))));
   server.registerTool("list_payees", {

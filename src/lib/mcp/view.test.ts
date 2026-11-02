@@ -13,12 +13,13 @@ const row: McpTransaction = {
 test("MCP returns full bank text, handles, purpose, notes and categories without database ids", () => {
   const view = transactionView(row, "opaque-ref", "rev-test");
   expect(view).toEqual({
-    ref: "opaque-ref", rev: "rev-test", needs_review: false,
+    person: null, ref: "opaque-ref", rev: "rev-test", needs_review: false,
     date: "2026-10-01", amount: "1234.50", direction: "paid", channel: "upi",
     payee: row.displayName!, handle: row.counterpartyKey, raw_description: row.rawDescription,
     purpose: "Petr", note: row.note, category: row.category, payee_default: row.defaultCategory!, transfer: false,
   });
   for (const id of [row.id, row.categoryId!]) expect(JSON.stringify(view)).not.toContain(id);
+  expect(transactionView({ ...row, person: "Kiran" }, "ref", "rev").person).toBe("Kiran");
   expect(rupees(-1)).toBe("-0.01");
   expect(rupees(9007199254740991)).toBe("90071992547409.91");
   expect(() => rupees(1.5)).toThrow();

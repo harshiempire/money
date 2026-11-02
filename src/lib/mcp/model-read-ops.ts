@@ -21,8 +21,9 @@ export async function loadMcpReadModel(actor: MoneyActor, loadTransactions: () =
   const [transactions, people, payees, splits, shares, owed, shareSettlements, owedSettlements, netEvents, linkedInflows] = await Promise.all([
     loadTransactions(),
     db.select({ name: schema.persons.name }).from(schema.persons).where(eq(schema.persons.userId, actor.userId)).orderBy(schema.persons.name),
-    db.select({ key: cp.key, kind: cp.kind, displayName: cp.displayName, defaultCategory: category.name, isSelf: cp.isSelf, isFamily: cp.isFamily })
+    db.select({ person: schema.persons.name, key: cp.key, kind: cp.kind, displayName: cp.displayName, defaultCategory: category.name, isSelf: cp.isSelf, isFamily: cp.isFamily })
       .from(cp).innerJoin(a, owns)
+      .leftJoin(schema.persons, and(eq(cp.personId, schema.persons.id), eq(schema.persons.userId, actor.userId)))
       .leftJoin(category, and(eq(cp.defaultCategoryId, category.id), eq(category.userId, actor.userId)))
       .where(and(eq(cp.userId, actor.userId), sql`exists (select 1 from ${t} where ${t.accountId} = ${a.id} and ${t.counterpartyId} = ${cp.id})`)),
     db.select({ id: s.id, transactionId: s.transactionId, totalPaise: s.totalPaise, yourSharePaise: s.yourSharePaise })

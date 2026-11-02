@@ -1353,4 +1353,83 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     }
   }), 60000);
 
+  test("phase 5 link_person set, replay, guards, undo and undo-of-undo preserve people and find new inflows", () => fixture(async f => {
+    const { linkPayeesToPerson } = await import("./person-links");
+    const { mcpReadOps } = await import("@/lib/mcp/read-ops");
+    const { buildReadView, getOpenBalances } = await import("@/lib/mcp/model-view");
+    const { deriveMcpRefKey } = await import("@/lib/mcp/refs");
+    const links = [{ counterpartyId: f.payee, person: "Kiran", currentPerson: null, createPerson: true }];
+    await f.db.update(f.schema.transactions).set({ drCr: "credit" }).where(eq(f.schema.transactions.id, f.ids[0]));
+    const result = await linkPayeesToPerson(f.mcp("p5-link-person", links), links);
+    expect(result.changeId).toBeTruthy();
+    const [payee] = await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee));
+    const [person] = await f.db.select().from(f.schema.persons).where(eq(f.schema.persons.id, payee.personId!));
+    expect(person).toMatchObject({ userId: f.actor.userId, name: "Kiran" });
+    expect((await f.listChanges(f.actor))[0].summary).toContain("Linked");
+    const replay = await linkPayeesToPerson(f.mcp("p5-link-person", links), links);
+    expect(replay.replayed).toBe(true); expect(replay.changeId).toBe(result.changeId);
+    await expect(linkPayeesToPerson(f.mcp("p5-link-person", { different: true }), links)).rejects.toMatchObject({ code: "idempotency_conflict" });
+    await expect(linkPayeesToPerson(f.mcp("p5-bad-guard"), links)).rejects.toMatchObject({ code: "stale" });
+    const model = await mcpReadOps.readModel(f.actor);
+    const view = buildReadView(model, f.actor, deriveMcpRefKey("p5-test"), deriveMcpRevKey("p5-test"));
+    expect(getOpenBalances(view, "Kiran").people[0].unlinked_inflows).toMatchObject([{ amount: "100.00", via: "linked" }]);
+    const undo = await f.undoChange(f.app, result.changeId!);
+    expect(undo.stale).toBeUndefined();
+    expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].personId).toBeNull();
+    expect(await f.db.select().from(f.schema.persons).where(eq(f.schema.persons.id, person.id))).toHaveLength(0);
+    const redo = await f.undoChange(f.app, undo.changeId!);
+    expect(redo.stale).toBeUndefined();
+    expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].personId).toBe(person.id);
+    await linkPayeesToPerson(f.app, [{ counterpartyId: f.payee, person: null, currentPerson: " kIrAn " }]);
+    expect((await f.undoChange(f.app, redo.changeId!)).stale).toBeTruthy();
+  }), 120000);
+
+  test("phase 5 link_person refuses foreign people/payees and rolls back a whole stale batch", () => fixture(async f => {
+    const { linkPayeesToPerson } = await import("./person-links");
+    const foreignPerson = crypto.randomUUID(), second = crypto.randomUUID(), foreignPayee = crypto.randomUUID();
+    await f.db.insert(f.schema.persons).values({ id: foreignPerson, userId: f.otherUser, name: "Foreign Only" });
+    await f.db.insert(f.schema.counterparties).values([
+      { id: second, userId: f.actor.userId, key: "kiranrao-1", kind: "merchant" },
+      { id: foreignPayee, userId: f.otherUser, key: "foreign", kind: "merchant" },
+    ]);
+    await expect(linkPayeesToPerson(f.app, [{ counterpartyId: f.payee, person: "Foreign Only", currentPerson: null }])).rejects.toThrow("Unknown person");
+    await expect(linkPayeesToPerson(f.app, [{ counterpartyId: foreignPayee, person: "Kiran", currentPerson: null, createPerson: true }])).rejects.toMatchObject({ code: "not_found" });
+    await expect(linkPayeesToPerson(f.app, [
+      { counterpartyId: f.payee, person: "Kiran", currentPerson: null, createPerson: true },
+      { counterpartyId: second, person: "Kiran", currentPerson: "Wrong", createPerson: true },
+    ])).rejects.toMatchObject({ code: "stale" });
+    expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].personId).toBeNull();
+    expect(await f.db.select().from(f.schema.persons).where(eq(f.schema.persons.userId, f.actor.userId))).toHaveLength(0);
+    const linked = await linkPayeesToPerson(f.app, [{ counterpartyId: f.payee, person: "Kiran", currentPerson: null, createPerson: true }]);
+    await linkPayeesToPerson(f.app, [{ counterpartyId: second, person: "Kiran", currentPerson: null }]);
+    // Removing a newly-created person would cascade to another confirmed link.
+    expect((await f.undoChange(f.app, linked.changeId!)).stale).toBeTruthy();
+  }), 120000);
+
+  test("phase 5 link_person adapter resolves payee keys and refs and replays the complete response", () => fixture(async f => {
+    const { mcpRelationalWrite } = await import("@/lib/mcp/relational-write-ops");
+    const { deriveMcpRefKey, transactionRef } = await import("@/lib/mcp/refs");
+    const previous = process.env.AUTH_SECRET;
+    process.env.AUTH_SECRET = "phase-5-synthetic-secret";
+    try {
+      const [payee] = await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee));
+      const p = { actor: f.actor, scope: "write" as const, tokenId: f.tokenId, label: "Phase 5 test" };
+      const input = { links: [{ payee: payee.key, person: "Kiran", current_person: null, create_person: true }], idempotency_key: "p5-adapter-link" };
+      const linked = await mcpRelationalWrite(p, "link_person", input);
+      expect(linked).toMatchObject({ applied: true, summary: `Linked ${payee.key} to Kiran` });
+      expect(typeof linked.change_id).toBe("string");
+      expect(linked.refs).toHaveLength(2);
+      expect(JSON.stringify(linked)).not.toContain(f.payee);
+      expect(await mcpRelationalWrite(p, "link_person", input)).toEqual({ ...linked, replayed: true });
+      const ref = transactionRef(deriveMcpRefKey(process.env.AUTH_SECRET), f.actor.userId, f.ids[0]);
+      const unlinked = await mcpRelationalWrite(p, "link_person", { links: [{ ref, person: null, current_person: " kIrAn " }], idempotency_key: "p5-adapter-unlink" });
+      expect(unlinked).toMatchObject({ applied: true });
+      expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].personId).toBeNull();
+      expect(await mcpRelationalWrite({ ...p, scope: "read" }, "link_person", input)).toMatchObject({ applied: false, errors: [{ code: "forbidden" }] });
+    } finally {
+      if (previous === undefined) delete process.env.AUTH_SECRET;
+      else process.env.AUTH_SECRET = previous;
+    }
+  }), 120000);
+
 });

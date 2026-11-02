@@ -12,6 +12,7 @@ import * as splits from "@/lib/ledger/splits";
 import * as settlements from "@/lib/ledger/settlements";
 import * as owed from "@/lib/ledger/owed-expenses";
 import { saveNetEvent } from "@/lib/ledger/net-events";
+import { linkPayeesToPerson } from "@/lib/ledger/person-links";
 import { renamePayee, addStandingNote } from "@/lib/ledger/metadata";
 import { NetEventValidationError } from "@/lib/net-events/errors";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
@@ -21,7 +22,7 @@ import { deriveMcpRefKey, deriveMcpRevKey, transactionRef, transactionRev, share
 import { mcpReadOps } from "./read-ops";
 import { allocateOldestFirst, validateAllocations, splitAmounts, moneyPaise, exactRupees, existingPerson, personKey } from "./write-rules";
 
-type CoreResult = { changeId: string | null; ops: readonly Operation[]; response?: Record<string, unknown>; replayed?: boolean };
+type CoreResult = { summary?: string; changeId: string | null; ops: readonly Operation[]; response?: Record<string, unknown>; replayed?: boolean };
 function decode<K extends RelationalTool>(tool: K, raw: unknown): (typeof RelationalInputs)[K]["Type"] {
   const parsed = Schema.decodeUnknownResult(RelationalInputs[tool])(raw);
   if (Result.isFailure(parsed)) throw new LedgerError({ code: "invalid_input", message: "Use the tool's documented fields, exact decimal rupees and idempotency key." });
@@ -82,11 +83,28 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
         else if (op.target === "transaction_residual" || op.target === "transaction") refs.add(txRef(op.id));
         else if (op.target === "split") refs.add(txRef((op.after ?? op.before)!.row.transactionId));
       }
-      return Schema.decodeUnknownSync(RelationalOutput)({ applied: true, change_id: value.changeId, summary, refs: [...refs], ...details });
+      return Schema.decodeUnknownSync(RelationalOutput)({ applied: true, change_id: value.changeId, summary: value.summary ?? summary, refs: [...refs], ...details });
     };
     ctx.idempotency!.renderResult = value => render(value as CoreResult);
     let result: CoreResult;
     switch (tool) {
+      case "link_person": {
+        const input = decode(tool, raw);
+        const payees = await db.select({ id: schema.counterparties.id, key: schema.counterparties.key }).from(schema.counterparties)
+          .where(eq(schema.counterparties.userId, p.actor.userId));
+        const links = input.links.map(link => {
+          const bank = link.ref ? txn(link.ref) : undefined;
+          const key = bank?.counterpartyKey ?? link.payee;
+          const payee = payees.find(row => row.key === key) ?? unavailable();
+          const refs = txns.filter(row => row.counterpartyKey === payee.key).map(row => txRef(row.id));
+          if (!refs.length) unavailable();
+          baseRefs.push(...refs);
+          return { counterpartyId: payee.id, person: link.person, currentPerson: link.current_person, ...(link.create_person !== undefined ? { createPerson: link.create_person } : {}) };
+        });
+        result = await linkPayeesToPerson(ctx, links);
+        summary = result.summary ?? "Updated person links.";
+        break;
+      }
       case "create_split": {
         const input = decode(tool, raw), bill = txn(input.ref, input.rev);
         if (bill.drCr !== "debit") refuse("invalid_source", "Only a debit payment can be split.");

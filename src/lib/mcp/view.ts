@@ -15,12 +15,14 @@ export interface McpTransaction {
   note: string | null;
   category: string | null;
   defaultCategory?: string | null;
+  person?: string | null;
   categoryId: string | null;
   needsReview: boolean;
   isTransfer: boolean;
 }
 
 export const TransactionView = Schema.Struct({
+  person: Schema.NullOr(Schema.String).annotate({ description: "Confirmed person linked to this payee, or null; learned suggestions are not links." }),
   ref: Schema.String.annotate({
     description: "Opaque account-bound reference for proposals; not a database id.",
   }),
@@ -58,6 +60,7 @@ export function transactionView(row: McpTransaction, ref: string, rev: string): 
   return {
     ref,
     rev,
+    person: row.person ?? null,
     needs_review: row.needsReview,
     date: row.txnDate.slice(0, 10),
     amount: rupees(row.amountPaise),

@@ -92,6 +92,11 @@ export type RowOperation = typeof RowOperation.Type;
 export const Operation = Schema.Union([
   RowOperation,
   Schema.Struct({
+    target: Schema.Literal("counterparty_person"), id: Schema.String,
+    before: Schema.Struct({ personId: nullableText }),
+    after: Schema.Struct({ personId: nullableText }),
+  }),
+  Schema.Struct({
     target: Schema.Literal("counterparty_name"), id: Schema.String,
     before: Schema.Struct({ displayName: nullableText }),
     after: Schema.Struct({ displayName: nullableText }),

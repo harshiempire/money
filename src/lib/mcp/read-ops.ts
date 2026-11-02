@@ -64,6 +64,7 @@ export const mcpReadOps: McpOps = {
         note: t.note,
         category: schema.categories.name,
         defaultCategory: defaultCategory.name,
+        person: schema.persons.name,
         isTransfer: t.isTransfer,
         needsReview: t.needsReview,
         categoryId: t.categoryId,
@@ -78,6 +79,7 @@ export const mcpReadOps: McpOps = {
         schema.categories,
         and(eq(t.categoryId, schema.categories.id), eq(schema.categories.userId, actor.userId)),
       )
+      .leftJoin(schema.persons, and(eq(schema.counterparties.personId, schema.persons.id), eq(schema.persons.userId, actor.userId)))
       .leftJoin(defaultCategory, and(eq(schema.counterparties.defaultCategoryId, defaultCategory.id), eq(defaultCategory.userId, actor.userId)))
       .where(
         and(
