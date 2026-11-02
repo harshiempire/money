@@ -1,6 +1,9 @@
 /**
- * Fails when a "use server" file exports an action that isn't wrapped in
- * defineAction / definePublicAction (src/lib/action/define-action.ts).
+ * Fails when a "use server" file exports anything that isn't wrapped in
+ * defineAction / definePublicAction / asFormAction
+ * (src/lib/action/define-action.ts). Detection lives in
+ * scripts/lib/server-action-exports.ts (Bun's TypeScript scanner plus a
+ * declaration check), with regression tests next to it.
  *
  * Why: defineAction is where authentication, input decoding, and
  * production-safe error results live. A bare `export async function` in a
@@ -15,6 +18,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isUseServerFile, unwrappedExports } from "./lib/server-action-exports";
 
 const LEGACY = new Set([
   // Follow-ups, not in this PR.
@@ -25,12 +29,6 @@ const LEGACY = new Set([
   "src/app/talk/actions.ts",
 ]);
 
-const BARE_EXPORT = /^export\s+(async\s+)?function\s+(\w+)/gm;
-// `export const x = <anything but a define*/asFormAction wrapper>` — catches
-// arrow functions and other unwrapped values. Type exports don't match.
-const UNWRAPPED_CONST = /^export\s+const\s+(\w+)\s*=(?!\s*(?:defineAction|definePublicAction|asFormAction)\()/gm;
-const USE_SERVER = /^\s*(['"])use server\1;?/;
-
 const problems: string[] = [];
 const seen = new Set<string>();
 
@@ -40,13 +38,10 @@ const files = readdirSync("src", { recursive: true, encoding: "utf8" })
 
 for (const path of files) {
   const text = readFileSync(path, "utf8");
-  if (!USE_SERVER.test(text)) continue;
+  if (!isUseServerFile(text)) continue;
   seen.add(path);
 
-  const bare = [
-    ...[...text.matchAll(BARE_EXPORT)].map((m) => m[2]),
-    ...[...text.matchAll(UNWRAPPED_CONST)].map((m) => m[1]),
-  ];
+  const bare = unwrappedExports(text);
   if (LEGACY.has(path)) {
     if (bare.length === 0) {
       problems.push(`${path}: fully migrated — remove it from LEGACY in scripts/check-actions.ts`);
@@ -54,7 +49,7 @@ for (const path of files) {
     continue;
   }
   for (const name of bare) {
-    problems.push(`${path}: \`${name}\` is a bare export — wrap it in defineAction()`);
+    problems.push(`${path}: \`${name}\` is not a defineAction / definePublicAction / asFormAction result — wrap it`);
   }
 }
 

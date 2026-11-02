@@ -55,6 +55,25 @@ describe("runAction", () => {
     expect(seen).toEqual({ revalidate: false });
   });
 
+  test("a throwing toData after a successful write is logged, not an unhandled rejection", async () => {
+    const logs: string[] = [];
+    let revalidated = false;
+    const result = await runAction(
+      {
+        input: Input,
+        handler: () => Effect.succeed({ value: 1 }),
+        toData: (): number => {
+          throw new Error("bad projector");
+        },
+      },
+      good,
+      { name: "proj", layer: signedIn, log: (m) => logs.push(m), onSuccess: () => (revalidated = true) },
+    );
+    expect(result).toEqual({ ok: false, code: "INTERNAL", message: GENERIC_ERROR_MESSAGE });
+    expect(revalidated).toBe(true); // the write happened, so its pages still refresh
+    expect(logs[0]).toContain("the write succeeded, but building the response failed");
+  });
+
   test("no session → UNAUTHENTICATED; handler and onSuccess never run", async () => {
     let ran = false;
     let revalidated = false;
@@ -267,6 +286,20 @@ describe("transaction", () => {
       transaction(() => Effect.die("boom")).pipe(Effect.provide(layer)),
     );
     expect(exit._tag).toBe("Failure");
+    expect(state).toEqual({ committed: 0, rolledBack: 1 });
+  });
+
+  test("interrupting the caller interrupts the body, which rolls back", async () => {
+    const { state, layer } = fakeDb();
+    let wrote = false;
+    const exit = await Effect.runPromiseExit(
+      transaction(() =>
+        Effect.sleep("50 millis").pipe(Effect.andThen(Effect.sync(() => (wrote = true)))),
+      ).pipe(Effect.timeout("5 millis"), Effect.provide(layer)),
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    expect(exit._tag).toBe("Failure");
+    expect(wrote).toBe(false);
     expect(state).toEqual({ committed: 0, rolledBack: 1 });
   });
 

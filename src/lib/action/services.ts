@@ -38,10 +38,14 @@ export const transaction = Effect.fnUntraced(function* <A, E, R>(
   const db = yield* Db;
   const services = yield* Effect.context<R>();
   const run = Effect.runPromiseExitWith(services);
-  const exit: Exit.Exit<A, E> = yield* Effect.promise(() =>
+  // The body runs as its own execution inside Drizzle's callback. Forward the
+  // caller's abort signal so interrupting the caller (a timeout, a cancelled
+  // request) interrupts the body too — an interrupted body fails, and a failed
+  // body always rolls back.
+  const exit: Exit.Exit<A, E> = yield* Effect.promise((signal) =>
     db
       .transaction(async (tx) => {
-        const result = await run(body(tx));
+        const result = await run(body(tx), { signal });
         // Throwing is the only way to make Drizzle roll back.
         if (Exit.isFailure(result)) throw new Rollback(result);
         return result;

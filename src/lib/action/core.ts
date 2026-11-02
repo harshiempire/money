@@ -15,7 +15,7 @@ import { GENERIC_ERROR_MESSAGE, type ActionResult } from "./result";
  * `bun test` without Next or a database.
  */
 
-export interface ActionSpec<I, IEncoded, A, R, Data = A> {
+interface ActionSpecBase<I, IEncoded, A, R> {
   /** Every argument from the browser is decoded with this before use. */
   readonly input: Schema.Codec<I, IEncoded>;
   readonly handler: (input: I) => Effect.Effect<A, ActionError, R>;
@@ -29,9 +29,22 @@ export interface ActionSpec<I, IEncoded, A, R, Data = A> {
    * (e.g. a ledger core's `result.revalidate` — false when nothing changed).
    */
   readonly revalidateWhen?: (data: A) => boolean;
-  /** Public success data, projected after revalidation inspects the handler result. */
-  readonly toData?: (data: A) => Data;
 }
+
+/**
+ * `toData` turns the handler's result (e.g. a ledger receipt that
+ * `revalidateWhen` reads) into what the client receives. It is REQUIRED when
+ * the result isn't already the declared `Data`, so a spec can't hand the
+ * client a value of the wrong type.
+ *
+ * It runs after the write has happened: keep it a pure, total selector
+ * (`(r) => r.value`, `() => undefined`). Anything that can fail belongs in the
+ * handler, before the write.
+ */
+export type ActionSpec<I, IEncoded, A, R, Data = A> = ActionSpecBase<I, IEncoded, A, R> &
+  ([A] extends [Data]
+    ? { readonly toData?: (data: A) => Data }
+    : { readonly toData: (data: A) => Data });
 
 export interface RunOptions<R, A = unknown> {
   /** Used in server logs, e.g. "createSplit". */
@@ -89,12 +102,16 @@ export async function runAction<I, IEncoded, A, R, Data = A>(
         `[action:${options.name}] succeeded, but revalidation failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return {
-      ok: true,
-      data: spec.toData
-        ? spec.toData(exit.value)
-        : (exit.value as unknown as Data),
-    };
+    // Without toData, the ActionSpec type guarantees the result already is Data.
+    if (!spec.toData) return { ok: true, data: exit.value as unknown as Data };
+    try {
+      return { ok: true, data: spec.toData(exit.value) };
+    } catch (err) {
+      (options.log ?? console.error)(
+        `[action:${options.name}] the write succeeded, but building the response failed (toData must be a pure selector): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { ok: false, code: "INTERNAL", message: GENERIC_ERROR_MESSAGE };
+    }
   }
 
   const failure = Cause.findErrorOption(exit.cause);
