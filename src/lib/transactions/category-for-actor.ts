@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { assertTransactionOwned } from "@/lib/auth/ownership";
+import { LedgerError } from "@/lib/ledger/context";
 import { editTransactionFields } from "@/lib/ledger/transaction-fields";
 
 export async function categoryIsTransfer(categoryId: string, userId: string): Promise<boolean> {
@@ -21,8 +22,14 @@ export async function setCategoryForActor(
     }],
   });
   if (result.errors?.length) {
-    if (result.errors[0].code === "stale") throw new Error("The category changed since this card was made. Ask again to get a fresh card.");
-    throw new Error(result.errors[0].message);
+    // Typed so server actions can return the message (thrown plain Errors are
+    // replaced by a digest in production). Still an Error with the same
+    // message, so tag-apply's catch-and-report is unchanged.
+    const first = result.errors[0];
+    if (first.code === "stale") {
+      throw new LedgerError({ code: "stale", message: "The category changed since this card was made. Ask again to get a fresh card." });
+    }
+    throw new LedgerError({ code: first.code, message: first.message });
   }
   return { previousIsTransfer: result.rows[0].before.isTransfer };
 }
