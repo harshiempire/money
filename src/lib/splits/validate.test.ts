@@ -118,12 +118,29 @@ describe("validateNoDuplicateParticipants — collapsing ids (finding 4)", () =>
     expect(r.ok === false && r.message).toContain("Nitin");
   });
 
-  test("allows repeated names as long as the ids differ", () => {
+  test("rejects repeated names even when the ids differ", () => {
+    // Both rows would resolve to the same person record (getOrCreatePerson
+    // matches by trimmed, case-insensitive name), merging two shares into
+    // one balance. Previously allowed.
+    const r = validateNoDuplicateParticipants([
+      p(100, "Nitin", "a"),
+      p(100, "Nitin", "b"),
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toBe(
+      "Nitin appears twice in this split. Each person may only have one share.",
+    );
+  });
+
+  test("treats names case- and space-insensitively, like person matching", () => {
+    const r = validateNoDuplicateParticipants([p(100, "Asha"), p(100, "  asha ")]);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("asha appears twice");
+  });
+
+  test("still allows different people", () => {
     expect(
-      validateNoDuplicateParticipants([
-        p(100, "Nitin", "a"),
-        p(100, "Nitin", "b"),
-      ]).ok,
+      validateNoDuplicateParticipants([p(100, "Asha"), p(100, "Ashant"), p(100, "Bala", "x")]).ok,
     ).toBe(true);
   });
 
