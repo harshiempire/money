@@ -27,6 +27,7 @@ Decided 2026-11-02: no rewrite to TanStack Start. Stay on Next.js; keep Effect h
 
 - `next build && next start` against the local-dev Neon branch (`~/.money-scratch/local-dev/dev.sh`). Trigger `createSplit` on a credit row. Record what the dialog shows.
 - If messages *do* survive, Goal 1 becomes nice-to-have, and Phases 1–2 get justified by Goals 2–3 alone. Re-decide then.
+- **Result (2026-11-02): confirmed.** A throwaway app on this repo's Next 16 install, `next build` + `next start`. An action doing `throw new Error("Only a payment you made can be split.")` sent the client only `E{"digest":"2609852741"}`; the message appeared only in the server log. The same message *returned* as `{ ok: false, message }` arrived intact. So every `catch (err) { err.message }` in the dialogs shows React's generic production error instead of the validation text.
 - Commit the unrelated in-flight work (`talk/`, `docs/security/`, `.env.example`, `transactions/page.tsx`) separately first, so these PRs stay clean.
 
 ## Phase 1: Effect action foundation (1 PR, about 1–2 days)
