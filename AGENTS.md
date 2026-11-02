@@ -224,6 +224,7 @@ DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:split-action
 DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:net-event-actions   # same guard
 DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:reimbursement-actions   # same guard
 DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:transaction-actions   # same guard
+DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:import-actions   # same guard; PDF cases need sample-data/
 bun run build
 bun run db:generate    # after schema.ts changes
 bun run db:migrate

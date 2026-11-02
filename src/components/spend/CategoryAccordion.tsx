@@ -30,7 +30,9 @@ export function CategoryAccordion({
     setError(null);
     startTransition(async () => {
       try {
-        setRows(await getCategoryTransactions({ categoryId, from, to }));
+        const result = await getCategoryTransactions({ categoryId, from, to });
+        if (result.ok) setRows(result.data);
+        else setError("Could not load transactions for this category.");
       } catch {
         setError("Could not load transactions for this category.");
       }

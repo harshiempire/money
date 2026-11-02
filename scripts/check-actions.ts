@@ -18,8 +18,6 @@ import { join } from "node:path";
 
 const LEGACY = new Set([
   "src/app/auth/actions.ts",
-  "src/app/import/actions.ts",
-  "src/app/spend/actions.ts",
   "src/app/talk/actions.ts",
 ]);
 
