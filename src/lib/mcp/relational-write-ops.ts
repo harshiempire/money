@@ -14,7 +14,6 @@ import * as owed from "@/lib/ledger/owed-expenses";
 import { saveNetEvent } from "@/lib/ledger/net-events";
 import { linkPayeesToPerson } from "@/lib/ledger/person-links";
 import { renamePayee, addStandingNote } from "@/lib/ledger/metadata";
-import { NetEventValidationError } from "@/lib/net-events/errors";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
 import type { McpPrincipal } from "./auth";
 import { RelationalInputs, RelationalOutput, type RelationalTool } from "./relational-schemas";
@@ -54,7 +53,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     ctx.expectedRelations = snapshot;
     const before = relationalRows(snapshot);
     const names = [...before.people.map(row => row.name), ...before.participants.map(row => row.personName), ...before.owed.map(row => row.personName)];
-    const person = (name: string, create = false) => existingPerson(names, name, create);
+    const person = (name: string, create = false, distinctFrom: readonly string[] = []) => existingPerson(names, name, create, distinctFrom);
     const txn = (ref: string, rev?: string) => {
       const row = txns.find(row => txRef(row.id) === ref) ?? unavailable();
       const current = transactionRev(revKey, p.actor.userId, row.id, row);
@@ -99,7 +98,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           const refs = txns.filter(row => row.counterpartyKey === payee.key).map(row => txRef(row.id));
           if (!refs.length) unavailable();
           baseRefs.push(...refs);
-          return { counterpartyId: payee.id, person: link.person, currentPerson: link.current_person, ...(link.create_person !== undefined ? { createPerson: link.create_person } : {}) };
+          return { counterpartyId: payee.id, person: link.person, currentPerson: link.current_person, ...(link.create_person !== undefined ? { createPerson: link.create_person } : {}), ...(link.distinct_from !== undefined ? { distinctFrom: link.distinct_from } : {}) };
         });
         result = await linkPayeesToPerson(ctx, links);
         summary = result.summary ?? "Updated person links.";
@@ -108,7 +107,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       case "create_split": {
         const input = decode(tool, raw), bill = txn(input.ref, input.rev);
         if (bill.drCr !== "debit") refuse("invalid_source", "Only a debit payment can be split.");
-        const participants = input.participants.map(row => ({ personName: person(row.person, row.create_person), amount: row.amount }));
+        const participants = input.participants.map(row => ({ personName: person(row.person, row.create_person, row.distinct_from), amount: row.amount }));
         if (new Set(participants.map(row => personKey(row.personName))).size !== participants.length) refuse("duplicate_person", "Each person may have only one share.");
         const amounts = splitAmounts(bill.amountPaise, participants.map(row => row.amount), input.your_share, input.equal === true);
         const existing = before.splits.find(row => row.transactionId === bill.id);
@@ -199,7 +198,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           legs: buildNetLegs({ receivables, payables, inflowTransactionId: inflow?.id, inflowAmountPaise: inflow?.amountPaise ?? 0 }) }); break;
       }
       case "add_owed_expense": {
-        const input = decode(tool, raw), name = person(input.person, input.create_person), amountPaise = moneyPaise(input.amount);
+        const input = decode(tool, raw), name = person(input.person, input.create_person, input.distinct_from), amountPaise = moneyPaise(input.amount);
         const source = input.source_inflow_ref ? txn(input.source_inflow_ref) : undefined;
         if (source) baseRefs.push(txRef(source.id));
         summary = `Added ₹${exactRupees(amountPaise)} owed to ${name} for ${input.what.trim()}.`;
@@ -237,8 +236,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     if (replay?.response) return { ...replay.response, replayed: true };
     if (e instanceof LedgerError) return { applied: false, errors: [{ code: e.code, message: e.message, ...(e.current_rev ? { current_rev: e.current_rev } : {}) }] };
     if (e instanceof ForbiddenError) return { applied: false, errors: [{ code: "not_found", message: "That ref isn't available in this account." }] };
-    if (e instanceof NetEventValidationError || e instanceof Error && e.name === "Error" && !e.cause)
-      return { applied: false, errors: [{ code: e instanceof NetEventValidationError ? e.code.toLowerCase() : "invalid_input", message: e.message }] };
+    // Anything else is a defect: rethrow so the server returns its generic message instead of internal text.
     throw e;
   }
 }

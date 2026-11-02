@@ -58,3 +58,12 @@ test("write schemas require keys, valid money and revisions, output includes exa
   expect(Schema.is(RelationalOutput)({ applied: true, change_id: "change", summary: "Saved", refs: ["shr_x"], allocations: [{ share_ref: "shr_x", person: "Kiran", amount: "1.00", left: "2.00" }], unallocated: "0.00", left_open: "2.00" })).toBe(true);
   expect(Schema.is(RelationalOutput)({ applied: false, errors: [{ code: "stale", message: "Changed", current_rev: "rev_x" }] })).toBe(true);
 });
+
+test("create_person never silently creates a near-miss of an existing person", () => {
+  const names = ["Kiran", "Ravi Teja", "Ravi Kumar"];
+  expect(() => existingPerson(names, "Ravi", true)).toThrow("Not creating 'Ravi': it is close to Ravi Teja, Ravi Kumar");
+  expect(() => existingPerson(names, "Ravi", true, ["ravi teja"])).toThrow("it is close to Ravi Kumar");
+  expect(existingPerson(names, " Ravi ", true, ["Ravi Teja", "RAVI KUMAR"])).toBe("Ravi");
+  expect(existingPerson(names, "Ravi Teja", true)).toBe("Ravi Teja");
+  expect(existingPerson(names, "Meera", true)).toBe("Meera");
+});

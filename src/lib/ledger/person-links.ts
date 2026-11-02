@@ -13,6 +13,7 @@ const Input = Schema.Array(Schema.Struct({
   counterpartyId: Schema.NonEmptyString,
   person: Schema.NullOr(name), currentPerson: Schema.NullOr(name),
   createPerson: Schema.optionalKey(Schema.Boolean),
+  distinctFrom: Schema.optionalKey(Schema.Array(name).check(Schema.isMaxLength(20))),
 })).check(Schema.isBetweenLength(1, 50));
 
 /** One guarded batch, including any new people and its durable receipt. */
@@ -39,7 +40,7 @@ export async function linkPayeesToPerson(ctx: WriteContext, links: typeof Input.
         throw new LedgerError({ code: "not_found", message: "The linked person is not available." });
       if ((current === null) !== (link.currentPerson === null) || current !== null && personKey(current) !== personKey(link.currentPerson!))
         throw new LedgerError({ code: "stale", message: `The linked person for ${payee.key} changed. Read and confirm current_person again.` });
-      const resolved = link.person === null ? null : existingPerson(names, link.person, link.createPerson);
+      const resolved = link.person === null ? null : existingPerson(names, link.person, link.createPerson, link.distinctFrom);
       const personId = resolved === null ? null : await helpers.getOrCreatePerson(ctx.actor.userId, resolved);
       if (resolved && !names.some(name => personKey(name) === personKey(resolved))) names.push(resolved);
       if (personId === payee.personId) continue;

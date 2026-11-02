@@ -25,11 +25,20 @@ export const exactRupees = (paise: number | bigint): string => {
   const n = BigInt(paise), sign = n < 0n ? "-" : "", abs = n < 0n ? -n : n;
   return `${sign}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
 };
-export function existingPerson(names: readonly string[], said: string, create = false): string {
+/**
+ * Exact (trimmed, case-insensitive) match, or an explicit new person. A new person is refused while
+ * any existing name is close ("Ravi" vs "Ravi Teja") unless distinctFrom lists every close name the
+ * owner confirmed is someone else, so a near-miss is never silently created.
+ */
+export function existingPerson(names: readonly string[], said: string, create = false, distinctFrom: readonly string[] = []): string {
   const found = names.find(name => personKey(name) === personKey(said));
   if (found) return found.trim();
-  if (create && said.trim()) return said.trim();
   const close = closePersonNames(names, said);
+  if (create && said.trim()) {
+    const unconfirmed = close.filter(name => !distinctFrom.some(other => personKey(other) === personKey(name)));
+    if (!unconfirmed.length) return said.trim();
+    throw new LedgerError({ code: "unknown_person", message: `Not creating '${said.trim()}': it is close to ${unconfirmed.join(", ")}. Ask the owner which person they mean. If it really is a different person, retry with distinct_from listing ${unconfirmed.join(", ")}.` });
+  }
   throw new LedgerError({ code: "unknown_person", message: `Unknown person '${said.trim()}'. ${close.length ? `Close names: ${close.join(", ")}.` : "No close names found."} Use an exact name or explicitly set create_person: true where supported.` });
 }
 export function splitAmounts(total: number, amounts: readonly (string | number | undefined)[], yours: string | number | undefined, equal: boolean) {

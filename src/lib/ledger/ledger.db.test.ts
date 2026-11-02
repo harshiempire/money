@@ -1356,7 +1356,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       const refused = await api.call(tool, { ...args, idempotency_key: `p4-unknown-${tool}` });
       expect(refused.applied).toBe(false); expect(JSON.stringify(refused)).toContain("not_found");
     }
-    const refuse = await api.call("record_settlement", { inflow_ref: inflow, person: "Nit", idempotency_key: "p4-close-name" });
+    const refuse = await api.call("record_settlement", { inflow_ref: inflow, person: "Kir", idempotency_key: "p4-close-name" });
     expect(refuse.applied).toBe(false); expect(JSON.stringify(refuse)).toContain("Kiran");
     const first = await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [{ share_ref: sh, amount: "10" }], idempotency_key: "p4-explicit-bank" }); expect(first.applied).toBe(true);
     const second = await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [{ share_ref: sh, amount: 10 }], idempotency_key: "p4-increment-bank" }); expect(second.applied).toBe(true); expect(second.unallocated).toBe("20.00");
