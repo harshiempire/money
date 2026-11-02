@@ -97,8 +97,8 @@ export async function undoLedgerChange(input: { changeId: string }) {
   try {
     const { undoChange } = await import("@/lib/ledger/undo");
     const result = await undoChange({ actor: { userId: user.id, accountId: account.id }, source: "app" }, input.changeId);
-    if (result.stale?.length) return { ok: false, error: "Nothing was undone. A transaction or payee default changed after this change. Review the latest values first." };
-    revalidatePath("/transactions"); revalidatePath("/"); revalidatePath("/connections");
+    if (result.stale?.length) return { ok: false, error: "Nothing was undone. A target or its related shares, settlements or people changed after this change. Review the latest values first." };
+    revalidatePath("/transactions"); revalidatePath("/reimbursements"); revalidatePath("/people"); revalidatePath("/spend"); revalidatePath("/"); revalidatePath("/connections");
     return { ok: true };
   } catch (e) {
     if (e instanceof LedgerError) return { ok: false, error: e.message };

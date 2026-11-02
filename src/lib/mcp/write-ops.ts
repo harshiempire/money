@@ -166,8 +166,8 @@ export const mcpWriteOps: McpWriteOps = {
       // Payee stale targets are represented by account-scoped transaction refs, never payee ids.
       const refs: string[] = [];
       for (const target of result.stale) {
-        if (target.target === "transaction") refs.push(transactionRef(key.ref, p.actor.userId, target.id));
-        else {
+        if (target.target === "transaction" || target.target === "transaction_residual") refs.push(transactionRef(key.ref, p.actor.userId, target.id));
+        else if (target.target === "counterparty") {
           const rows = await db
             .select({ id: schema.transactions.id })
             .from(schema.transactions)
@@ -188,10 +188,13 @@ export const mcpWriteOps: McpWriteOps = {
               ref,
               message: "This target changed after the original change. Nothing was undone.",
             }))
-          : [{ code: "stale", message: "The payee default changed. Nothing was undone." }],
+          : [{ code: "stale", message: "A target or its related shares or settlements changed. Nothing was undone." }],
       };
     }
     refresh();
+    revalidatePath("/reimbursements");
+    revalidatePath("/people");
+    revalidatePath("/spend");
     return {
       ...(result.response ?? { applied: true, change_id: result.changeId }),
       ...(result.replayed ? { replayed: true } : {}),

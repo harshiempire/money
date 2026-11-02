@@ -3,8 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
-import { inverse, Operations, sameFields, type Operation } from "./rules";
+import { inverse, Operations, sameFields, type Operation, type RowOperation } from "./rules";
 import { runChange } from "./store";
+import { lockRelationalActor, relationalSnapshot, applyRowOperations } from "./relational-store";
 export type UndoResult = {
   changeId: string | null;
   stale?: Array<{ target: Operation["target"]; id: string }>;
@@ -14,15 +15,26 @@ export type UndoResult = {
 };
 export async function undoChange(ctx: WriteContext, changeId: string): Promise<UndoResult> {
   return runChange<UndoResult>(ctx, { kind: "undo" }, async (tx) => {
+    // Same actor/row lock order as all relational cores. Take it before the
+    // change-row lock so two simultaneous undos cannot invert the order.
+    await lockRelationalActor(tx, ctx);
+    const snapshot = await relationalSnapshot(tx, ctx, true);
     const c = schema.ledgerChanges;
     const [change] = await tx
       .select()
       .from(c)
       .where(and(eq(c.id, changeId), eq(c.userId, ctx.actor.userId), eq(c.accountId, ctx.actor.accountId)))
       .for("update");
-    if (!change) throw new LedgerError({ code: "not_found", message: "That change isn't available." });
+    if (!change)
+      throw new LedgerError({
+        code: "not_found",
+        message: "That change isn't available.",
+      });
     if (change.undoneByChangeId)
-      throw new LedgerError({ code: "already_undone", message: "That change was already undone." });
+      throw new LedgerError({
+        code: "already_undone",
+        message: "That change was already undone.",
+      });
     const ops = Schema.decodeUnknownSync(Operations)(change.ops);
     const stale: NonNullable<UndoResult["stale"]> = [];
     // Match the core's lock order to avoid deadlocks on overlapping batches.
@@ -44,7 +56,7 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           })
         )
           stale.push({ target: op.target, id: op.id });
-      } else {
+      } else if (op.target === "counterparty") {
         const p = schema.counterparties;
         const [row] = await tx
           .select()
@@ -53,6 +65,9 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           .for("update");
         if (!row || !sameFields(op.after, { defaultCategoryId: row.defaultCategoryId }))
           stale.push({ target: op.target, id: op.id });
+      } else {
+        const current = snapshot.get(`${op.target}:${op.id}`)?.after ?? null;
+        if (!sameFields(op.after, current)) stale.push({ target: op.target, id: op.id });
       }
     }
     if (stale.length) return { ops: [], refused: true, result: { changeId: null, stale } };
@@ -65,7 +80,7 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
           .where(
             and(eq(schema.transactions.id, op.id), eq(schema.transactions.accountId, ctx.actor.accountId)),
           );
-      else
+      else if (op.target === "counterparty")
         await tx
           .update(schema.counterparties)
           .set(op.after)
@@ -73,6 +88,16 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
             and(eq(schema.counterparties.id, op.id), eq(schema.counterparties.userId, ctx.actor.userId)),
           );
     }
-    return { ops: reversed, undoes: changeId, result: { changeId: null, ops: reversed } };
+    await applyRowOperations(
+      tx,
+      reversed.filter(
+        (op): op is RowOperation => op.target !== "transaction" && op.target !== "counterparty",
+      ),
+    );
+    return {
+      ops: reversed,
+      undoes: changeId,
+      result: { changeId: null, ops: reversed },
+    };
   });
 }

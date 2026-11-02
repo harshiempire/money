@@ -5,7 +5,7 @@ import { db, schema } from "@/db";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { isMissingTable } from "@/lib/db/pg-errors";
 import { LedgerError, migrationMessage } from "./context";
-import { Operations } from "./rules";
+import { Operations, relationalSummary } from "./rules";
 /** Newest first. Pass `nextCursor` back as `before` for the next page; it is null on the last page. */
 export async function listChanges(actor: MoneyActor, input: { limit?: number; before?: string } = {}) {
   const c = schema.ledgerChanges;
@@ -39,10 +39,10 @@ export async function listChanges(actor: MoneyActor, input: { limit?: number; be
       )
       .orderBy(desc(c.createdAt), desc(c.id))
       .limit(limit + 1);
-    const page = rows.slice(0, limit).map(({ ledger_change: row }) => ({
-      ...row,
-      ops: Schema.decodeUnknownSync(Operations)(row.ops),
-    }));
+    const page = rows.slice(0, limit).map(({ ledger_change: row }) => {
+      const ops = Schema.decodeUnknownSync(Operations)(row.ops);
+      return { ...row, ops, summary: row.summary || (ops.some(op => op.target !== "transaction" && op.target !== "counterparty") ? relationalSummary(row.kind, ops) : null) };
+    });
     const last = page.at(-1);
     return { rows: page, nextCursor: rows.length > limit && last ? cursorFor(last.id) : null };
   } catch (e) {

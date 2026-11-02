@@ -540,4 +540,623 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       }),
     60000,
   );
+  type Fixture = Awaited<ReturnType<typeof seed>>;
+  async function relationalFixture(f: Fixture) {
+    const splits = await import("./splits");
+    const settlements = await import("./settlements");
+    const net = await import("./net-events");
+    const owed = await import("./owed-expenses");
+    const { relationalSnapshot } = await import("./relational-store");
+    // The snapshot is one atomic SELECT; it needs no extra BEGIN/COMMIT.
+    const snapshot = async () => [...(await relationalSnapshot(f.db, f.app)).entries()];
+    await f.db
+      .update(f.schema.transactions)
+      .set({ drCr: "credit", amountPaise: 4000 })
+      .where(eq(f.schema.transactions.id, f.ids[1]));
+    const splitInput = {
+      transactionId: f.ids[0],
+      totalPaise: 10000,
+      yourSharePaise: 4000,
+      note: "original split",
+      participants: [{ personName: "Kiran", expectedAmountPaise: 6000 }],
+    };
+    await splits.createSplit(f.app, splitInput);
+    const [split] = await f.db
+      .select()
+      .from(f.schema.splits)
+      .where(eq(f.schema.splits.transactionId, f.ids[0]));
+    const [share] = await f.db
+      .select()
+      .from(f.schema.splitParticipants)
+      .where(eq(f.schema.splitParticipants.splitId, split.id));
+    const bankInput = {
+      inflowTransactionId: f.ids[1],
+      allocations: [{ splitParticipantId: share.id, amountPaise: 1000 }],
+      residual: {
+        kind: "owed_back" as const,
+        personName: "Kiran",
+        note: "overpaid",
+      },
+    };
+    const expenseInput = {
+      personName: "Arjun",
+      incurredDate: "2026-10-03",
+      amountPaise: 5000,
+      description: "Dinner",
+      categoryId: f.food,
+      note: " original ",
+    };
+    const netInput = {
+      eventDate: "2026-10-04",
+      inflowTransactionId: f.ids[1],
+      note: " net ",
+      legs: [
+        {
+          kind: "receivable" as const,
+          splitParticipantId: share.id,
+          amountPaise: 4000,
+          method: "bank" as const,
+        },
+        {
+          kind: "receivable" as const,
+          splitParticipantId: share.id,
+          amountPaise: 1000,
+          method: "offset" as const,
+        },
+        {
+          kind: "payable" as const,
+          newPayable: { ...expenseInput, amountPaise: 1000 },
+          amountPaise: 1000,
+          method: "offset" as const,
+        },
+      ],
+    };
+    const moveShare = () =>
+      f.db
+        .update(f.schema.splitParticipants)
+        .set({ expectedAmountPaise: 6001 })
+        .where(eq(f.schema.splitParticipants.id, share.id));
+    return {
+      splits,
+      settlements,
+      net,
+      owed,
+      snapshot,
+      splitInput,
+      split,
+      share,
+      bankInput,
+      expenseInput,
+      netInput,
+      moveShare,
+    };
+  }
+  const relationalCases = [
+    "create_split",
+    "delete_split",
+    "record_settlement",
+    "clear_settlement",
+    "record_cash_settlement",
+    "delete_cash_settlement",
+    "write_off_participant_share",
+    "undo_write_off",
+    "save_net_event",
+    "delete_net_event",
+    "create_owed_expense",
+    "update_owed_expense",
+    "delete_owed_expense",
+  ] as const;
+  async function relationalCase(
+    f: Fixture,
+    kind: (typeof relationalCases)[number],
+  ) {
+    const r = await relationalFixture(f);
+    const moveShare = async () => {
+      await r.moveShare();
+    };
+    switch (kind) {
+      case "create_split": {
+        await r.splits.deleteSplit(f.app, { transactionId: f.ids[0] });
+        const input = {
+          ...r.splitInput,
+          participants: [
+            { personName: "New Person", expectedAmountPaise: 6000 },
+          ],
+        };
+        return {
+          ...r,
+          run: (ctx: WriteContext) => r.splits.createSplit(ctx, input),
+          move: async () => {
+            await f.db
+              .update(f.schema.splits)
+              .set({ note: "moved" })
+              .where(eq(f.schema.splits.transactionId, f.ids[0]));
+          },
+        };
+      }
+      case "delete_split": {
+        await r.splits.recordSettlement(f.app, r.bankInput);
+        await r.settlements.recordCashSettlement(f.app, {
+          splitParticipantId: r.share.id,
+          amountPaise: 1000,
+          note: "cash",
+        });
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.splits.deleteSplit(ctx, { transactionId: f.ids[0] }),
+          move: async () => {
+            await r.splits.createSplit(f.app, r.splitInput);
+          },
+        };
+      }
+      case "record_settlement":
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.splits.recordSettlement(ctx, r.bankInput),
+          move: moveShare,
+        };
+      case "clear_settlement": {
+        await r.splits.recordSettlement(f.app, r.bankInput);
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.splits.clearSettlement(ctx, { inflowTransactionId: f.ids[1] }),
+          move: moveShare,
+        };
+      }
+      case "record_cash_settlement":
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.settlements.recordCashSettlement(ctx, {
+              splitParticipantId: r.share.id,
+              amountPaise: 1234.5,
+              note: " cash ",
+            }),
+          move: moveShare,
+        };
+      case "delete_cash_settlement": {
+        await r.settlements.recordCashSettlement(f.app, {
+          splitParticipantId: r.share.id,
+          amountPaise: 1000,
+          note: "cash",
+        });
+        const [row] = await f.db
+          .select()
+          .from(f.schema.settlements)
+          .where(eq(f.schema.settlements.splitParticipantId, r.share.id));
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.settlements.deleteCashSettlement(ctx, { settlementId: row.id }),
+          move: moveShare,
+        };
+      }
+      case "write_off_participant_share":
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.settlements.writeOffParticipantShare(ctx, {
+              splitParticipantId: r.share.id,
+              note: " forgiven ",
+            }),
+          move: moveShare,
+        };
+      case "undo_write_off": {
+        await r.settlements.writeOffParticipantShare(f.app, {
+          splitParticipantId: r.share.id,
+          note: "forgiven",
+        });
+        const [row] = await f.db
+          .select()
+          .from(f.schema.settlements)
+          .where(eq(f.schema.settlements.splitParticipantId, r.share.id));
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.settlements.undoWriteOff(ctx, { settlementId: row.id }),
+          move: moveShare,
+        };
+      }
+      case "save_net_event":
+        return {
+          ...r,
+          run: (ctx: WriteContext) => r.net.saveNetEvent(ctx, r.netInput),
+          move: moveShare,
+        };
+      case "delete_net_event": {
+        const created = await r.net.saveNetEvent(f.app, r.netInput);
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.net.deleteNetEvent(ctx, {
+              netEventId: created.value.netEventId,
+            }),
+          move: moveShare,
+        };
+      }
+      case "create_owed_expense":
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.owed.createOwedExpense(ctx, r.expenseInput),
+          move: async () => {
+            await f.db
+              .update(f.schema.owedExpenses)
+              .set({ description: "moved" })
+              .where(eq(f.schema.owedExpenses.userId, f.actor.userId));
+          },
+        };
+      case "update_owed_expense": {
+        const created = await r.owed.createOwedExpense(f.app, r.expenseInput);
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.owed.updateOwedExpense(ctx, {
+              id: created.value,
+              personName: "New Person",
+              amountPaise: 7000,
+              note: "updated",
+            }),
+          move: async () => {
+            await f.db
+              .update(f.schema.owedExpenses)
+              .set({ description: "moved" })
+              .where(eq(f.schema.owedExpenses.id, created.value));
+          },
+        };
+      }
+      case "delete_owed_expense": {
+        const created = await r.owed.createOwedExpense(f.app, r.expenseInput);
+        const [expense] = await f.db
+          .select()
+          .from(f.schema.owedExpenses)
+          .where(eq(f.schema.owedExpenses.id, created.value));
+        await f.db
+          .insert(f.schema.settlements)
+          .values({
+            owedExpenseId: expense.id,
+            amountPaise: 1000,
+            method: "cash",
+            note: "owed repayment",
+          });
+        return {
+          ...r,
+          run: (ctx: WriteContext) =>
+            r.owed.deleteOwedExpense(ctx, { id: expense.id }),
+          move: async () => {
+            await f.db
+              .insert(f.schema.owedExpenses)
+              .values({ ...expense, description: "moved" });
+          },
+        };
+      }
+    }
+  }
+  for (const kind of relationalCases) {
+    test(
+      `${kind}: tenant refusal, log, exact undo, undo of undo and stale whole-change refusal`,
+      () =>
+        fixture(async (f) => {
+          const r = await relationalCase(f, kind);
+          const before = await r.snapshot();
+          await expect(
+            r.run({
+              actor: { userId: f.otherUser, accountId: f.otherAccount },
+              source: "app",
+            }),
+          ).rejects.toThrow();
+          expect(await r.snapshot()).toEqual(before);
+          const result = await r.run(f.app);
+          expect(result.changeId).toBeTruthy();
+          const logged = (await f.listChanges(f.actor)).find(
+            (c) => c.id === result.changeId,
+          );
+          expect(logged?.kind).toBe(kind);
+          expect(logged?.summary).toBeTruthy();
+          const after = await r.snapshot();
+          expect(after).not.toEqual(before);
+          const undone = await f.undoChange(f.app, result.changeId!);
+          expect(undone.stale).toBeUndefined();
+          expect(await r.snapshot()).toEqual(before);
+          const redone = await f.undoChange(f.app, undone.changeId!);
+          expect(redone.stale).toBeUndefined();
+          expect(await r.snapshot()).toEqual(after);
+          await r.move();
+          const moved = await r.snapshot();
+          const stale = await f.undoChange(f.app, redone.changeId!);
+          expect(stale.stale?.length).toBeGreaterThan(0);
+          expect(await r.snapshot()).toEqual(moved);
+        }),
+      60000,
+    );
+    test(
+      `${kind}: MCP replay after state moves and conflict before writing`,
+      () =>
+        fixture(async (f) => {
+          const r = await relationalCase(f, kind);
+          const ctx = f.mcp(`phase3_${kind}`);
+          const first = await r.run(ctx);
+          await r.move();
+          const moved = await r.snapshot();
+          const replay = await r.run(ctx);
+          expect(replay.replayed).toBe(true);
+          expect(replay.changeId).toBe(first.changeId);
+          expect(replay.value).toEqual(first.value);
+          expect(await r.snapshot()).toEqual(moved);
+          await expect(
+            r.owed.createOwedExpense(f.mcp(ctx.idempotency!.key, { different: true }), {
+              ...r.expenseInput,
+              description: "conflicting request",
+            }),
+          ).rejects.toMatchObject({ code: "idempotency_conflict" });
+          expect(await r.snapshot()).toEqual(moved);
+        }),
+      60000,
+    );
+  }
+  test(
+    "relational guards preserve assistant contracts, settled-share edits and residual repayability",
+    () =>
+      fixture(async (f) => {
+        const r = await relationalFixture(f);
+        await expect(
+          r.splits.createSplit(f.app, {
+            ...r.splitInput,
+            expectNoExistingSplit: true,
+          }),
+        ).rejects.toThrow("already has a split");
+        await r.splits.recordSettlement(f.app, r.bankInput);
+        await expect(
+          r.splits.deleteSplit(f.app, {
+            transactionId: f.ids[0],
+            expectNoSettlements: true,
+          }),
+        ).rejects.toThrow("Money was settled");
+        await expect(
+          r.splits.createSplit(f.app, { ...r.splitInput, participants: [] }),
+        ).rejects.toThrow();
+        await expect(
+          r.splits.recordSettlement(f.app, {
+            ...r.bankInput,
+            allocations: [
+              { splitParticipantId: r.share.id, amountPaise: 7000 },
+            ],
+          }),
+        ).rejects.toThrow();
+        const [payable] = await f.db
+          .select()
+          .from(f.schema.owedExpenses)
+          .where(eq(f.schema.owedExpenses.sourceInflowTransactionId, f.ids[1]));
+        await f.db
+          .insert(f.schema.settlements)
+          .values({
+            owedExpenseId: payable.id,
+            amountPaise: 1,
+            method: "offset",
+          });
+        const before = await r.snapshot();
+        await expect(
+          r.splits.clearSettlement(f.app, { inflowTransactionId: f.ids[1] }),
+        ).rejects.toThrow();
+        expect(await r.snapshot()).toEqual(before);
+      }),
+    60000,
+  );
+  test(
+    "new settlement prevents undoing split creation; deleted share prevents restoring settlement",
+    () =>
+      fixture(async (f) => {
+        const r = await relationalFixture(f);
+        const ctx = f.mcp("guard_split_create");
+        await r.splits.deleteSplit(f.app, { transactionId: f.ids[0] });
+        const created = await r.splits.createSplit(ctx, r.splitInput);
+        const [sp] = await f.db
+          .select()
+          .from(f.schema.splitParticipants)
+          .innerJoin(
+            f.schema.splits,
+            eq(f.schema.splitParticipants.splitId, f.schema.splits.id),
+          )
+          .where(eq(f.schema.splits.transactionId, f.ids[0]));
+        const shareId = sp.split_participant.id;
+        await r.settlements.recordCashSettlement(f.app, {
+          splitParticipantId: shareId,
+          amountPaise: 100,
+          note: null,
+        });
+        expect(
+          (await f.undoChange(f.app, created.changeId!)).stale?.length,
+        ).toBeGreaterThan(0);
+        const [settlement] = await f.db
+          .select()
+          .from(f.schema.settlements)
+          .where(eq(f.schema.settlements.splitParticipantId, shareId));
+        const deleted = await r.settlements.deleteCashSettlement(f.app, {
+          settlementId: settlement.id,
+        });
+        await r.splits.deleteSplit(f.app, { transactionId: f.ids[0] });
+        expect(
+          (await f.undoChange(f.app, deleted.changeId!)).stale?.length,
+        ).toBeGreaterThan(0);
+      }),
+    60000,
+  );
+  test(
+    "net duplicate guard, no-op cash, writeoff methods, owed validation and failed keys",
+    () =>
+      fixture(async (f) => {
+        const r = await relationalFixture(f);
+        await r.net.saveNetEvent(f.app, r.netInput);
+        await expect(r.net.saveNetEvent(f.app, r.netInput)).rejects.toThrow(
+          "already net settled",
+        );
+        const before = await r.snapshot();
+        expect(
+          (
+            await r.settlements.recordCashSettlement(f.app, {
+              splitParticipantId: r.share.id,
+              amountPaise: 0,
+              note: null,
+            })
+          ).changeId,
+        ).toBeNull();
+        await expect(
+          r.settlements.undoWriteOff(f.app, {
+            settlementId: crypto.randomUUID(),
+          }),
+        ).rejects.toThrow();
+        await expect(
+          r.owed.updateOwedExpense(f.app, {
+            id: crypto.randomUUID(),
+            amountPaise: -1,
+          }),
+        ).rejects.toThrow();
+        const key = f.mcp("failed_owed_key");
+        await expect(
+          r.owed.createOwedExpense(key, { ...r.expenseInput, amountPaise: -1 }),
+        ).rejects.toThrow("Amount must be positive");
+        expect(await r.snapshot()).toEqual(before);
+        expect(
+          (await r.owed.createOwedExpense(key, r.expenseInput)).changeId,
+        ).toBeTruthy();
+        const noKey: WriteContext = {
+          actor: f.actor,
+          source: "mcp",
+          tokenId: f.tokenId,
+          label: "Test",
+        };
+        await expect(
+          r.owed.createOwedExpense(noKey, r.expenseInput),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+      }),
+    60000,
+  );
+  test(
+    "concurrent guarded splits and bank allocations cannot double-spend",
+    () =>
+      fixture(async (f) => {
+        const r = await relationalFixture(f);
+        await r.splits.deleteSplit(f.app, { transactionId: f.ids[0] });
+        const results = await Promise.allSettled(
+          [1, 2].map(() =>
+            r.splits.createSplit(f.app, {
+              ...r.splitInput,
+              expectNoExistingSplit: true,
+            }),
+          ),
+        );
+        expect(
+          results.filter((result) => result.status === "fulfilled"),
+        ).toHaveLength(1);
+        expect(
+          results.filter((result) => result.status === "rejected"),
+        ).toHaveLength(1);
+        const [sp] = await f.db
+          .select()
+          .from(f.schema.splitParticipants)
+          .innerJoin(
+            f.schema.splits,
+            eq(f.schema.splitParticipants.splitId, f.schema.splits.id),
+          )
+          .where(eq(f.schema.splits.transactionId, f.ids[0]));
+        await Promise.all(
+          [1, 2].map(() =>
+            r.settlements.recordCashSettlement(f.app, {
+              splitParticipantId: sp.split_participant.id,
+              amountPaise: 5000,
+              note: null,
+            }),
+          ),
+        );
+        const rows = await f.db
+          .select()
+          .from(f.schema.settlements)
+          .where(
+            eq(
+              f.schema.settlements.splitParticipantId,
+              sp.split_participant.id,
+            ),
+          );
+        expect(
+          rows.reduce((sum, row) => sum + Number(row.amountPaise), 0),
+        ).toBe(6000);
+      }),
+    60000,
+  );
+  test("split edit keeps settled participant ids and refuses a renamed or foreign participant", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    await r.settlements.recordCashSettlement(f.app, { splitParticipantId: r.share.id, amountPaise: 1000, note: null });
+    const before = await r.snapshot();
+    await expect(r.splits.createSplit(f.app, { ...r.splitInput, participants: [{ id: r.share.id, personName: "Different Person", expectedAmountPaise: 6000 }] })).rejects.toThrow();
+    await expect(r.splits.createSplit(f.app, { ...r.splitInput, participants: [{ id: crypto.randomUUID(), personName: "Kiran", expectedAmountPaise: 6000 }] })).rejects.toThrow("doesn't belong");
+    expect(await r.snapshot()).toEqual(before);
+    const edited = await r.splits.createSplit(f.app, { ...r.splitInput, yourSharePaise: 3000, participants: [{ id: r.share.id, personName: "Kiran", expectedAmountPaise: 7000 }] });
+    const [share] = await f.db.select().from(f.schema.splitParticipants).where(eq(f.schema.splitParticipants.id, r.share.id));
+    expect(share.expectedAmountPaise).toBe(7000);
+    expect((await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, r.share.id)))).toHaveLength(1);
+    await f.undoChange(f.app, edited.changeId!);
+    expect(await r.snapshot()).toEqual(before);
+  }), 60000);
+  test("net event edit replaces the event id and undo restores the exact prior event and legs", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const created = await r.net.saveNetEvent(f.app, r.netInput);
+    const before = await r.snapshot();
+    const edited = await r.net.saveNetEvent(f.app, { ...r.netInput, netEventId: created.value.netEventId, note: "edited" });
+    expect(edited.value.netEventId).not.toBe(created.value.netEventId);
+    await f.undoChange(f.app, edited.changeId!);
+    expect(await r.snapshot()).toEqual(before);
+    const createdExpense = await r.owed.createOwedExpense(f.app, r.expenseInput);
+    const state = await r.snapshot();
+    await expect(r.owed.updateOwedExpense(f.app, { id: createdExpense.value, amountPaise: -1 })).rejects.toThrow("Amount must be positive");
+    expect(await r.snapshot()).toEqual(state);
+  }), 60000);
+  test("bank clearing keeps net-event legs and undo restores residual acknowledgements exactly", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    await r.net.saveNetEvent(f.app, { eventDate: "2026-10-04", inflowTransactionId: f.ids[1], legs: [
+      { kind: "receivable", splitParticipantId: r.share.id, amountPaise: 2000, method: "bank" },
+      { kind: "receivable", splitParticipantId: r.share.id, amountPaise: 2000, method: "offset" },
+    ] });
+    await r.splits.recordSettlement(f.app, { ...r.bankInput, residual: { kind: "kept" } });
+    expect((await f.read(f.ids[1])).residualAcknowledgedPaise).toBe(1000);
+    const before = await r.snapshot();
+    const cleared = await r.splits.clearSettlement(f.app, { inflowTransactionId: f.ids[1] });
+    const remaining = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, r.share.id));
+    expect(remaining).toHaveLength(2);
+    expect(remaining.every(row => row.netEventId !== null)).toBe(true);
+    expect((await f.read(f.ids[1])).residualAcknowledgedPaise).toBeNull();
+    await f.undoChange(f.app, cleared.changeId!);
+    expect(await r.snapshot()).toEqual(before);
+    const deleted = await r.splits.deleteSplit(f.app, { transactionId: f.ids[0] });
+    expect((await f.read(f.ids[1])).residualAcknowledgedPaise).toBeNull();
+    await f.undoChange(f.app, deleted.changeId!);
+    expect(await r.snapshot()).toEqual(before);
+  }), 60000);
+  test("MCP no-op cash stores a receipt and cash/writeoff preserve caps, methods and server dates", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const ctx = f.mcp("noop_cash_receipt");
+    const input = { splitParticipantId: r.share.id, amountPaise: 0, note: null };
+    const first = await r.settlements.recordCashSettlement(ctx, input);
+    expect(first.changeId).toBeNull();
+    expect((await r.settlements.recordCashSettlement(ctx, input)).replayed).toBe(true);
+    await r.settlements.recordCashSettlement(f.app, { ...input, amountPaise: 7000, note: " cash " });
+    const [cash] = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, r.share.id));
+    expect(cash.amountPaise).toBe(6000);
+    expect(cash.method).toBe("cash");
+    expect(cash.note).toBe("cash");
+    expect(cash.createdAt).toBeInstanceOf(Date);
+    await expect(r.settlements.undoWriteOff(f.app, { settlementId: cash.id })).rejects.toThrow("not a writeoff");
+    await expect(r.settlements.writeOffParticipantShare(f.app, { splitParticipantId: r.share.id, note: null })).rejects.toThrow("Nothing outstanding");
+    await r.settlements.deleteCashSettlement(f.app, { settlementId: cash.id });
+    const forgiven = await r.settlements.writeOffParticipantShare(f.app, { splitParticipantId: r.share.id, note: " gift " });
+    const [writeoff] = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, r.share.id));
+    expect(writeoff.method).toBe("writeoff");
+    expect(writeoff.amountPaise).toBe(6000);
+    expect(writeoff.note).toBe("gift");
+    expect(writeoff.inflowTransactionId).toBeNull();
+    expect(forgiven.changeId).toBeTruthy();
+  }), 60000);
+
 });

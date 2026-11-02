@@ -92,7 +92,7 @@ export function RecentChanges({ initial }: { initial: Changes }) {
               ) : confirm === row.id ? (
                 <div className="mt-2 space-x-3">
                   <p className="mb-2">
-                    Undo this entire change? This only works if its values have stayed the same.
+                    Undo this entire change? This only works if its values and related shares and settlements have stayed the same.
                   </p>
                   <button
                     type="button"

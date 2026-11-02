@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { isMissingTable } from "@/lib/db/pg-errors";
 import { LedgerError, migrationMessage, type WriteContext } from "./context";
-import { idempotencyDecision, type Operation } from "./rules";
+import { idempotencyDecision, relationalSummary, type Operation } from "./rules";
 export type LedgerTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 class MissingLedger extends Error {}
 const changes = schema.ledgerChanges;
@@ -92,7 +92,7 @@ export async function runChange<R extends { changeId: string | null }>(
           tokenId: ctx.source === "mcp" ? ctx.tokenId : null,
           sourceLabel: ctx.source === "mcp" ? ctx.label : "You",
           kind: meta.kind,
-          summary: meta.summary || null,
+          summary: meta.summary || (ops.some(op => op.target !== "transaction" && op.target !== "counterparty") ? relationalSummary(meta.kind, ops).slice(0, 200) : null),
           ops,
           undoesChangeId: undoes,
           idempotencyKey: ctx.idempotency?.key,
