@@ -25,9 +25,9 @@ import { validateNetEventInvariant } from "@/lib/net-events/validate";
  * connection-timeout rewrite of DB errors is kept, now as Unavailable (the
  * underlying error is logged as a warning, as Next used to log the throw).
  *
- * Known pre-existing quirk, kept deliberately in this translation: a payable
- * leg carrying BOTH owedExpenseId and newPayable is validated as the existing
- * payable but still creates the new one (see the transaction body).
+ * One deliberate change since the translation: a payable leg carrying BOTH
+ * owedExpenseId and newPayable is now rejected (it used to be validated as
+ * the existing payable while creating the new one unchecked).
  *
  * Integration check: scripts/test-net-event-actions.ts.
  */
@@ -135,6 +135,14 @@ export const saveNetEventSpec: Spec<
             message: "Bank receivable legs require an inflow transaction",
           });
         }
+      } else if (leg.owedExpenseId && leg.newPayable) {
+        // Before 2026-11-02 such a leg was validated (and ownership-checked)
+        // as the existing payable, yet the transaction still created the new
+        // one — skipping its description/amount checks and the ownership
+        // check on its categoryId. A leg is one or the other.
+        return yield* new Invalid({
+          message: "A payable leg must either use an existing payable or create a new one, not both",
+        });
       } else if (leg.owedExpenseId) {
         if (leg.method !== "offset") {
           return yield* new Invalid({ message: "Payable legs must use offset method" });

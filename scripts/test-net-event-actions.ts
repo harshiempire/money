@@ -69,6 +69,9 @@ try {
   expect("bank receivable without inflow → INVALID", r.message === "Bank receivable legs require an inflow transaction", r);
   r = await save({ eventDate: d, legs: [P(dev.id, 1000, "bank")] });
   expect("payable with bank method → 'Payable legs must use offset method'", r.message === "Payable legs must use offset method", r);
+  r = await save({ eventDate: d, legs: [R(bala.id, 5000, "offset"), { kind: "payable", amountPaise: 5000, method: "offset", owedExpenseId: dev.id, newPayable: { personName: "Esha", incurredDate: d, amountPaise: 5000, description: "x", categoryId: crypto.randomUUID() } }] });
+  expect("payable leg with both an existing id and a new payable → INVALID", r.code === "INVALID" && r.message === "A payable leg must either use an existing payable or create a new one, not both", r);
+  expect("…and no payable was created for Esha", (await db.select().from(schema.owedExpenses).where(eq(schema.owedExpenses.personName, "Esha"))).length === 0);
   r = await save({ eventDate: d, inflowTransactionId: inflow.id, legs: [R(asha.id, 30000, "bank")] });
   expect("invariant mismatch → 'Net 300 does not match bank delta 600'", r.code === "INVALID" && r.message === "Net 300 does not match bank delta 600", r);
   r = await save({ eventDate: d, inflowTransactionId: inflow.id, legs: [R(asha.id, 40000, "bank"), R(bala.id, 20000, "bank")] });
