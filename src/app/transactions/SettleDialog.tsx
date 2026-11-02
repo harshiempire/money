@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
 import { parseAllocationInputs } from "@/lib/splits/allocation-input";
+import { callAction } from "@/lib/action/result";
 import { clearSettlement, recordSettlement } from "./split-actions";
 
 export interface ParticipantOption {
@@ -332,8 +333,8 @@ function SettleForm({
   const submit = () => {
     if (!parsed.ok) return;
     startTransition(async () => {
-      try {
-        await recordSettlement({
+      const result = await callAction(() =>
+        recordSettlement({
           inflowTransactionId,
           allocations: currentAllocations,
           residual: disposition
@@ -344,28 +345,20 @@ function SettleForm({
                 note: null,
               }
             : null,
-        });
-        onClose();
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to save settlement";
-        console.error("[recordSettlement]", err);
-        window.alert(msg);
-      }
+        }),
+      );
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 
   const remove = () => {
     startTransition(async () => {
-      try {
-        await clearSettlement({ inflowTransactionId });
-        onClose();
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to clear settlement";
-        console.error("[clearSettlement]", err);
-        window.alert(msg);
-      }
+      const result = await callAction(() =>
+        clearSettlement({ inflowTransactionId }),
+      );
+      if (result.ok) onClose();
+      else window.alert(result.message);
     });
   };
 

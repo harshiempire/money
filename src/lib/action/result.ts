@@ -44,6 +44,21 @@ export class ActionError extends Error {
   }
 }
 
+/**
+ * Await an action call and turn a network failure (or anything else that
+ * throws in the browser) into an INTERNAL result, so callers handle one shape.
+ */
+export async function callAction<T>(
+  call: () => Promise<ActionResult<T>>,
+): Promise<ActionResult<T>> {
+  try {
+    return await call();
+  } catch (err) {
+    console.error("[action]", err);
+    return { ok: false, code: "INTERNAL", message: GENERIC_ERROR_MESSAGE };
+  }
+}
+
 export function unwrap<T>(result: ActionResult<T>): T {
   if (result.ok) return result.data;
   throw new ActionError(result);

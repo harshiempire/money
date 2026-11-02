@@ -220,6 +220,7 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 bun run dev
 bun run typecheck
 bun run check:actions
+DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:split-actions   # local-dev branch only; refuses any other DB
 bun run build
 bun run db:generate    # after schema.ts changes
 bun run db:migrate

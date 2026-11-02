@@ -25,7 +25,6 @@ const LEGACY = new Set([
   "src/app/talk/actions.ts",
   "src/app/transactions/actions.ts",
   "src/app/transactions/net-event-actions.ts",
-  "src/app/transactions/split-actions.ts",
 ]);
 
 const BARE_EXPORT = /^export\s+(async\s+)?function\s+(\w+)/gm;

@@ -62,7 +62,7 @@ Each PR migrates the actions **and** their client callers together, because the 
 
 | Order | File | Callers | Notes |
 |---|---|---|---|
-| 2a | `split-actions.ts` | SplitDialog, SettleDialog | Pilot. Wrap the existing validators. Keep "read-only guards before the tx opens" ordering exactly. |
+| 2a | `split-actions.ts` | SplitDialog, SettleDialog | **Done 2026-11-02.** Logic in `split-handlers.ts` (specs), thin `defineAction` wrappers in `split-actions.ts`. Verified: old-vs-new A/B run on local-dev (identical DB after every step), independent statement-by-statement review, `scripts/test-split-actions.ts` (34 checks), and HTTP calls through `next dev`. Pattern for 2b+: `*-handlers.ts` + thin `*-actions.ts`. |
 | 2b | `net-event-actions.ts` | NetSettleDialog | `NetEventValidationError.code` becomes `Invalid`/`Conflict` with the same codes. 5 revalidate paths go through `Revalidate`. |
 | 2c | `reimbursements/*.ts` | CashSettlementDialog, SplitAwaitingItem, ForgivenHistory | |
 | 2d | `transactions/actions.ts` | RowActions, NoteDialog, ReviewLaterButton, AutoDetectButton, LinkedTransactionLink | Read actions (`getNoteCandidates`, `getLinkedTransactionPreview`) return `ActionResult` too, which prepares them for Query in Phase 5. |
