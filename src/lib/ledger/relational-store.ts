@@ -6,7 +6,7 @@ import { getOrCreatePerson } from "@/db/person";
 import { throwForbidden } from "@/lib/auth/forbidden";
 import { LedgerError, type WriteContext } from "./context";
 import { RowOperation, snapshotDiff, orderRowOperations, sameFields } from "./rules";
-import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
+import { deriveMcpRevKey, transactionRev, splitRev } from "@/lib/mcp/refs";
 import { runChange, type LedgerTx } from "./store";
 
 import type { Snapshot } from "./rules";
@@ -252,6 +252,15 @@ export async function runRelationalChange<R extends { revalidate: boolean }>(
       if (!row) throw new LedgerError({ code: "not_found", message: "That transaction isn't available." });
       const current = transactionRev(deriveMcpRevKey(process.env.AUTH_SECRET), ctx.actor.userId, id, row);
       if (expected !== current) throw new LedgerError({ code: "stale", message: "Read the transaction again before writing.", current_rev: current });
+    }
+    const relations = relationalRows(before);
+    for (const [id, expected] of Object.entries(ctx.splitRevs ?? {})) {
+      if (!before.has(`transaction_residual:${id}`))
+        throw new LedgerError({ code: "not_found", message: "That transaction isn't available." });
+      const split = relations.splits.find(row => row.transactionId === id);
+      const current = splitRev(deriveMcpRevKey(process.env.AUTH_SECRET), ctx.actor.userId, id, split,
+        relations.participants.filter(row => row.splitId === split?.id));
+      if (expected !== current) throw new LedgerError({ code: "stale", message: "The split changed. Read it again before writing.", current_split_rev: current });
     }
     if (ctx.expectedRelations && !sameFields([...ctx.expectedRelations], [...before]))
       throw new LedgerError({ code: "stale", message: "Shares, settlements or people changed. Read them again before writing." });

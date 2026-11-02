@@ -57,3 +57,21 @@ test("search validates at least one substantive signal, date validity, money and
   expect(amountPaise("0.01")).toBe(1);
   expect(amountPaise("9999999999999.99")).toBe(999999999999999);
 });
+
+
+test("amount and person must identify the same share; transaction amounts retain person evidence", () => {
+  const model = empty();
+  model.transactions = [fixtureTxn("bill")];
+  model.splits = [{ id: "split", transactionId: "bill", totalPaise: 56700, yourSharePaise: 28300 }];
+  model.shares = [
+    { id: "k", splitId: "split", personName: "Kiran", expectedAmountPaise: 1000 },
+    { id: "r", splitId: "split", personName: "Ravi Teja", expectedAmountPaise: 27400 },
+  ];
+  expect(findPayments(fixtureView(model), { amount: "274", person: " KIRAN " }).candidates).toEqual([]);
+  const ravi = findPayments(fixtureView(model), { amount: "274", person: " ravi TEJA " }).candidates;
+  expect(ravi).toHaveLength(1);
+  expect(ravi[0].reasons).toContain("exact share amount for Ravi Teja");
+  expect(ravi[0].split_summary!.split_rev).toMatch(/^spr_/);
+  expect(findPayments(fixtureView(model), { amount: "567", person: "Kiran" }).candidates[0].reasons).toContain("exact amount");
+  expect(findPayments(fixtureView(model), { amount: "274" }).candidates[0].reasons).toContain("exact share amount for Ravi Teja");
+});

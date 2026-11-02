@@ -47,7 +47,7 @@ test("full-model loader scopes every SQL branch and finds inflow links without q
       assert.ok(payees.includes('"mcp_default_category"."user_id" ='));
       assert.ok(payees.includes('"transaction"."account_id" = "money_account"."id"'));
       const inflows = queries.find(q => q.query.includes('from "transaction" inner join "money_account"')).query;
-      for (const column of ['"settlement"."inflow_transaction_id"', '"net_event"."inflow_transaction_id"', '"net_event"."outflow_transaction_id"', '"owed_expense"."source_inflow_transaction_id"']) assert.ok(inflows.includes(column), inflows);
+      for (const column of ['"settlement"."inflow_transaction_id"', '"net_event"."inflow_transaction_id"', '"net_event"."outflow_transaction_id"', '"owed_expense"."source_inflow_transaction_id"', '"transaction"."residual_disposition"', '"transaction"."residual_acknowledged_paise"']) assert.ok(inflows.includes(column), inflows);
       assert.ok(inflows.includes('"transaction"."dr_cr" ='));
     `], cwd: process.cwd(), env: {}, stdout: "pipe", stderr: "pipe",
   });

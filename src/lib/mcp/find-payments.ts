@@ -29,7 +29,7 @@ export function findPayments(view: McpReadView, rawInput: FindPaymentsInput) {
     const reasons: string[] = [];
     if (target !== undefined) {
       const amount = amountPaise(txn.amount);
-      const matchedShares = txn.split?.shares.filter((s) => amountPaise(s.expected) === target) ?? [];
+      const matchedShares = txn.split?.shares.filter((s) => amountPaise(s.expected) === target && (person === undefined || personKey(s.person) === person)) ?? [];
       if (amount === target) { score += 100; reasons.push("exact amount"); }
       else if (matchedShares.length) { score += 90; reasons.push(...matchedShares.map((s) => `exact share amount for ${s.person}`)); }
       else if (BigInt(Math.abs(amount - target)) * 100n <= BigInt(target) * 2n) { score += 50; reasons.push("amount within ±2%"); }
@@ -56,7 +56,7 @@ export function findPayments(view: McpReadView, rawInput: FindPaymentsInput) {
       score += 35 + (signals.length - 1) * 5; reasons.push(...signals);
     }
     const { split, settles: _settles, net_event: _event, owed_expenses: _owed, ...base } = txn;
-    return [{ ...base, via: person && txn.person && personKey(txn.person) === person ? "linked" as const : person && seenKeys.has(view.transactionKeys.get(txn.ref) ?? "") ? "seen" as const : null, score, reasons, split_summary: split ? { total: split.total, your_share: split.your_share, shares: split.shares.map((s) => ({ person: s.person, expected: s.expected, left: s.left })) } : null }];
+    return [{ ...base, via: person && txn.person && personKey(txn.person) === person ? "linked" as const : person && seenKeys.has(view.transactionKeys.get(txn.ref) ?? "") ? "seen" as const : null, score, reasons, split_summary: split ? { split_rev: split.split_rev, total: split.total, your_share: split.your_share, shares: split.shares.map((s) => ({ person: s.person, expected: s.expected, left: s.left })) } : null }];
   }).sort((a, b) => b.score - a.score || b.date.localeCompare(a.date) || a.ref.localeCompare(b.ref));
   return { candidates: candidates.slice(0, input.limit ?? 10) };
 }

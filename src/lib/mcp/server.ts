@@ -139,7 +139,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
         "A person can have several UPI handles; do not assume one handle identifies all their payments. " +
         "Never bypass the MCP with DB scripts, app internals or .env files. If a tool is missing, say so. " +
         (principal.scope === "write"
-          ? "Write tools change this account directly. Before writing, read current refs and revs. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. For splits and settlements, one clear match means act and name it; several means ask; settle oldest-first unless the owner named a bill. "
+          ? "Write tools change this account directly. Before writing, read current refs and revs; split replacement/deletion also requires the current split_rev. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. For splits and settlements, one clear match means act and name it; several means ask; settle oldest-first unless the owner named a bill. "
           : "Read access to this account. ") +
         "Confirm person↔payee links with the owner before link_person; use suggest_categories for new statements and review_period for what did I miss. " +
         "propose_tags stays draft-only; nothing changes until the owner presses Apply in Money.",
@@ -232,7 +232,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     inputSchema: standard(PeriodInput), outputSchema: standard(ReviewPeriodOutput), annotations: read,
   }, input => safely(async () => result(reviewPeriod(await loadView(), input))));
   server.registerTool("get_transactions", {
-    title: "Get transaction details", description: "Read 1–50 txn_ refs with the full bank view, splits, participant shares, every settlement allocation, linked net event and sourced owed expenses. Unknown refs are listed without failing the batch.",
+    title: "Get transaction details", description: "Read 1–50 txn_ refs with the full bank view, split_rev (none when unsplit), splits, participant shares, every settlement allocation, linked net event and sourced owed expenses. Unknown refs are listed without failing the batch.",
     inputSchema: standard(GetTransactionsInput), outputSchema: standard(GetTransactionsOutput), annotations: read,
   }, (input) => safely(async () => result(getTransactions(await loadView(), input.refs))));
   server.registerTool("list_people", {
@@ -248,7 +248,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     inputSchema: standard(PayeesInput), outputSchema: standard(PayeesOutput), annotations: read,
   }, (input) => safely(async () => result(pagePayees(await loadView(), input))));
   server.registerTool("find_payments", {
-    title: "Find payment candidates", description: "Rank bank payments by amount (whole payment, participant share, or within ±2%), date distance, payee text and person evidence. At least one of amount, text or person is required. One clear top candidate means use it and say which payment; several close candidates means ask the owner.",
+    title: "Find payment candidates", description: "Rank bank payments by amount (whole payment, participant share, or within ±2%), date distance, payee text and person evidence. When amount and person are supplied, a share match must belong to that person. Split summaries include split_rev for guarded writes. At least one of amount, text or person is required. One clear top candidate means use it and say which payment; several close candidates means ask the owner.",
     inputSchema: standard(FindPaymentsInput), outputSchema: standard(FindPaymentsOutput), annotations: read,
   }, (input) => safely(async () => result(findPayments(await loadView(), input))));
   server.registerTool("query", {

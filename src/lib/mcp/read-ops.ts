@@ -68,6 +68,8 @@ export const mcpReadOps: McpOps = {
         isTransfer: t.isTransfer,
         needsReview: t.needsReview,
         categoryId: t.categoryId,
+        residualDisposition: t.residualDisposition,
+        residualAcknowledgedPaise: t.residualAcknowledgedPaise,
       })
       .from(t)
       .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))

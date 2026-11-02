@@ -3,7 +3,7 @@ import type { McpTransaction } from "./view";
 /** Internal, actor-scoped snapshot. Only explicit DTO builders may cross the MCP boundary. */
 export interface McpReadModel {
   transactions: McpTransaction[];
-  /** Credits linked to any allocation/event/source expense, even when its target is outside this account. */
+  /** Credits linked to any allocation/event/source expense, even when its target is outside this account, or fully acknowledged as kept/written off. */
   linkedInflows?: string[];
   people: Array<{ name: string }>;
   payees: Array<{ person?: string | null; key: string; kind: string; displayName: string | null; defaultCategory: string | null; isSelf: boolean; isFamily: boolean }>;

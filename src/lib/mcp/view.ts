@@ -19,6 +19,8 @@ export interface McpTransaction {
   categoryId: string | null;
   needsReview: boolean;
   isTransfer: boolean;
+  residualDisposition?: "kept" | "written_off" | null;
+  residualAcknowledgedPaise?: number | null;
 }
 
 export const TransactionView = Schema.Struct({

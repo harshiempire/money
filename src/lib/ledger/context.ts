@@ -9,6 +9,7 @@ export type WriteContext = (
   /** MCP adapters compute allocations from this actor-scoped snapshot. Recheck under locks. */
   expectedRelations?: Snapshot;
   transactionRevs?: Record<string, string>;
+  splitRevs?: Record<string, string>;
   idempotency?: {
     key: string;
     requestHash: string;
@@ -50,5 +51,6 @@ export class LedgerError extends Schema.TaggedError<LedgerError>()("LedgerError"
   code: LedgerErrorCode,
   message: Schema.String,
   current_rev: Schema.optionalKey(Schema.String),
+  current_split_rev: Schema.optionalKey(Schema.String),
 }) {}
 export const migrationMessage = "Run migration 0014 before using the change log or MCP writes.";

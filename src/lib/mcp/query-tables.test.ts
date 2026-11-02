@@ -15,6 +15,8 @@ test("MCP tables contain unredacted text, stable cross-tool refs, all model enti
     for (const row of rows) expect(json).not.toContain(row.id);
   }
   expect(json).toContain("UPI 12345678 rooster@bank"); expect(json).toContain("Pay ravi@bank 9876543210");
+  const splits = tables.find(t => t.name === "splits")!;
+  expect(splits.rows[0][splits.columns.findIndex(c => c.name === "split_rev")]).toBe(view.splits[0].split_rev);
   expect(tables.find((t) => t.name === "shares")!.rows[0][0]).toBe(view.shares[0].ref);
   expect(tables.find((t) => t.name === "transactions")!.rows[0][0]).toBe(view.transactions[0].ref);
   expect(tables.find((t) => t.name === "transactions")!.rows[0][2]).toBe(56700);

@@ -2,9 +2,27 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
-import { runRelationalChange } from "./relational-store";
+import { sourceInflowCapacity } from "./owed-capacity";
+import type { LedgerTx } from "./store";
+import { runRelationalChange, type RelationalHelpers } from "./relational-store";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
+
+/** Called only with the actor snapshot and bank rows locked by runRelationalChange. */
+async function assertSourceCapacity(tx: LedgerTx, helpers: RelationalHelpers, ctx: WriteContext,
+  sourceId: string, amountPaise: number, excludeOwedId?: string) {
+  await helpers.assertTransactionOwned(ctx.actor.userId, sourceId);
+  const [inflow] = await tx.select().from(schema.transactions).where(eq(schema.transactions.id, sourceId));
+  if (inflow.drCr !== "credit") throw new LedgerError({ code: "invalid_input", message: "A source inflow must be a credit." });
+  const capacity = sourceInflowCapacity({ amountPaise: inflow.amountPaise,
+    allocatedPaise: helpers.before.settlements.filter(row => row.inflowTransactionId === sourceId).reduce((sum, row) => sum + row.amountPaise, 0),
+    hasOtherPayable: helpers.before.owed.some(row => row.sourceInflowTransactionId === sourceId && row.id !== excludeOwedId),
+    residualDisposition: inflow.residualDisposition });
+  if (amountPaise > capacity)
+    throw new LedgerError({ code: "invalid_input", message: "Source inflow is already explained or has insufficient unallocated money." });
+  const [net] = await tx.select({ id: schema.netEvents.id }).from(schema.netEvents).where(eq(schema.netEvents.inflowTransactionId, sourceId));
+  if (net) throw new LedgerError({ code: "invalid_input", message: "Source inflow is part of a net event." });
+}
 
 export async function createOwedExpense(
   ctx: WriteContext,
@@ -37,15 +55,7 @@ export async function createOwedExpense(
     }
 
     if (input.sourceInflowTransactionId) {
-      await helpers.assertTransactionOwned(user.id, input.sourceInflowTransactionId);
-      const [inflow] = await tx.select().from(schema.transactions).where(eq(schema.transactions.id, input.sourceInflowTransactionId));
-      if (inflow.drCr !== "credit") throw new LedgerError({ code: "invalid_input", message: "A source inflow must be a credit." });
-      const linked = helpers.before.owed.filter(row => row.sourceInflowTransactionId === inflow.id);
-      const allocated = helpers.before.settlements.filter(row => row.inflowTransactionId === inflow.id).reduce((sum, row) => sum + row.amountPaise, 0);
-      if (linked.length || inflow.residualDisposition || amountPaise > inflow.amountPaise - allocated)
-        throw new LedgerError({ code: "invalid_input", message: "Source inflow is already explained or has insufficient unallocated money." });
-      const [net] = await tx.select({ id: schema.netEvents.id }).from(schema.netEvents).where(eq(schema.netEvents.inflowTransactionId, inflow.id));
-      if (net) throw new LedgerError({ code: "invalid_input", message: "Source inflow is part of a net event." });
+      await assertSourceCapacity(tx, helpers, ctx, input.sourceInflowTransactionId, amountPaise);
     }
 
     const personId = await getOrCreatePerson(user.id, input.personName);
@@ -103,6 +113,9 @@ export async function updateOwedExpense(
       const settled = (await helpers.settledAmountByOwedExpenseIds([input.id])).get(input.id) ?? 0;
       if (amountPaise < settled)
         throw new LedgerError({ code: "invalid_input", message: `Amount cannot be less than the existing settlements of ₹${(settled / 100).toFixed(2)}.` });
+      const current = helpers.before.owed.find(row => row.id === input.id)!;
+      if (current.sourceInflowTransactionId && amountPaise !== current.amountPaise)
+        await assertSourceCapacity(tx, helpers, ctx, current.sourceInflowTransactionId, amountPaise, current.id);
       updates.amountPaise = amountPaise;
     }
     if (input.description !== undefined) {

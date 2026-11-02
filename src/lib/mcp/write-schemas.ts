@@ -73,6 +73,7 @@ export const WriteError = Schema.Struct({
   ref: Schema.optionalKey(Schema.NullOr(Schema.String)),
   code: Schema.String,
   message: Schema.String,
+  current_split_rev: Schema.optionalKey(Schema.String.annotate({ description: "Current split revision after a stale split error." })),
   current_rev: Schema.optionalKey(Schema.String),
 });
 export const WriteOutput = Schema.Struct({

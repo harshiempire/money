@@ -50,6 +50,10 @@ test("explicit allocations aggregate repeated targets and refuse either cap", ()
 test("write schemas require keys, valid money and revisions, output includes exact allocation results", () => {
   const base = { ref: "txn_x", rev: "rev_x", participants: [{ person: "Kiran" }], equal: true, idempotency_key: "test-key-123" };
   expect(Schema.is(RelationalInputs.create_split)(base)).toBe(true);
+  expect(Schema.is(RelationalInputs.create_split)({ ...base, replace_existing: true })).toBe(false);
+  expect(Schema.is(RelationalInputs.create_split)({ ...base, replace_existing: true, split_rev: "spr_current" })).toBe(true);
+  expect(Schema.is(RelationalInputs.delete_split)(base)).toBe(false);
+  expect(Schema.is(RelationalInputs.delete_split)({ ...base, split_rev: "spr_current" })).toBe(true);
   expect(Schema.is(RelationalInputs.create_split)({ ...base, rev: undefined })).toBe(false);
   expect(Schema.is(RelationalInputs.create_split)({ ...base, idempotency_key: "short" })).toBe(false);
   expect(Schema.is(RelationalInputs.create_split)({ ...base, reason: "x".repeat(201) })).toBe(false);

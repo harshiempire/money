@@ -100,6 +100,6 @@ export const ReviewPeriodOutput = Schema.Struct({
   }), "Shares on bills in this period with positive outstanding, subtracting all settlements regardless of settlement date."),
   unlinked_inflows: list(Schema.Struct({ ...TransactionView.fields, via,
     people: Schema.Array(Schema.Struct({ person: text("Person associated with this payee."), via })).annotate({ description: "Every confirmed or learned association for this credit." }),
-  }), "Credits from confirmed or learned payees with no settlement, net event or sourced owed expense; one row per credit."),
+  }), "Credits from confirmed or learned payees with no settlement, net event, sourced owed expense or fully acknowledged residual; one row per credit."),
   repeated_amounts: list(TransactionView, "Uncategorized rows with no note: same exact amount at least three times, or twice from the same payee, in this period."),
 });

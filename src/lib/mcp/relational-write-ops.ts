@@ -17,7 +17,7 @@ import { renamePayee, addStandingNote } from "@/lib/ledger/metadata";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
 import type { McpPrincipal } from "./auth";
 import { RelationalInputs, RelationalOutput, type RelationalTool } from "./relational-schemas";
-import { deriveMcpRefKey, deriveMcpRevKey, transactionRef, transactionRev, shareRef, owedRef, settlementRef, noteRef } from "./refs";
+import { deriveMcpRefKey, deriveMcpRevKey, transactionRef, transactionRev, shareRef, owedRef, settlementRef, noteRef, splitRev } from "./refs";
 import { mcpReadOps } from "./read-ops";
 import { allocateOldestFirst, validateAllocations, splitAmounts, moneyPaise, exactRupees, existingPerson, personKey } from "./write-rules";
 
@@ -60,6 +60,13 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       if (rev !== undefined && rev !== current) throw new LedgerError({ code: "stale", message: "Read the transaction again before writing.", current_rev: current });
       ctx!.transactionRevs = { ...ctx!.transactionRevs, [row.id]: rev ?? current };
       return row;
+    };
+    const guardSplit = (transactionId: string, expected: string | undefined) => {
+      if (expected === undefined) return;
+      ctx!.splitRevs = { [transactionId]: expected };
+      const split = before.splits.find(row => row.transactionId === transactionId);
+      const current = splitRev(revKey, p.actor.userId, transactionId, split, before.participants.filter(row => row.splitId === split?.id));
+      if (expected !== current) throw new LedgerError({ code: "stale", message: "The split changed. Read it again before writing.", current_split_rev: current });
     };
     const share = (ref: string) => before.participants.find(row => shRef(row.id) === ref) ?? unavailable();
     const expense = (ref: string) => before.owed.find(row => owRef(row.id) === ref) ?? unavailable();
@@ -106,6 +113,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "create_split": {
         const input = decode(tool, raw), bill = txn(input.ref, input.rev);
+        guardSplit(bill.id, input.split_rev);
         if (bill.drCr !== "debit") refuse("invalid_source", "Only a debit payment can be split.");
         const participants = input.participants.map(row => ({ personName: person(row.person, row.create_person, row.distinct_from), amount: row.amount }));
         if (new Set(participants.map(row => personKey(row.personName))).size !== participants.length) refuse("duplicate_person", "Each person may have only one share.");
@@ -122,6 +130,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "delete_split": {
         const input = decode(tool, raw), bill = txn(input.ref, input.rev);
+        guardSplit(bill.id, input.split_rev);
         baseRefs.push(input.ref); summary = "Deleted split and its unsettled shares.";
         result = await splits.deleteSplit(ctx, { transactionId: bill.id, expectNoSettlements: true }); break;
       }
@@ -234,7 +243,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     // A concurrent identical request may have committed after the first replay check.
     const replay = ctx ? await replayChange<CoreResult>(ctx) : null;
     if (replay?.response) return { ...replay.response, replayed: true };
-    if (e instanceof LedgerError) return { applied: false, errors: [{ code: e.code, message: e.message, ...(e.current_rev ? { current_rev: e.current_rev } : {}) }] };
+    if (e instanceof LedgerError) return { applied: false, errors: [{ code: e.code, message: e.message, ...(e.current_rev ? { current_rev: e.current_rev } : {}), ...(e.current_split_rev ? { current_split_rev: e.current_split_rev } : {}) }] };
     if (e instanceof ForbiddenError) return { applied: false, errors: [{ code: "not_found", message: "That ref isn't available in this account." }] };
     // Anything else is a defect: rethrow so the server returns its generic message instead of internal text.
     throw e;

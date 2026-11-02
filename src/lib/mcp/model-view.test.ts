@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { fixtureView, readFixture } from "./read-fixtures";
 import { getTransactions, getOpenBalances, pagePayees } from "./model-view";
 import { GetTransactionsOutput, PeopleOutput, OpenBalancesOutput, PayeesOutput } from "./read-schemas";
+import { reviewPeriod } from "./period-review";
 import { buildOverview } from "./overview";
 
 test("transaction details expose shares, bank/cash/writeoff/net allocations, sourced owed expenses and unknown refs without IDs", () => {
@@ -92,4 +93,24 @@ test("fully settled and over-settled lines are clamped to zero and excluded from
   const view = fixtureView(model);
   expect(view.shares[1].left).toBe("0.00"); expect(view.people[0].open_share_count).toBe(1);
   expect(getOpenBalances(view, "Kiran").people[0].lines.some((l) => l.ref === view.shares[1].ref)).toBe(false);
+});
+
+
+test("fully acknowledged residuals are excluded from both inflow lists; partial acknowledgements retain full amount", () => {
+  const model = readFixture();
+  const source = model.transactions.find(t => t.id === "private-in-unlinked")!;
+  for (const residualDisposition of ["kept", "written_off"] as const) {
+    source.residualDisposition = residualDisposition;
+    source.residualAcknowledgedPaise = source.amountPaise;
+    const view = fixtureView(model);
+    expect(getOpenBalances(view, "Kiran").people[0].unlinked_inflows).toEqual([]);
+    expect(reviewPeriod(view, {}).unlinked_inflows.rows).toEqual([]);
+  }
+  source.residualAcknowledgedPaise = 9999;
+  const partial = fixtureView(model);
+  expect(getOpenBalances(partial, "Kiran").people[0].unlinked_inflows[0].amount).toBe("100.00");
+  expect(reviewPeriod(partial, {}).unlinked_inflows.count).toBe(1);
+  source.residualDisposition = null;
+  source.residualAcknowledgedPaise = source.amountPaise;
+  expect(reviewPeriod(fixtureView(model), {}).unlinked_inflows.count).toBe(1);
 });

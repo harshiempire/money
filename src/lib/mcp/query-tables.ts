@@ -22,7 +22,7 @@ export const MCP_QUERY_TABLES: QueryTableSpec[] = [
   table("people", "Saved and historical names grouped case-insensitively after trim, including zero balances.", [
     ["name", T, "Canonical trimmed name."], ["owed_to_you_paise", I, "Sum of max(0, expected minus ALL settlements including writeoffs) over this account's shares."], ["you_owe_paise", I, "Sum of max(0, amount minus ALL settlements) over user-owned owed expenses across accounts."],
   ]),
-  table("splits", "One row per split, identified by its bank transaction ref.", [["txn_ref", T, "Bank transaction's txn_ ref."], ["total_paise", I, "Full split amount."], ["your_share_paise", I, "Owner's original share, before writeoffs."]], "splits.txn_ref = transactions.ref"),
+  table("splits", "One row per split, identified by its bank transaction ref.", [["txn_ref", T, "Bank transaction's txn_ ref."], ["total_paise", I, "Full split amount."], ["your_share_paise", I, "Owner's original share, before writeoffs."], ["split_rev", T, "Opaque revision required for split replacement or deletion; read current transaction rev with get_transactions."]], "splits.txn_ref = transactions.ref"),
   table("shares", "Other people's shares, including fully settled and forgiven ones.", [
     ["ref", T, "Opaque shr_ ref."], ["txn_ref", T, "Original bill's txn_ ref."], ["person", T, "Canonical person name."], ["expected_paise", I, "Original participant share."], ["settled_paise", I, "All settlements including writeoffs and net offsets, regardless of date."], ["left_paise", I, "max(0, expected minus settled)."],
   ], "shares.txn_ref = transactions.ref; shares.person = people.name"),
@@ -49,7 +49,7 @@ export function buildMcpQueryTables(view: McpReadView, categories: readonly { na
     transactions: view.transactions.map((t) => [t.ref, t.date, amountPaise(t.amount), t.direction, t.payee, t.handle, t.raw_description, t.purpose, t.note, t.category, Number(t.transfer), Number(t.needs_review), ...association(view.payees.find(p => p.key === view.transactionKeys.get(t.ref)))]),
     payees: view.payees.map((p) => [p.key, p.kind, p.handle, p.display_name, p.default_category, Number(p.is_self), Number(p.is_family), JSON.stringify(p.seen_person), ...association(p)]),
     people: view.people.map((p) => [p.name, amountPaise(p.owed_to_you), amountPaise(p.you_owe)]),
-    splits: view.splits.map((s) => [s.txn_ref, amountPaise(s.total), amountPaise(s.your_share)]),
+    splits: view.splits.map((s) => [s.txn_ref, amountPaise(s.total), amountPaise(s.your_share), s.split_rev]),
     shares: view.shares.map((s) => [s.ref, s.txn_ref, s.person, amountPaise(s.expected), amountPaise(s.settled), amountPaise(s.left)]),
     settlements: view.settlements.map((s) => [s.ref, s.inflow_ref, s.share_ref, s.owed_ref, s.person, amountPaise(s.amount), s.date, s.via]),
     net_events: view.netEvents.map((e) => [e.person, e.inflow_ref, e.outflow_ref, amountPaise(e.amount)]),

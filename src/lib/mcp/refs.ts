@@ -32,3 +32,17 @@ export const shareRef = (key: Uint8Array, userId: string, accountId: string, id:
 export const owedRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("owe", key, userId, accountId, id);
 export const settlementRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("stl", key, userId, accountId, id);
 export const noteRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("nte", key, userId, accountId, id);
+
+/** Split structure revision, separate from editable transaction fields and settlements. */
+export function splitRev(key: Uint8Array, userId: string, transactionId: string, split: {
+  id: string; totalPaise: number; yourSharePaise: number;
+} | null | undefined, participants: readonly {
+  id: string; personName: string; expectedAmountPaise: number;
+}[]): string {
+  if (!split) return "none";
+  const shares = participants.map(p => [p.id, p.personName, p.expectedAmountPaise] as const)
+    .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  return `spr_${createHmac("sha256", key).update(JSON.stringify([
+    "money:mcp:split-rev:v1", userId, transactionId, split.id, split.totalPaise, split.yourSharePaise, shares,
+  ])).digest("base64url").slice(0, 22)}`;
+}

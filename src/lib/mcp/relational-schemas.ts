@@ -13,6 +13,7 @@ const share = ref("Opaque shr_ ref from get_open_balances or get_transactions.")
 const owed = ref("Opaque owe_ ref from get_open_balances or get_transactions.");
 const settlement = ref("Opaque stl_ ref from get_transactions or query.");
 const rev = ref("Current transaction rev from Money read tools. Stale errors include current_rev.");
+const splitRevision = ref("Current opaque split_rev from get_transactions, find_payments or MCP SQL splits; none when unsplit. Stale errors include current_split_rev.");
 const rows = <S extends Schema.Top>(s: S) => Schema.Array(s).check(Schema.isBetweenLength(1, 100));
 const distinctFrom = Schema.Array(Schema.String.check(Schema.isMaxLength(200))).check(Schema.isMaxLength(20)).annotate({
   description: "With create_person:true, every close existing name the owner confirmed is a different person. Without it, a new name close to an existing one is refused.",
@@ -26,11 +27,11 @@ const link = Schema.Struct({
 }).check(Schema.makeFilter(l => (l.payee === undefined) !== (l.ref === undefined), { expected: "exactly one of payee or ref" }));
 export const RelationalInputs = {
   link_person: Schema.Struct({ ...common, links: Schema.Array(link).check(Schema.isBetweenLength(1, 50)) }),
-  create_split: Schema.Struct({ ...common, ref: txn, rev,
+  create_split: Schema.Struct({ ...common, ref: txn, rev, split_rev: Schema.optionalKey(splitRevision),
     participants: rows(Schema.Struct({ person, amount: Schema.optionalKey(Money), create_person: Schema.optionalKey(Schema.Boolean.annotate({ description: "Explicitly allow creating this person when no exact existing name matches." })), distinct_from: Schema.optionalKey(distinctFrom) })),
     your_share: Schema.optionalKey(Money), equal: Schema.optionalKey(Schema.Boolean),
-    replace_existing: Schema.optionalKey(Schema.Boolean.annotate({ description: "Explicit confirmation to replace an existing split; never allowed with settled shares." })), note }),
-  delete_split: Schema.Struct({ ...common, ref: txn, rev }),
+    replace_existing: Schema.optionalKey(Schema.Boolean.annotate({ description: "Explicit confirmation to replace an existing split; never allowed with settled shares." })), note }).check(Schema.makeFilter(input => !input.replace_existing || input.split_rev !== undefined, { expected: "split_rev is required with replace_existing:true", toJsonSchema: () => ({ if: { properties: { replace_existing: { const: true } }, required: ["replace_existing"] }, then: { required: ["split_rev"] } }) })),
+  delete_split: Schema.Struct({ ...common, ref: txn, rev, split_rev: splitRevision }),
   record_settlement: Schema.Struct({ ...common, inflow_ref: txn, person,
     allocations: Schema.optionalKey(rows(Schema.Union([
       Schema.Struct({ share_ref: share, amount: PositiveMoney }),
@@ -69,8 +70,8 @@ export const RelationalOutput = Schema.Struct({
 });
 export const RelationalDescriptions: Record<RelationalTool, string> = {
   link_person: "After owner confirmation, link or unlink 1–50 payees to exact person names in one undoable change. Supply a payee key or any transaction ref for each payee, person:null to unlink, and current_person (null if unset) to confirm replacement. Unknown names require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Suggestions are not confirmed links. Refuses stale current_person guards, foreign payees and unknown people. Undo with undo_change.",
-  create_split: "Split a debit equally among you and named participants (odd paise go to you), or provide every amount and your_share exactly. Unknown people require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Refuses stale revs, an existing split without replace_existing:true, or replacement with any settled share. Undo with undo_change; new settlements can prevent undo.",
-  delete_split: "Delete a debit's split with its current rev. Refuses stale revs and any settlement, cash or writeoff on any share. Undo with undo_change restores the exact split and shares.",
+  create_split: "Split a debit equally among you and named participants (odd paise go to you), or provide every amount and your_share exactly. Unknown people require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Replacing requires split_rev from the current split detail or summary, checked under locks. Refuses stale transaction or split revs, an existing split without replace_existing:true, or replacement with any settled share. Undo with undo_change; new settlements can prevent undo.",
+  delete_split: "Delete a debit's split with its current transaction rev and split_rev from get_transactions or find_payments. Both are checked under locks; stale splits return current_split_rev. Refuses stale revs and any settlement, cash or writeoff on any share. Undo with undo_change restores the exact split and shares.",
   record_settlement: "Allocate a credit to an exact existing person's open shares, oldest bill first then creation order, with a partial final share. Explicit share_ref allocations override that order and must fit both outstanding shares and unallocated inflow. Earlier allocations are preserved. owed_ref is refused: owed expenses are money you owe, not incoming repayments. Refuses debits, fully allocated or explained inflows, net-event inflows and stale balances. Undo with undo_change.",
   clear_settlement: "Clear an inflow's ordinary bank allocations and leftover explanation. Refuses removal of a leftover payable already repaid; net-event legs remain. Undo with undo_change restores allocations and the explanation if unchanged.",
   record_cash_settlement: "Record positive cash against an open share using the server's current date; backdating is unsupported. Refuses amounts exceeding outstanding and stale balances. Undo with undo_change.",
@@ -78,7 +79,7 @@ export const RelationalDescriptions: Record<RelationalTool, string> = {
   undo_write_off: "Remove a writeoff using its stl_ ref. Refuses missing, foreign or non-writeoff settlements and stale balances. Undo this removal with undo_change.",
   net_settle: "Create a net settlement using the app's rules: receivables minus payables must equal inflow minus outflow exactly. Bank legs use the inflow first, then offsets. Use existing share_ref and owed_ref lines; add a new payable with add_owed_expense first. Refuses wrong bank direction, existing net events or explained bank rows, over-allocation (including repeated lines), empty or stale balances. Undo with undo_change.",
   add_owed_expense: "Add money you owe a named person, with date, description and exact amount. Unknown people require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Optional source_inflow_ref must be a credit with sufficient unexplained money and no prior explanation or net event. Refuses invalid amounts and stale balances. Undo with undo_change; later repayments can prevent undo.",
-  update_owed_expense: "Edit an owed expense's person, date, description, amount or note. Refuses unknown refs or people, empty edits, stale balances and reducing the amount below existing settlements. Undo with undo_change.",
+  update_owed_expense: "Edit an owed expense's person, date, description, amount or note. Refuses unknown refs or people, empty edits, stale balances and reducing the amount below existing settlements or exceeding a sourced credit's remaining capacity. Undo with undo_change.",
   delete_owed_expense: "Delete an owed expense and its dependent settlements, as in the app. Refuses unknown or foreign refs and stale balances. Undo with undo_change restores the expense and repayments if dependencies remain unchanged.",
   rename_payee: "Rename the payee of any transaction ref. current_display_name must exactly confirm the present display name (null if unset). Refuses missing payees, blank names and a changed current name. Undo with undo_change; it refuses a later rename.",
   add_standing_note: "Save a full unredacted standing note, up to 500 characters and 40 notes per owner, using the app's trim rules. Refuses blank notes, the note cap and missing notes migration. Undo with undo_change; later note edits prevent undo.",

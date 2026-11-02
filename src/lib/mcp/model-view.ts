@@ -1,6 +1,6 @@
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { Result, Schema } from "effect";
-import { shareRef, owedRef, settlementRef, transactionRef, transactionRev } from "./refs";
+import { shareRef, owedRef, settlementRef, transactionRef, transactionRev, splitRev } from "./refs";
 import { transactionView, rupees } from "./view";
 import type { McpReadModel } from "./read-model";
 import { McpToolError } from "./pagination";
@@ -62,7 +62,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     return { ref: owedRef(key, actor.userId, actor.accountId, o.id), person: nameFor(o.personName), date: o.incurredDate,
       what: o.description, amount: rupees(o.amountPaise), settled: rupees(paid), left: rupees(leftPaise(o.amountPaise, paid)) };
   });
-  const splits = model.splits.map((s) => ({ txn_ref: txRef(s.transactionId)!, total: rupees(s.totalPaise), your_share: rupees(s.yourSharePaise) }));
+  const splits = model.splits.map((s) => ({ txn_ref: txRef(s.transactionId)!, split_rev: splitRev(revKey, actor.userId, s.transactionId, s, model.shares.filter(p => p.splitId === s.id)), total: rupees(s.totalPaise), your_share: rupees(s.yourSharePaise) }));
   const eventPeople = (eventId: string) => [...new Set(model.settlements.filter((s) => s.netEventId === eventId)
     .map((s) => nameFor((s.splitParticipantId ? sharesById.get(s.splitParticipantId)?.personName : owedById.get(s.owedExpenseId ?? "")?.personName) ?? "")))].sort();
   const netEvents = model.netEvents.map((e) => {
@@ -78,7 +78,8 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     const eventIndex = model.netEvents.findIndex((e) => e.inflowTransactionId === t.id || e.outflowTransactionId === t.id);
     const event = eventIndex < 0 ? null : netEvents[eventIndex];
     return { ...base, person: model.payees.find(p => p.key === t.counterpartyKey)?.person ?? base.person,
-      split: split ? { total: split.total, your_share: split.your_share,
+      split_rev: split?.split_rev ?? "none",
+      split: split ? { split_rev: split.split_rev, total: split.total, your_share: split.your_share,
         shares: shares.filter((s) => s.txn_ref === base.ref).map((s) => ({ ref: s.ref, person: s.person, expected: s.expected, settled: s.settled, left: s.left,
           settlements: settlements.filter((st) => st.share_ref === s.ref).map((st) => ({ ref: st.ref, amount: st.amount, date: st.date, via: st.via, inflow_ref: st.inflow_ref })) })) } : null,
       settles: settlements.filter((s) => s.inflow_ref === base.ref).map((s) => ({ ref: s.ref, amount: s.amount, share_ref: s.share_ref, owed_ref: s.owed_ref, person: s.person, for_txn_ref: s.for_txn_ref })),
@@ -125,6 +126,12 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
   }).sort((a, b) => b.row_count - a.row_count || a.key.localeCompare(b.key));
   const transactionKeys = new Map(model.transactions.map((t) => [txRef(t.id)!, t.counterpartyKey]));
   const linkedInflowRefs = new Set((model.linkedInflows ?? []).flatMap((id) => txRef(id) ? [txRef(id)!] : []));
+  for (const t of model.transactions) {
+    if (t.drCr !== "credit" || !t.residualDisposition) continue;
+    const allocated = model.settlements.filter(s => s.inflowTransactionId === t.id).reduce((n, s) => n + s.amountPaise, 0);
+    const sourced = model.owed.filter(o => o.sourceInflowTransactionId === t.id).reduce((n, o) => n + o.amountPaise, 0);
+    if (allocated + sourced + (t.residualAcknowledgedPaise ?? 0) >= t.amountPaise) linkedInflowRefs.add(txRef(t.id)!);
+  }
   const uncategorizedRefs = new Set(model.transactions.filter(isUncategorized).map(t => txRef(t.id)!));
   return { transactions, transactionKeys, linkedInflowRefs, uncategorizedRefs, shares, owed, settlements, splits, netEvents, people, payees };
 }

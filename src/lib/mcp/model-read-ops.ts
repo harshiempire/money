@@ -43,6 +43,7 @@ export async function loadMcpReadModel(actor: MoneyActor, loadTransactions: () =
         exists (select 1 from ${st} where ${st.inflowTransactionId} = ${t.id})
         or exists (select 1 from ${schema.netEvents} where ${schema.netEvents.userId} = ${actor.userId}
           and (${schema.netEvents.inflowTransactionId} = ${t.id} or ${schema.netEvents.outflowTransactionId} = ${t.id}))
+        or (${t.residualDisposition} in ('kept', 'written_off') and ${t.residualAcknowledgedPaise} >= ${t.amountPaise})
         or exists (select 1 from ${o} where ${o.userId} = ${actor.userId} and ${o.sourceInflowTransactionId} = ${t.id})
       )`)),
   ]);

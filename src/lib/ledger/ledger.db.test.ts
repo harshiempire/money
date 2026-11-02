@@ -8,7 +8,6 @@
  */
 import { describe, expect, test, mock } from "bun:test";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { deriveMcpRevKey, transactionRev } from "@/lib/mcp/refs";
 import { requestHash } from "./rules";
@@ -31,8 +30,11 @@ const readUrl = (file: string | undefined) => {
 };
 if (enabled && process.env.DATABASE_URL !== readUrl(process.env.MONEY_LEDGER_TEST_DBURL_FILE))
   throw new Error("Ledger DB tests run only against the throwaway URL in MONEY_LEDGER_TEST_DBURL_FILE.");
-if (enabled && process.env.DATABASE_URL === readUrl(`${homedir()}/.money-scratch/local-dev/dburl`))
-  throw new Error("Never run ledger DB tests against local-dev; it holds a copy of real data.");
+if (enabled) {
+  const target = new URL(process.env.DATABASE_URL!);
+  if (target.hostname !== "127.0.0.1" || target.port !== "54330" || target.pathname !== "/money_test")
+    throw new Error("Ledger DB tests require the authorized local money_test database.");
+}
 
 describe.skipIf(!enabled)("ledger throwaway DB", () => {
   async function fixture(run: (f: Awaited<ReturnType<typeof seed>>) => Promise<void>) {
@@ -1228,7 +1230,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
   async function phase4Fixture(run: (f: Fixture, api: {
     call: (tool: import("@/lib/mcp/relational-schemas").RelationalTool, args: object) => Promise<Record<string, unknown>>;
     undo: (change: unknown, key: string) => Promise<Record<string, unknown>>;
-    txRef: (id: string) => string; rev: (id: string) => Promise<string>;
+    txRef: (id: string) => string; splitRev: (id: string) => Promise<string>; rev: (id: string) => Promise<string>;
     shareRef: (id: string) => string; owedRef: (id: string) => string;
   }) => Promise<void>) {
     return fixture(async f => {
@@ -1244,6 +1246,12 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
           undo: (change, idempotency_key) => mcpWriteOps.undo(principal, { change_id: String(change), idempotency_key }),
           txRef: id => refs.transactionRef(key, f.actor.userId, id),
           rev: async id => refs.transactionRev(refs.deriveMcpRevKey(process.env.AUTH_SECRET), f.actor.userId, id, await f.read(id)),
+          splitRev: async id => {
+            const { mcpReadOps } = await import("@/lib/mcp/read-ops");
+            const { buildReadView } = await import("@/lib/mcp/model-view");
+            const view = buildReadView(await mcpReadOps.readModel(f.actor), f.actor, key, refs.deriveMcpRevKey(process.env.AUTH_SECRET));
+            return view.transactions.find(t => t.ref === refs.transactionRef(key, f.actor.userId, id))!.split_rev;
+          },
           shareRef: id => refs.shareRef(key, f.actor.userId, f.actor.accountId, id),
           owedRef: id => refs.owedRef(key, f.actor.userId, f.actor.accountId, id),
         });
@@ -1253,6 +1261,86 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       }
     });
   }
+  for (const operation of ["delete_split", "create_split"] as const) {
+    test(`stale split_rev refuses ${operation} after an app edit; a fresh revision works`, () => phase4Fixture(async (f, api) => {
+      const r = await relationalFixture(f);
+      const { relationalSnapshot } = await import("./relational-store");
+      const oldSplitRev = await api.splitRev(f.ids[0]);
+      const oldRelations = await relationalSnapshot(f.db, f.app);
+      const rev = await api.rev(f.ids[0]);
+      await r.splits.createSplit(f.app, { ...r.splitInput, yourSharePaise: 3000,
+        participants: [{ id: r.share.id, personName: "Kiran", expectedAmountPaise: 7000 }] });
+      expect(await api.rev(f.ids[0])).toBe(rev);
+      const current = await api.splitRev(f.ids[0]);
+      expect(current).not.toBe(oldSplitRev);
+      const input = { ref: api.txRef(f.ids[0]), rev, split_rev: oldSplitRev,
+        ...(operation === "create_split" ? { replace_existing: true, equal: true, participants: [{ person: "Kiran" }] } : {}),
+        idempotency_key: `stale-${operation}` };
+      expect(await api.call(operation, input)).toMatchObject({ applied: false, errors: [{ code: "stale", current_split_rev: current }] });
+      // Also prove the core refuses an adapter snapshot captured before the edit,
+      // with current_split_rev taking priority over the generic snapshot guard.
+      const ctx = { ...f.mcp(`locked-${operation}`), expectedRelations: oldRelations, splitRevs: { [f.ids[0]]: oldSplitRev } };
+      const locked = operation === "delete_split"
+        ? r.splits.deleteSplit(ctx, { transactionId: f.ids[0], expectNoSettlements: true })
+        : r.splits.createSplit(ctx, r.splitInput);
+      await expect(locked).rejects.toMatchObject({ code: "stale", current_split_rev: current });
+      expect(await api.splitRev(f.ids[0])).toBe(current);
+      expect((await api.call(operation, { ...input, split_rev: current, idempotency_key: `fresh-${operation}` })).applied).toBe(true);
+      if (operation === "delete_split") expect(await api.splitRev(f.ids[0])).toBe("none");
+      else expect(await api.splitRev(f.ids[0])).not.toBe(current);
+    }));
+  }
+
+  test("sourced owed updates enforce the source cap for MCP and app, excluding the current expense", () => phase4Fixture(async (f, api) => {
+    const { createOwedExpense, updateOwedExpense } = await import("./owed-expenses");
+    await f.db.update(f.schema.transactions).set({ drCr: "credit" }).where(eq(f.schema.transactions.id, f.ids[1]));
+    const created = await createOwedExpense(f.app, { personName: "Kiran", incurredDate: "2026-10-01", description: "Overpayment", amountPaise: 10000, sourceInflowTransactionId: f.ids[1] });
+    const input = { owed_ref: api.owedRef(created.value), amount: "200", idempotency_key: "owed-over-capacity" };
+    expect(await api.call("update_owed_expense", input)).toMatchObject({ applied: false, errors: [{ code: "invalid_input", message: "Source inflow is already explained or has insufficient unallocated money." }] });
+    await expect(updateOwedExpense(f.app, { id: created.value, amountPaise: 20000 })).rejects.toMatchObject({ code: "invalid_input" });
+    expect((await api.call("update_owed_expense", { ...input, amount: "90", idempotency_key: "owed-within-capacity" })).applied).toBe(true);
+    await updateOwedExpense(f.app, { id: created.value, amountPaise: 10000 });
+    const [row] = await f.db.select().from(f.schema.owedExpenses).where(eq(f.schema.owedExpenses.id, created.value));
+    expect(row.amountPaise).toBe(10000);
+  }));
+
+  test("sourced owed updates subtract existing bank allocations from source capacity", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    await r.splits.recordSettlement(f.app, r.bankInput);
+    const [owed] = await f.db.select().from(f.schema.owedExpenses).where(eq(f.schema.owedExpenses.sourceInflowTransactionId, f.ids[1]));
+    await expect(r.owed.updateOwedExpense(f.app, { id: owed.id, amountPaise: 3001 })).rejects.toMatchObject({ code: "invalid_input" });
+    await r.owed.updateOwedExpense(f.app, { id: owed.id, amountPaise: 2500 });
+    await r.owed.updateOwedExpense(f.app, { id: owed.id, amountPaise: 3000 });
+  }));
+
+  test("kept and written-off credits are not unlinked inflows in balances or period review", () => phase4Fixture(async (f, api) => {
+    const r = await relationalFixture(f);
+    const { mcpReadOps } = await import("@/lib/mcp/read-ops");
+    const { buildReadView, getOpenBalances } = await import("@/lib/mcp/model-view");
+    const { reviewPeriod } = await import("@/lib/mcp/period-review");
+    const { deriveMcpRefKey, deriveMcpRevKey } = await import("@/lib/mcp/refs");
+    const { linkPayeesToPerson } = await import("./person-links");
+    await linkPayeesToPerson(f.app, [{ counterpartyId: f.payee, person: "Kiran", currentPerson: null }]);
+    const load = async () => buildReadView(await mcpReadOps.readModel(f.actor), f.actor,
+      deriveMcpRefKey(process.env.AUTH_SECRET), deriveMcpRevKey(process.env.AUTH_SECRET));
+    const ref = api.txRef(f.ids[1]);
+    expect(getOpenBalances(await load(), "Kiran").people[0].unlinked_inflows.map(t => t.txn_ref)).toContain(ref);
+    for (const kind of ["kept", "written_off"] as const) {
+      // No allocations is the regression: there is no settlement row for SQL to find.
+      await r.splits.recordSettlement(f.app, { inflowTransactionId: f.ids[1], allocations: [], residual: { kind } });
+      const view = await load();
+      expect((await f.read(f.ids[1])).residualAcknowledgedPaise).toBe(4000);
+      expect(view.linkedInflowRefs.has(ref)).toBe(true);
+      expect(getOpenBalances(view, "Kiran").people[0].unlinked_inflows).toEqual([]);
+      expect(reviewPeriod(view, { month: "2026-10" }).unlinked_inflows.rows).toEqual([]);
+    }
+    await r.splits.clearSettlement(f.app, { inflowTransactionId: f.ids[1] });
+    expect(getOpenBalances(await load(), "Kiran").people[0].unlinked_inflows).toHaveLength(1);
+    await r.splits.recordSettlement(f.app, { inflowTransactionId: f.ids[1], allocations: r.bankInput.allocations, residual: { kind: "kept" } });
+    expect((await f.read(f.ids[1])).residualAcknowledgedPaise).toBe(3000);
+    expect(reviewPeriod(await load(), {}).unlinked_inflows.count).toBe(0);
+  }));
+
   test("phase4 MCP split, oldest-first partials, exact replay/conflict and settlement then split undo", () => phase4Fixture(async (f, api) => {
     const { RelationalOutput } = await import("@/lib/mcp/relational-schemas");
     const { Schema } = await import("effect");
@@ -1274,9 +1362,9 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       { share_ref: (second.refs as string[]).find(ref => ref.startsWith("shr_")), person: "Kiran", amount: "10.00", left: "30.00" },
     ]);
     expect(settled.left_open).toBe("30.00"); expect(settled.unallocated).toBe("0.00");
-    const replacement = await api.call("create_split", { ...input, replace_existing: true, idempotency_key: "p4-refuse-replace" });
+    const replacement = await api.call("create_split", { ...input, replace_existing: true, split_rev: await api.splitRev(f.ids[0]), idempotency_key: "p4-refuse-replace" });
     expect(replacement.applied).toBe(false); expect(JSON.stringify(replacement)).toContain("Kiran");
-    const deletion = await api.call("delete_split", { ref, rev: await api.rev(f.ids[0]), idempotency_key: "p4-refuse-delete" });
+    const deletion = await api.call("delete_split", { ref, rev: await api.rev(f.ids[0]), split_rev: await api.splitRev(f.ids[0]), idempotency_key: "p4-refuse-delete" });
     expect(deletion.applied).toBe(false);
     const inflow2 = crypto.randomUUID();
     await f.db.insert(f.schema.transactions).values({ id: inflow2, accountId: f.actor.accountId, txnDate: "2026-10-03", amountPaise: 1500, drCr: "credit", channel: "other", refId: crypto.randomUUID(), rawDescription: "More repayment" });
