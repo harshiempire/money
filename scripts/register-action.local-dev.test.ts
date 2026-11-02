@@ -13,7 +13,8 @@
  */
 import { expect, mock, test } from "bun:test";
 
-const onLocalDev = process.env.DATABASE_URL?.includes("<local-dev-endpoint>") ?? false;
+const { isLocalDevDatabase } = await import("./lib/local-dev-guard");
+const onLocalDev = isLocalDevDatabase();
 
 test.skipIf(!onLocalDev)("registration: validation, rate limit, duplicates, sign-in outcomes", async () => {
   const realPassword = await import("../src/lib/password");

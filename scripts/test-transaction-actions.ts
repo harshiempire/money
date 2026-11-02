@@ -14,11 +14,8 @@
  */
 export {};
 
-const LOCAL_DEV_ENDPOINT = "<local-dev-endpoint>";
-if (!process.env.DATABASE_URL?.includes(LOCAL_DEV_ENDPOINT)) {
-  console.error(`Refusing to run: DATABASE_URL is not the local-dev branch (${LOCAL_DEV_ENDPOINT}).`);
-  process.exit(2);
-}
+const { requireLocalDevDatabase } = await import("./lib/local-dev-guard");
+requireLocalDevDatabase();
 
 const { eq, inArray } = await import("drizzle-orm");
 const { Layer } = await import("effect");
