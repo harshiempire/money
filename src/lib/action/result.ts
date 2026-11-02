@@ -29,6 +29,9 @@ export type ActionResult<T> = { ok: true; data: T } | ActionFailure;
 
 export const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
+/** State shape for forms driven by React's useActionState (see asFormAction). */
+export type FormState = { error?: string; field?: string };
+
 /**
  * For callers that would rather throw on failure (e.g. inside a TanStack
  * Query `queryFn`). The thrown error is created in the browser, so its

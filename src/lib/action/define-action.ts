@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { sessionUser } from "@/lib/auth/require-current-user";
 import { runAction, type ActionSpec } from "./core";
 import { Unauthenticated } from "./errors";
-import type { ActionResult } from "./result";
+import type { ActionResult, FormState } from "./result";
 import { CurrentUser, Db } from "./services";
 
 /**
@@ -59,6 +59,26 @@ export function definePublicAction<I, IEncoded, A>(
       rethrow: unstable_rethrow,
       onSuccess: () => spec.revalidate?.forEach((p) => revalidatePath(p)),
     });
+}
+
+/**
+ * Adapts an action for React's useActionState, which calls it as
+ * (previousState, formData) and keeps whatever it returns as form state.
+ * Exported from a "use server" file it stays a real server action, so the
+ * form also works before JavaScript loads.
+ *
+ *   export const registerUser = asFormAction(definePublicAction("registerUser", spec));
+ */
+export function asFormAction<I>(
+  action: (input: I) => Promise<ActionResult<unknown>>,
+): (previous: FormState, input: I) => Promise<FormState> {
+  return async (_previous, input) => {
+    const result = await action(input);
+    if (result.ok) return {};
+    return result.field === undefined
+      ? { error: result.message }
+      : { error: result.message, field: result.field };
+  };
 }
 
 const CurrentUserLive = Layer.effect(

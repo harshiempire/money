@@ -29,6 +29,7 @@
     "test:reimbursement-actions": "bun run --conditions=react-server scripts/test-reimbursement-actions.ts",
     "test:transaction-actions": "bun run --conditions=react-server scripts/test-transaction-actions.ts",
     "test:import-actions": "bun run --conditions=react-server scripts/test-import-actions.ts",
+    "test:register-action": "bun test --conditions=react-server ./scripts/register-action.local-dev.test.ts",
     "perf:http-pages": "bun run scripts/perf-http-pages.ts",
     "ingest:bob": "bun run scripts/test-bob-parser.ts",
     "compare:bob": "bun run scripts/compare-bob-pdfs.ts"

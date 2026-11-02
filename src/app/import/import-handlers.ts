@@ -33,7 +33,7 @@ export type ImportSuccess = {
 
 // The browser sends the <form> as FormData; its fields are read below exactly
 // as before (a file must be a non-empty File; the password is trimmed).
-const Upload = Schema.instanceOf(FormData);
+const Upload = Schema.instanceOf(FormData, { expected: "form data" });
 
 export const uploadStatementSpec: ActionSpec<FormData, FormData, ImportSuccess, CurrentUser | Db> = {
   input: Upload,

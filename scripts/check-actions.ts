@@ -17,11 +17,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LEGACY = new Set([
-  "src/app/auth/actions.ts",
   "src/app/talk/actions.ts",
 ]);
 
 const BARE_EXPORT = /^export\s+(async\s+)?function\s+(\w+)/gm;
+// `export const x = <anything but a define*/asFormAction wrapper>` — catches
+// arrow functions and other unwrapped values. Type exports don't match.
+const UNWRAPPED_CONST = /^export\s+const\s+(\w+)\s*=(?!\s*(?:defineAction|definePublicAction|asFormAction)\()/gm;
 const USE_SERVER = /^\s*(['"])use server\1;?/;
 
 const problems: string[] = [];
@@ -36,7 +38,10 @@ for (const path of files) {
   if (!USE_SERVER.test(text)) continue;
   seen.add(path);
 
-  const bare = [...text.matchAll(BARE_EXPORT)].map((m) => m[2]);
+  const bare = [
+    ...[...text.matchAll(BARE_EXPORT)].map((m) => m[2]),
+    ...[...text.matchAll(UNWRAPPED_CONST)].map((m) => m[1]),
+  ];
   if (LEGACY.has(path)) {
     if (bare.length === 0) {
       problems.push(`${path}: fully migrated — remove it from LEGACY in scripts/check-actions.ts`);
