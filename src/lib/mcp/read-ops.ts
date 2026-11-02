@@ -1,18 +1,20 @@
 import "server-only";
-import { and, eq, gte, inArray, isNull, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { readStandingNotes } from "@/lib/assistant/actor-ops";
 import { loadCategories } from "@/lib/assistant/data";
-import { monthBounds } from "@/lib/assistant/tag-store";
-import { modelSafeText, userChosenDisplayName } from "@/lib/assistant/model-view";
-import { resolveSpendPeriod } from "@/lib/spend/period";
 import { categoryBreakdown, loadPeriodTxnMetrics } from "@/domain/spend/net";
-import { mapPeriodMetrics } from "@/domain/spend/period-metrics";
 import { storeProposedDraft } from "./draft-store";
 import type { McpOps } from "./server";
-import { bankPayeeLabel, rupees } from "./view";
+import { counterpartyLabel } from "@/lib/format";
+import { uncategorizedCondition } from "@/domain/spend/uncategorized";
+import { resolveMcpPeriod } from "./range";
+import { buildOverview } from "./overview";
+import { loadMcpSummary } from "./summary";
+import { McpToolError } from "./pagination";
+import type { PeriodInput } from "./schemas";
 
 const t = schema.transactions;
 const defaultCategory = alias(schema.categories, "payee_default_category");
@@ -20,12 +22,31 @@ const account = schema.moneyAccounts;
 const ownsAccount = (actor: MoneyActor) =>
   and(eq(account.id, actor.accountId), eq(account.userId, actor.userId));
 
+const txnRange = (period: { from: string | null; to: string | null }) => [
+  period.from ? gte(t.txnDate, period.from) : undefined,
+  period.to ? lte(t.txnDate, period.to) : undefined,
+];
+
+async function loadOpenShares(actor: MoneyActor, input: PeriodInput) {
+  const participant = schema.splitParticipants;
+  const rows = await db.select({
+    txnDate: t.txnDate,
+    personName: participant.personName,
+    outstandingPaise: sql<number>`greatest(0, ${participant.expectedAmountPaise} - coalesce(
+      (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+       where ${schema.settlements.splitParticipantId} = ${participant.id}), 0))::bigint`,
+  }).from(participant)
+    .innerJoin(schema.splits, eq(participant.splitId, schema.splits.id))
+    .innerJoin(t, eq(schema.splits.transactionId, t.id))
+    .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))
+    .where(and(eq(t.accountId, actor.accountId), ...txnRange(resolveMcpPeriod(input))));
+  return rows.map((row) => ({ ...row, outstandingPaise: Number(row.outstandingPaise) }));
+}
+
 export const mcpReadOps: McpOps = {
   listCategories: (actor) => loadCategories(actor.userId),
   async listTransactions(actor, input) {
-    const bounds = input.month
-      ? monthBounds(Number(input.month.slice(0, 4)), Number(input.month.slice(5, 7)))
-      : null;
+    const bounds = resolveMcpPeriod(input);
     const rows = await db
       .select({
         id: t.id,
@@ -59,56 +80,48 @@ export const mcpReadOps: McpOps = {
       .where(
         and(
           eq(t.accountId, actor.accountId),
-          bounds ? and(gte(t.txnDate, bounds.from), lt(t.txnDate, bounds.to)) : undefined,
-          input.uncategorized ? isNull(t.categoryId) : undefined,
+          ...txnRange(bounds),
+          input.uncategorized ? uncategorizedCondition(t.categoryId) : undefined,
+          input.direction ? eq(t.drCr, input.direction === "paid" ? "debit" : "credit") : undefined,
+          input.category !== undefined ? eq(schema.categories.name, input.category) : undefined,
         ),
       );
-    return rows.map(({ rawDescription, counterpartyKind, counterpartyKey, ...row }) => ({
-      ...row,
-      displayName: userChosenDisplayName({ kind: counterpartyKind, key: counterpartyKey, displayName: row.displayName }),
-      label: bankPayeeLabel(rawDescription),
-    }));
+    return rows.map((row) => ({ ...row, label: counterpartyLabel(row.rawDescription) }));
   },
-  async periodSummary(actor, month) {
-    const resolved = await resolveSpendPeriod(actor.accountId, month ? { month } : {});
-    const { period } = resolved;
-    const [metrics, breakdown] = await Promise.all([
-      loadPeriodTxnMetrics(actor.accountId, period.from, period.to, actor.userId),
-      categoryBreakdown(actor.accountId, period.from, period.to, actor.userId),
+  async overview(actor) {
+    const [transactions, shares, payables] = await Promise.all([
+      db.select({
+        txnDate: t.txnDate,
+        amountPaise: t.amountPaise,
+        drCr: t.drCr,
+        categoryId: t.categoryId,
+        hasSplit: sql<boolean>`exists (select 1 from ${schema.splits} where ${schema.splits.transactionId} = ${t.id})`,
+      }).from(t)
+        .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))
+        .where(eq(t.accountId, actor.accountId)),
+      loadOpenShares(actor, {}),
+      db.select({
+        personName: schema.owedExpenses.personName,
+        outstandingPaise: sql<number>`greatest(0, ${schema.owedExpenses.amountPaise} - coalesce(
+          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
+           where ${schema.settlements.owedExpenseId} = ${schema.owedExpenses.id}), 0))::bigint`,
+      }).from(schema.owedExpenses)
+        .innerJoin(account, ownsAccount(actor))
+        .where(eq(schema.owedExpenses.userId, actor.userId)),
     ]);
-    const { totals, bridge, triage } = mapPeriodMetrics(metrics);
-    return {
-      period: {
-        from: period.from,
-        to: period.to,
-        label: period.label,
-        partial: resolved.isPartial,
-      },
-      totals: {
-        total_debit: rupees(totals.totalDebitPaise),
-        total_credit: rupees(totals.totalCreditPaise),
-        net_self: rupees(totals.netSelfPaise),
-        owed_self: rupees(totals.owedSelfPaise),
-        count: totals.count,
-      },
-      bridge: {
-        personal_debit_gross: rupees(bridge.personalDebitGrossPaise),
-        your_share_debit: rupees(bridge.yourShareDebitPaise),
-        others_share: rupees(bridge.othersSharePaise),
-        net_credit: rupees(bridge.netCreditPaise),
-        split_txn_count: bridge.splitTxnCount,
-      },
-      triage: {
-        uncategorized_net_self: rupees(triage.uncategorizedNetSelfPaise),
-        uncategorized_count: triage.uncategorizedCount,
-        needs_review_count: triage.needsReviewCount,
-      },
-      categories: breakdown.map((c) => ({
-        category: modelSafeText(c.categoryName, c.categoryName.length) ?? "Category omitted",
-        net: rupees(c.netSelfPaise),
-        count: c.count,
-      })),
-    };
+    return buildOverview(transactions, shares, payables.map((row) => ({
+      ...row, outstandingPaise: Number(row.outstandingPaise),
+    })));
+  },
+  async periodSummary(actor, input) {
+    // Domain spend loaders take trusted ids; verify the account/user pair before calling them.
+    const [owned] = await db.select({ id: account.id }).from(account).where(ownsAccount(actor)).limit(1);
+    if (!owned) throw new McpToolError("That account isn't available.");
+    return loadMcpSummary(actor, input, {
+      metrics: loadPeriodTxnMetrics,
+      categories: categoryBreakdown,
+      openShares: loadOpenShares,
+    });
   },
   async standingNotes(actor) {
     return (await readStandingNotes(actor)).map((n) => n.body);

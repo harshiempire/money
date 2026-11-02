@@ -2,7 +2,6 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
-import { modelSafeText } from "@/lib/assistant/model-view";
 import { editTransactionFields, type EditResult } from "@/lib/ledger/transaction-fields";
 import { setPayeeDefault, type PayeeResult } from "@/lib/ledger/payee-default";
 import { undoChange, type UndoResult } from "@/lib/ledger/undo";
@@ -148,9 +147,9 @@ export const mcpWriteOps: McpWriteOps = {
       changes: rows.map((row) => ({
         change_id: row.id,
         at: row.createdAt.toISOString(),
-        by: modelSafeText(row.sourceLabel, 40) ?? "Agent",
-        kind: modelSafeText(row.kind) ?? "change",
-        summary: modelSafeText(row.summary, 200),
+        by: row.sourceLabel ?? "Agent",
+        kind: row.kind,
+        summary: row.summary,
         rows: row.ops.length,
         undone: row.undoneByChangeId !== null,
         ...(row.undoesChangeId ? { undoes: row.undoesChangeId } : {}),

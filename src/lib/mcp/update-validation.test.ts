@@ -75,17 +75,17 @@ test("scope nesting and idempotency key boundaries", () => {
     expect(Schema.is(IdempotencyKey)(key)).toBe(false);
 });
 
-test("write category names round-trip the redacted list exactly and refuse ambiguous names", () => {
-  expect(resolveCategoryName([{ id: "one", name: "  Food   and dining " }], "Food and dining")).toBe("one");
+test("write category names round-trip the unfiltered list exactly and refuse ambiguous names", () => {
+  const name = "  Food   and dining ";
+  expect(resolveCategoryName([{ id: "one", name }], name)).toBe("one");
+  expect(resolveCategoryName([{ id: "one", name }], "Food and dining")).toBeUndefined();
   expect(resolveCategoryName([{ id: "one", name: "Food" }], "food")).toBeUndefined();
-  expect(resolveCategoryName([{ id: "one", name: "private@bank" }], "private@bank")).toBeUndefined();
-  expect(
-    resolveCategoryName(
-      [
-        { id: "one", name: "Food" },
-        { id: "two", name: " Food " },
-      ],
-      "Food",
-    ),
-  ).toBeUndefined();
+  expect(resolveCategoryName([{ id: "one", name: "private@bank" }], "private@bank")).toBe("one");
+  expect(resolveCategoryName([{ id: "one", name: "Food" }, { id: "two", name: "Food" }], "Food")).toBeUndefined();
+});
+
+test("notes containing handles and long numbers remain writable with the current revision", () => {
+  expect(validateTransactionUpdates([{ ...row, note: "ravi@bank 9876543210" }], context)).toMatchObject({
+    errors: [], edits: [{ set: { note: "ravi@bank 9876543210" } }],
+  });
 });

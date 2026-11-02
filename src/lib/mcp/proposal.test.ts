@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { validateTagProposal, decodeStoredTagRows } from "./proposal";
+import { Result, Schema } from "effect";
+import { validateTagProposal, decodeStoredTagRows, ProposalRow } from "./proposal";
 const context = {
   transactions: new Map([
     [
@@ -129,7 +130,7 @@ test("mixed proposals preserve good rows and reject each bad row independently",
       categoryId: "cat-food",
       expectedCurrentCategoryId: null,
       confidence: "medium",
-      reason: null,
+      reason: "name@bank 9876543210",
     },
   ]);
   expect(result.rejected.map((r) => [r.index, r.code])).toEqual([
@@ -171,4 +172,11 @@ test("all bad produces no accepted rows; stored JSON is decoded row by row", () 
     rows: [],
     malformed: 1,
   });
+});
+
+test("proposal text is length-limited now that it isn't redacted", () => {
+  const ok = Schema.decodeUnknownResult(ProposalRow);
+  expect(Result.isSuccess(ok({ ref: "txn_a", category: "Food", reason: "x".repeat(200) }))).toBe(true);
+  expect(Result.isFailure(ok({ ref: "txn_a", category: "Food", reason: "x".repeat(201) }))).toBe(true);
+  expect(Result.isFailure(ok({ ref: "x".repeat(81), category: "Food" }))).toBe(true);
 });

@@ -10,7 +10,6 @@ import {
   Fields,
   Guard,
   guardMatches,
-  noteHiddenFromAgent,
   sameFields,
   SetFields,
   type Operation,
@@ -30,7 +29,7 @@ const Input = Schema.Struct({
 });
 export type RowError = {
   transactionId: string;
-  code: "not_found" | "stale" | "invalid_category" | "invalid_row" | "note_hidden";
+  code: "not_found" | "stale" | "invalid_category" | "invalid_row";
   message: string;
   currentRev?: string;
 };
@@ -89,11 +88,6 @@ export async function editTransactionFields(
           continue;
         }
         const before = Schema.decodeUnknownSync(Fields)(row);
-        // Checked before the guard, so a stale reply never hints whether a guessed note matched.
-        if (ctx.source === "mcp" && edit.set.note !== undefined && noteHiddenFromAgent(before.note)) {
-          error("note_hidden", "This transaction has a note you can't see. Ask the owner to edit it in Money.");
-          continue;
-        }
         const rev =
           edit.guard?.rev !== undefined
             ? transactionRev(deriveMcpRevKey(process.env.AUTH_SECRET), ctx.actor.userId, row.id, before)

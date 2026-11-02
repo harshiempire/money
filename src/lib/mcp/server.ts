@@ -1,8 +1,6 @@
 import { McpServer, type CallToolResult, type McpRequestContext } from "@modelcontextprotocol/server";
 import { Result, Schema } from "effect";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
-import { modelSafeText } from "@/lib/assistant/model-view";
-import { standingNotesForModel } from "@/lib/assistant/tag-batch";
 import type { McpPrincipal } from "./auth";
 import { McpScope, scopeAllows } from "./token";
 import { LedgerError } from "@/lib/ledger/context";
@@ -16,7 +14,9 @@ import {
   CategoriesOutput,
   EmptyInput,
   ListTransactionsInput,
-  MonthInput,
+  PeriodInput,
+  OverviewOutput,
+  type Overview,
   NotesOutput,
   ProposeInput,
   ProposeOutput,
@@ -34,7 +34,8 @@ export interface McpOps {
     }>
   >;
   listTransactions(actor: MoneyActor, input: ListTransactionsInput): Promise<McpTransaction[]>;
-  periodSummary(actor: MoneyActor, month?: string): Promise<PeriodSummary>;
+  overview(actor: MoneyActor): Promise<Overview>;
+  periodSummary(actor: MoneyActor, input: PeriodInput): Promise<PeriodSummary>;
   standingNotes(actor: MoneyActor): Promise<string[]>;
   transactionIds(actor: MoneyActor): Promise<string[]>;
   proposalTransactions(
@@ -118,36 +119,42 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     },
     {
       instructions:
-        principal.scope === "write"
-          ? "Access to one Money account. Write tools change categories, notes, flags and payee defaults directly. Read current refs and revs first. Every write requires an idempotency key; reuse it only for the identical request. Changes can be undone with undo_change or from Connections. propose_tags still only stores a review draft."
-          : "Read access to one Money account. propose_tags only stores a draft; nothing changes until the owner presses Apply in Money.",
+        "Start with get_overview. Never assume a month; look across months or all time when needed. " +
+        "Amounts are exact rupee strings; never do money math in your head, use tool results. " +
+        "A person can have several UPI handles; do not assume one handle identifies all their payments. " +
+        "Never bypass the MCP with DB scripts, app internals or .env files. If a tool is missing, say so. " +
+        (principal.scope === "write"
+          ? "Write tools change this account directly. Before writing, read current refs and revs. Use a fresh idempotency key per request; reuse it only for an identical retry. Afterwards report what changed and the change id for undo_change or Connections. "
+          : "Read access to this account. ") +
+        "propose_tags stays draft-only; nothing changes until the owner presses Apply in Money.",
     },
   );
   const actor = principal.actor;
   const read = { readOnlyHint: true };
   server.registerTool(
+    "get_overview",
+    {
+      title: "Get account overview",
+      description: "Call this first. Read the transaction date range, oldest-first monthly counts and exact paid/received totals, uncategorized counts, split counts and open shares, plus all-time totals and people with open balances.",
+      inputSchema: standard(EmptyInput),
+      outputSchema: standard(OverviewOutput),
+      annotations: read,
+    },
+    () => safely(async () => result(await ops.overview(actor))),
+  );
+  server.registerTool(
     "list_categories",
     {
       title: "List categories",
       description:
-        "List safe category names and kinds for this account. Use these exact names in propose_tags.",
+        "List full category names and kinds for this account. Use these exact names in propose_tags.",
       inputSchema: standard(EmptyInput),
       outputSchema: standard(CategoriesOutput),
       annotations: read,
     },
     () =>
       safely(async () => {
-        const categories = (await ops.listCategories(actor)).flatMap((c) => {
-          const name = modelSafeText(c.name, c.name.length);
-          return name
-            ? [
-                {
-                  name,
-                  kind: modelSafeText(c.kind) ?? "spend",
-                },
-              ]
-            : [];
-        });
+        const categories = (await ops.listCategories(actor)).map(({ name, kind }) => ({ name, kind }));
         return result({ categories });
       }),
   );
@@ -156,9 +163,9 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     {
       title: "List transactions",
       description:
-        "List transactions filtered by month, uncategorized status or payee, up to 100 per page. Returns " +
-        "opaque refs and amounts as exact rupee strings. Payee is a redacted display name; its filter " +
-        "searches only that safe name.",
+        "List full transactions by month OR inclusive from/to, or neither for all time, up to 100 per page. " +
+        "Filter by direction, exact category, uncategorized status or a substring of payee, handle or raw description. " +
+        "Returns opaque refs/revs and exact rupee strings; no database ids.",
       inputSchema: standard(ListTransactionsInput),
       outputSchema: standard(TransactionsOutput),
       annotations: read,
@@ -173,33 +180,27 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     {
       title: "Get period summary",
       description:
-        "Read spending totals, category breakdown and triage counts for a month or the default period. " +
+        "Read spending totals, category breakdown and triage counts for a month OR inclusive from/to; neither means all time. " +
         "Money amounts are exact rupee strings.",
-      inputSchema: standard(MonthInput),
+      inputSchema: standard(PeriodInput),
       outputSchema: standard(SummaryOutput),
       annotations: read,
     },
-    (input) => safely(async () => result(await ops.periodSummary(actor, input.month))),
+    (input) => safely(async () => result(await ops.periodSummary(actor, input))),
   );
   server.registerTool(
     "list_standing_notes",
     {
       title: "List standing notes",
       description:
-        "Read the owner's safe standing notes for interpreting transactions; reports how many notes were " +
-        "omitted by redaction.",
+        "Read the owner's full standing notes for interpreting transactions.",
       inputSchema: standard(EmptyInput),
       outputSchema: standard(NotesOutput),
       annotations: read,
     },
     () =>
       safely(async () => {
-        const all = await ops.standingNotes(actor);
-        const notes = standingNotesForModel(all);
-        return result({
-          notes,
-          omitted: all.length - notes.length,
-        });
+        return result({ notes: await ops.standingNotes(actor) });
       }),
   );
   if (scopeAllows(principal.scope, "propose")) {
@@ -245,7 +246,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
           if (accepted.length)
             await ops.storeDraft(principal, {
               rows: accepted,
-              title: modelSafeText(input.title, 60),
+              title: input.title ?? null,
               rejectedCount: rejected.length,
             });
           return result({
@@ -267,7 +268,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
       inputSchema: standard(PayeeInput), outputSchema: standard(WriteOutput), annotations: { readOnlyHint: false, destructiveHint: false },
     }, (input) => safely(async () => result(await requireWrites().payee(principal, input))));
     server.registerTool("list_changes", {
-      title: "List recent changes", description: "Read the newest changes from the app and agents, including change ids for Undo and redacted reasons. Newest first, up to 50 per page.",
+      title: "List recent changes", description: "Read the newest changes from the app and agents, including change ids for Undo and full reasons. Newest first, up to 50 per page.",
       inputSchema: standard(ChangesInput), outputSchema: standard(ChangesOutput), annotations: read,
     }, (input) => safely(async () => result(await requireWrites().changes(principal, input))));
     server.registerTool("undo_change", {

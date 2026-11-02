@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { Schema } from "effect";
-import { modelSafeText } from "@/lib/assistant/model-view";
 
 export const Fields = Schema.Struct({
   categoryId: Schema.NullOr(Schema.String),
@@ -35,8 +34,6 @@ export const SetFields = Schema.Struct({
 });
 export type SetFields = typeof SetFields.Type;
 export const cleanNote = (note: string | null) => note?.trim() || null;
-/** Agents never see a note that fails modelSafeText, so they may not replace one or confirm a guess of it. */
-export const noteHiddenFromAgent = (note: string | null) => note !== null && modelSafeText(note) === null;
 export function guardMatches(before: Fields, guard?: Guard, rev?: string): boolean {
   return (
     !guard ||

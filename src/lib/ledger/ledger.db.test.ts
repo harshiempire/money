@@ -395,7 +395,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     60000,
   );
   test(
-    "MCP adapters persist exact replies, redact history, reject atomic batches and expose safe payee defaults",
+    "MCP adapters persist exact replies, return full history, reject atomic batches and expose payee defaults",
     () =>
       fixture(async (f) => {
         const { mcpWriteOps } = await import("@/lib/mcp/write-ops");
@@ -451,8 +451,8 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
           expect(noReason.applied).toBe(true);
           expect((await f.read()).needsReview).toBe(true);
           const history = await mcpWriteOps.changes(principal, { limit: 50 });
-          expect(JSON.stringify(history)).not.toContain("private");
-          expect(JSON.stringify(history)).not.toContain("12345678");
+          expect(JSON.stringify(history)).toContain("private@bank");
+          expect(JSON.stringify(history)).toContain("12345678");
           expect(JSON.stringify(history)).not.toContain(f.actor.userId);
           expect(JSON.stringify(history)).not.toContain(f.ids[0]);
           const payee = await mcpWriteOps.payee(principal, {
@@ -517,37 +517,6 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
         expect(result.changeId).toBeNull();
         expect((await f.listChanges(f.actor))[0].ops).toEqual([]);
         expect((await f.editTransactionFields(ctx, input)).replayed).toBe(true);
-      }),
-    60000,
-  );
-  test(
-    "agents can't replace or undo over a note they can't see; the owner can",
-    () =>
-      fixture(async (f) => {
-        const hidden = "paid 9876543210";
-        const saved = await f.editTransactionFields(f.app, {
-          kind: "transaction_fields",
-          edits: [{ transactionId: f.ids[0], set: { note: hidden } }],
-        });
-        const edit = (key: string, set: { note?: string | null; needsReview?: boolean }) =>
-          f.editTransactionFields(f.mcp(key, set), {
-            kind: "transaction_fields",
-            edits: [{ transactionId: f.ids[0], set }],
-          });
-        for (const note of [hidden, "guess", null]) {
-          const refused = await edit(`hidden-${String(note)}`, { note });
-          expect(refused.errors?.[0].code).toBe("note_hidden");
-        }
-        expect((await f.read()).note).toBe(hidden);
-        await expect(f.undoChange(f.mcp("hidden-undo-1"), saved.changeId!)).rejects.toMatchObject({
-          code: "note_hidden",
-        });
-        expect((await f.read()).note).toBe(hidden);
-        const flag = await edit("hidden-flag-1", { needsReview: true });
-        expect(flag.errors).toBeUndefined();
-        expect((await f.undoChange(f.mcp("hidden-undo-flag"), flag.changeId!)).changeId).not.toBeNull();
-        expect((await f.undoChange(f.app, saved.changeId!)).changeId).not.toBeNull();
-        expect((await f.read()).note).toBeNull();
       }),
     60000,
   );

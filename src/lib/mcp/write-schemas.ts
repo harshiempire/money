@@ -8,7 +8,7 @@ export const UpdateRow = Schema.Struct({
   ref: described(Schema.String, "Opaque transaction ref from list_transactions."),
   rev: described(
     Schema.String,
-    "The rev returned by list_transactions; required even when the note is hidden.",
+    "The current rev returned by list_transactions; required for every edit.",
   ),
   category: Schema.optionalKey(
     described(Schema.NullOr(Schema.String), "Exact category name from list_categories, or null to clear."),
@@ -103,6 +103,6 @@ export const ChangesOutput = Schema.Struct({
       undone: Schema.Boolean,
       undoes: Schema.optionalKey(Schema.String),
     }),
-  ).annotate({ description: "Newest changes first. Text is always redacted." }),
+  ).annotate({ description: "Newest changes first, with full labels and reasons." }),
   next_cursor: Schema.NullOr(Schema.String).annotate({ description: "Cursor for the next page, or null." }),
 });

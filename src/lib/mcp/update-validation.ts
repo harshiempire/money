@@ -1,13 +1,12 @@
 import { Result, Schema } from "effect";
 import type { Edit } from "@/lib/ledger/transaction-fields";
-import { modelSafeText } from "@/lib/assistant/model-view";
 import { UpdateRow } from "./write-schemas";
 export function resolveCategoryName(
   categories: readonly { id: string; name: string }[],
   name: string | null,
 ): string | null | undefined {
   if (name === null) return null;
-  const matches = categories.filter((c) => modelSafeText(c.name, c.name.length) === name);
+  const matches = categories.filter((c) => c.name === name);
   return matches.length === 1 ? matches[0].id : undefined;
 }
 export type UpdateError = {

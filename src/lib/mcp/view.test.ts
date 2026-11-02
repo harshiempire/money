@@ -1,55 +1,40 @@
 import { expect, test } from "bun:test";
 import { deriveMcpRefKey, transactionRef } from "./refs";
-import { transactionView, validatePayeeFilter, rupees, bankPayeeLabel } from "./view";
-import { userChosenDisplayName } from "@/lib/assistant/model-view";
-import type { McpTransaction } from "./view";
+import { transactionView, rupees, type McpTransaction } from "./view";
 
-test("transaction views omit bank text, handles, digits and unsafe notes", () => {
-  const rawDescription = "UPI/123456789/09:00/UPI/private.handle@bank/9876543210";
-  const view = transactionView(
-    {
-      id: "private-db-id",
-      txnDate: "2026-10-01",
-      amountPaise: 123450,
-      drCr: "debit",
-      channel: "upi",
-      displayName: "private.handle@bank",
-      parsedPurpose: "Lunch",
-      label: bankPayeeLabel(rawDescription),
-      note: "mail me@home",
-      category: "Food",
-      isTransfer: false,
-      categoryId: null, needsReview: false,
-    },
-    "opaque-ref", "rev-test",
-  );
+const row: McpTransaction = {
+  id: "private-db-id", txnDate: "2026-10-01", amountPaise: 123450, drCr: "debit", channel: "upi",
+  displayName: "private.handle@bank", counterpartyKey: "private.handle@bank", counterpartyKind: "upi_handle",
+  parsedPurpose: "Petr", label: "Bank label", rawDescription: "UPI/123456789/09:00/UPI/private.handle@bank/9876543210",
+  note: "mail me@home 9876543210", category: "Food 12345", defaultCategory: "private@category",
+  isTransfer: false, categoryId: "private-category-id", needsReview: false,
+};
+
+test("MCP returns full bank text, handles, purpose, notes and categories without database ids", () => {
+  const view = transactionView(row, "opaque-ref", "rev-test");
   expect(view).toEqual({
-    ref: "opaque-ref",
-    rev: "rev-test", needs_review: false,
-    date: "2026-10-01",
-    amount: "1234.50",
-    direction: "paid",
-    channel: "upi",
-    payee: "Lunch",
-    note: null,
-    category: "Food",
-    payee_default: null,
-    transfer: false,
+    ref: "opaque-ref", rev: "rev-test", needs_review: false,
+    date: "2026-10-01", amount: "1234.50", direction: "paid", channel: "upi",
+    payee: row.displayName!, handle: row.counterpartyKey, raw_description: row.rawDescription,
+    purpose: "Petr", note: row.note, category: row.category, payee_default: row.defaultCategory!, transfer: false,
   });
-  const json = JSON.stringify(view);
-  for (const secret of [
-    "private",
-    "handle",
-    "bank",
-    "9876543210",
-    "123456789",
-    "private-db-id",
-    rawDescription,
-  ])
-    expect(json).not.toContain(secret);
+  for (const id of [row.id, row.categoryId!]) expect(JSON.stringify(view)).not.toContain(id);
   expect(rupees(-1)).toBe("-0.01");
   expect(rupees(9007199254740991)).toBe("90071992547409.91");
+  expect(() => rupees(1.5)).toThrow();
 });
+
+test("payee fallback preserves display name, purpose, key and bank label in that order", () => {
+  expect(transactionView({ ...row, displayName: null }, "ref", "rev").payee).toBe("Petr");
+  const noPurpose = { ...row, displayName: null, parsedPurpose: null };
+  expect(transactionView(noPurpose, "ref", "rev").payee).toBe("private.handle@bank");
+  expect(transactionView({ ...noPurpose, counterpartyKey: null }, "ref", "rev").payee).toBe("Bank label");
+  expect(transactionView({ ...row, counterpartyKind: "bank_name" }, "ref", "rev").handle).toBeNull();
+  expect(transactionView({ ...row, note: null, category: null, defaultCategory: null, drCr: "credit" }, "ref", "rev")).toMatchObject({
+    note: null, category: null, payee_default: null, direction: "received",
+  });
+});
+
 test("refs are stable, user-bound and key-bound; configuration has no default", () => {
   const key = deriveMcpRefKey("test-secret");
   const ref = transactionRef(key, "alice", "hidden-db-id");
@@ -60,58 +45,4 @@ test("refs are stable, user-bound and key-bound; configuration has no default", 
   expect(ref).not.toContain("hidden-db-id");
   expect(transactionRef(key, "alice", "another-db-id")).not.toBe(ref);
   expect(() => deriveMcpRefKey(undefined)).toThrow("not configured");
-});
-test("payee filters refuse the same unsafe text the view omits", () => {
-  expect(validatePayeeFilter("lunch")).toBe("lunch");
-  expect(() => validatePayeeFilter("name@bank")).toThrow();
-  expect(() => validatePayeeFilter("12345")).toThrow();
-});
-
-test("bank label extraction never exposes a fragment of a wrapped UPI handle", () => {
-  const raw = "UPI/123456789/09:00/UPI/private.handle- 1@okaxis";
-  const view = transactionView(
-    {
-      id: "db",
-      txnDate: "2026-10-01",
-      amountPaise: 100,
-      drCr: "debit",
-      channel: "upi",
-      displayName: null,
-      parsedPurpose: null,
-      label: bankPayeeLabel(raw),
-      note: null,
-      category: null,
-      isTransfer: false,
-      categoryId: null, needsReview: false,
-    },
-    "ref", "rev-test",
-  );
-  expect(view.payee).toBe("Payee");
-  expect(JSON.stringify(view)).not.toContain("private.handle");
-  expect(bankPayeeLabel("NEFT-ABCD123-JANE DOE")).toBe("JANE DOE");
-  expect(bankPayeeLabel("ordinary bank description")).toBe("Payee");
-});
-
-test("MCP payees omit handle-shaped display names and purposes, preserving normal names", () => {
-  const row: McpTransaction = {
-    id: "db", txnDate: "2026-10-01", amountPaise: 100, drCr: "debit", channel: "upi",
-    displayName: null, parsedPurpose: null, label: "Payee", note: null, category: null, categoryId: null, needsReview: false, isTransfer: false,
-  };
-  for (const handle of ["paytm.s2wy2f", "rohanrao.b-", "q123456", "ravi_k"]) {
-    expect(transactionView({ ...row, displayName: handle, parsedPurpose: "lunch" }, "ref", "rev-test").payee).toBe("lunch");
-    expect(transactionView({ ...row, displayName: handle, parsedPurpose: handle }, "ref", "rev-test").payee).toBe("Payee");
-  }
-  for (const name of ["Swiggy", "Padmavathi Tiffins", "ACME PAYROLL", "groceries", "lunch", "Petrol"]) {
-    expect(transactionView({ ...row, displayName: name }, "ref", "rev-test").payee).toBe(name);
-    expect(transactionView({ ...row, parsedPurpose: name }, "ref", "rev-test").payee).toBe(name);
-  }
-  // Alphabetic auto names evade the handle-shape check: loader provenance must reject them.
-  expect(transactionView({
-    ...row,
-    displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi", displayName: " RA VI " }),
-  }, "ref", "rev-test").payee).toBe("Payee");
-  expect(transactionView({
-    ...row,
-    displayName: userChosenDisplayName({ kind: "upi_handle", key: "ravi_k", displayName: "Ravi Kumar" }),
-  }, "ref", "rev-test").payee).toBe("Ravi Kumar");
 });

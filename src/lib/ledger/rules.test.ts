@@ -3,7 +3,6 @@ import {
   afterFields,
   guardMatches,
   inverse,
-  noteHiddenFromAgent,
   sameFields,
   requestHash,
   idempotencyDecision,
@@ -11,7 +10,7 @@ import {
   type Operation,
 } from "./rules";
 const before: Fields = { categoryId: null, note: " lunch ", isTransfer: false, needsReview: false };
-test("guards compare category, trimmed notes and hidden-field revisions", () => {
+test("guards compare category, trimmed notes and complete-field revisions", () => {
   expect(guardMatches(before)).toBe(true);
   expect(guardMatches(before, { categoryId: null, note: "lunch", rev: "rev-a" }, "rev-a")).toBe(true);
   expect(guardMatches(before, { categoryId: "food" })).toBe(false);
@@ -64,9 +63,14 @@ test("idempotency canonicalizes key order while binding tool, values, nulls and 
   expect(idempotencyDecision(hash, hash)).toBe("replay");
   expect(idempotencyDecision("other", hash)).toBe("conflict");
 });
-test("a note is hidden from agents exactly when the model view would drop it", () => {
-  expect(noteHiddenFromAgent(null)).toBe(false);
-  expect(noteHiddenFromAgent("lunch with Ravi")).toBe(false);
-  expect(noteHiddenFromAgent("paid ravi@okaxis")).toBe(true);
-  expect(noteHiddenFromAgent("call 9876543210")).toBe(true);
+
+test("full notes with handles and long numbers use ordinary edit, stale and undo rules", () => {
+  const note = "paid ravi@bank 9876543210";
+  const after = afterFields(before, { note });
+  expect(after.note).toBe(note);
+  expect(guardMatches(after, { note, rev: "current" }, "current")).toBe(true);
+  expect(guardMatches(after, { rev: "old" }, "current")).toBe(false);
+  const [undo] = inverse([{ target: "transaction", id: "t", before, after }]);
+  expect(undo.before).toEqual(after);
+  expect(undo.after).toEqual(before);
 });

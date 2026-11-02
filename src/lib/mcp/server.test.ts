@@ -4,6 +4,9 @@ import { buildMcpServer, principalFromContext, type McpOps } from "./server";
 import type { McpPrincipal } from "./auth";
 import { deriveMcpRefKey, deriveMcpRevKey, transactionRef } from "./refs";
 import type { StoredTagRow } from "./proposal";
+import { buildOverview } from "./overview";
+import { resolveMcpPeriod } from "./range";
+import type { PeriodInput } from "./schemas";
 
 const key = deriveMcpRefKey("protocol-test");
 const principal: McpPrincipal = {
@@ -26,13 +29,21 @@ function fixture(
   protocolVersion = "2025-11-25",
 ) {
   const drafts: Array<{ rows: StoredTagRow[] }> = [];
+  const summaries: PeriodInput[] = [];
   const ops: McpOps = {
+    overview: async () => buildOverview([], [], []),
     listCategories: async () => categories,
     listTransactions: async () => [],
-    periodSummary: async () => {
-      throw new Error("Unused");
+    periodSummary: async (_actor, input) => {
+      summaries.push(input);
+      return {
+        period: resolveMcpPeriod(input), open_shares: "0.00",
+        totals: { total_debit: "0.00", total_credit: "0.00", net_self: "0.00", owed_self: "0.00", count: 0 },
+        bridge: { personal_debit_gross: "0.00", your_share_debit: "0.00", others_share: "0.00", net_credit: "0.00", split_txn_count: 0 },
+        triage: { uncategorized_net_self: "0.00", uncategorized_count: 0, needs_review_count: 0 }, categories: [],
+      };
     },
-    standingNotes: async () => [],
+    standingNotes: async () => ["Pay ravi@bank 9876543210"],
     transactionIds: async () => ["db-1"],
     proposalTransactions: async () => [
       {
@@ -114,6 +125,7 @@ function fixture(
   };
   return {
     drafts,
+    summaries,
     handler,
     call,
   };
@@ -137,8 +149,9 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         const { json } = await call(scope, "tools/list");
         expect(json.result.tools.map((t: { name: string }) => t.name)).toEqual(
           scope === "read"
-            ? ["list_categories", "list_transactions", "get_period_summary", "list_standing_notes"]
+            ? ["get_overview", "list_categories", "list_transactions", "get_period_summary", "list_standing_notes"]
             : [
+                "get_overview",
                 "list_categories",
                 "list_transactions",
                 "get_period_summary",
@@ -298,7 +311,7 @@ test("factory rejects absent or malformed principals", () => {
   ).toThrow();
 });
 
-test("a safe category name returned by list_categories round-trips without truncation", async () => {
+test("a full category name returned by list_categories round-trips without truncation", async () => {
   const name = "Food and dining ".repeat(12).trim();
   const { call, drafts, handler } = fixture([
     {
@@ -334,4 +347,72 @@ test("a safe category name returned by list_categories round-trips without trunc
   } finally {
     await handler.close();
   }
+});
+
+test("read scope exposes overview as read-only with its complete documented output", async () => {
+  const { call, handler } = fixture();
+  try {
+    const listed = await call("read", "tools/list");
+    const tool = listed.json.result.tools.find((t: { name: string }) => t.name === "get_overview");
+    expect(tool.description).toStartWith("Call this first");
+    expect(tool.annotations.readOnlyHint).toBe(true);
+    expect(tool.inputSchema.properties ?? {}).toEqual({});
+    expect(tool.outputSchema.required).toEqual(["first_transaction_date", "last_transaction_date", "months", "totals", "people"]);
+    expect(Object.keys(tool.outputSchema.properties.months.items.properties)).toEqual([
+      "month", "rows", "paid", "received", "uncategorized", "split_count", "open_shares",
+    ]);
+    const overview = await call("read", "tools/call", { name: "get_overview", arguments: {} });
+    expect(overview.json.result.structuredContent).toEqual(buildOverview([], [], []));
+  } finally { await handler.close(); }
+});
+
+test("self-contained instructions include shared guidance and write guidance only for write scope", async () => {
+  const { call, handler } = fixture();
+  try {
+    for (const scope of ["read", "propose", "write"] as const) {
+      const init = await call(scope, "initialize", {
+        protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" },
+      });
+      const brief = init.json.result.instructions;
+      expect(brief).toStartWith("Start with get_overview.");
+      for (const text of ["Never assume a month", "across months or all time", "exact rupee strings", "money math in your head",
+        "several UPI handles", "Never bypass the MCP", "DB scripts", "app internals", ".env files", "tool is missing", "propose_tags stays draft-only"])
+        expect(brief).toContain(text);
+      if (scope === "write") {
+        for (const text of ["read current refs and revs", "fresh idempotency key per request", "identical retry", "report what changed", "change id", "undo_change", "Connections"])
+          expect(brief).toContain(text);
+      } else {
+        expect(brief).not.toContain("Before writing");
+        expect(brief).not.toContain("idempotency");
+      }
+    }
+  } finally { await handler.close(); }
+});
+
+test("summary forwards all-time/range input and both read tools reject mixed ranges before calling ops", async () => {
+  const { call, handler, summaries } = fixture();
+  try {
+    for (const input of [{}, { month: "2026-10" }, { from: "2026-01-01", to: "2026-10-31" }]) {
+      const read = await call("read", "tools/call", { name: "get_period_summary", arguments: input });
+      expect(read.json.result.isError).not.toBe(true);
+      expect(read.json.result.structuredContent.period).toEqual(resolveMcpPeriod(input));
+    }
+    expect(summaries).toEqual([{}, { month: "2026-10" }, { from: "2026-01-01", to: "2026-10-31" }]);
+    for (const name of ["list_transactions", "get_period_summary"]) {
+      const bad = await call("read", "tools/call", { name, arguments: { month: "2026-10", from: "2026-10-01" } });
+      expect(bad.json.error ?? bad.json.result?.isError).toBeTruthy();
+    }
+    expect(summaries).toHaveLength(3);
+  } finally { await handler.close(); }
+});
+
+test("standing notes and categories are returned unfiltered without database ids or an omitted count", async () => {
+  const name = "  Food@home 123456 ";
+  const { call, handler } = fixture([{ id: "private-category-id", name, kind: "spend" }]);
+  try {
+    const categories = await call("read", "tools/call", { name: "list_categories", arguments: {} });
+    expect(categories.json.result.structuredContent).toEqual({ categories: [{ name, kind: "spend" }] });
+    const notes = await call("read", "tools/call", { name: "list_standing_notes", arguments: {} });
+    expect(notes.json.result.structuredContent).toEqual({ notes: ["Pay ravi@bank 9876543210"] });
+  } finally { await handler.close(); }
 });

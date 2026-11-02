@@ -1,15 +1,14 @@
 import { Predicate, Result, Schema } from "effect";
-import { modelSafeText } from "@/lib/assistant/model-view";
 
 const confidence = Schema.Literals(["high", "medium", "low"]);
 export const ProposalRow = Schema.Struct({
-  ref: Schema.NonEmptyString.annotate({ description: "Opaque transaction ref from list_transactions." }),
+  ref: Schema.NonEmptyString.check(Schema.isMaxLength(80)).annotate({ description: "Opaque transaction ref from list_transactions." }),
   category: Schema.NonEmptyString.annotate({ description: "Exact category name from list_categories." }),
   confidence: Schema.optionalKey(
     confidence.annotate({ description: "Suggested confidence: high, medium or low." }),
   ),
   reason: Schema.optionalKey(
-    Schema.String.annotate({ description: "Short reason for the proposed category." }),
+    Schema.String.check(Schema.isMaxLength(200)).annotate({ description: "Short reason for the proposed category, at most 200 characters." }),
   ),
 });
 export const StoredTagRow = Schema.Struct({
@@ -61,7 +60,7 @@ export function validateTagProposal(
     const decoded = Schema.decodeUnknownResult(ProposalRow)(input);
     const reject = (code: ProposalRejection["code"], message: string) => {
       const ref =
-        Predicate.isObject(input) && Predicate.isString(input.ref) ? modelSafeText(input.ref, 80) : null;
+        Predicate.isObject(input) && Predicate.isString(input.ref) ? input.ref.slice(0, 80) : null;
       rejected.push({
         index,
         ref,
@@ -86,7 +85,7 @@ export function validateTagProposal(
       categoryId: matches[0].id,
       expectedCurrentCategoryId: null,
       confidence: row.confidence ?? "medium",
-      reason: modelSafeText(row.reason, 80),
+      reason: row.reason ?? null,
     });
   });
   return {
@@ -111,10 +110,7 @@ export function decodeStoredTagRows(input: unknown): {
     const row = Schema.decodeUnknownResult(StoredTagRow)(item);
     if (Result.isFailure(row)) malformed++;
     else
-      rows.push({
-        ...row.success,
-        reason: modelSafeText(row.success.reason, 80),
-      });
+      rows.push(row.success);
   }
   return {
     rows,

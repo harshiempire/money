@@ -2,7 +2,10 @@ import { Result, Schema } from "effect";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { transactionRef, transactionRev } from "./refs";
 import type { ListTransactionsInput } from "./schemas";
-import { transactionView, validatePayeeFilter, type McpTransaction } from "./view";
+import { transactionView, type McpTransaction } from "./view";
+
+import { isUncategorized } from "@/domain/spend/uncategorized";
+import { resolveMcpPeriod } from "./range";
 
 const Cursor = Schema.Struct({ after: Schema.String.check(Schema.isPattern(/^txn_[A-Za-z0-9_-]{22}$/)) });
 export class McpToolError extends Error {}
@@ -14,21 +17,20 @@ export function pageTransactions(
   key: Uint8Array,
   revKey: Uint8Array = key,
 ) {
-  let payee: string | undefined;
-  try {
-    payee = validatePayeeFilter(input.payee);
-  } catch {
-    throw new McpToolError("Use a payee name without a handle or a number with five or more digits.");
-  }
+  const payee = input.payee?.toLowerCase();
+  const period = resolveMcpPeriod(input);
   const views = rows
     .filter(
       (r) =>
-        (!input.month || r.txnDate.startsWith(`${input.month}-`)) &&
-        (!input.uncategorized || r.category === null),
+        (!period.from || r.txnDate >= period.from) &&
+        (!period.to || r.txnDate.slice(0, 10) <= period.to) &&
+        (!input.direction || r.drCr === (input.direction === "paid" ? "debit" : "credit")) &&
+        (input.category === undefined || r.category === input.category) &&
+        (!input.uncategorized || isUncategorized(r)),
     )
     .sort((a, b) => b.txnDate.localeCompare(a.txnDate) || b.id.localeCompare(a.id))
     .map((r) => transactionView(r, transactionRef(key, actor.userId, r.id), transactionRev(revKey, actor.userId, r.id, r)))
-    .filter((r) => !payee || r.payee.toLowerCase().includes(payee));
+    .filter((r) => !payee || [r.payee, r.handle, r.raw_description].some((text) => text?.toLowerCase().includes(payee)));
   let start = 0;
   if (input.cursor !== undefined) {
     try {
