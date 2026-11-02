@@ -5,9 +5,9 @@ import {
   applyNoteToTransactions,
   getNoteCandidates,
   setTransactionNote,
-  type NoteCandidate,
 } from "./actions";
 import { callAction } from "@/lib/action/result";
+import type { NoteCandidate } from "@/lib/transactions/types";
 import { formatDate, formatPaiseSigned } from "@/lib/format";
 
 export function NoteButton({
@@ -44,8 +44,10 @@ export function NoteButton({
     if (!dlg) return;
     const onOpen = async () => {
       if (candidates !== null) return;
-      const list = await getNoteCandidates({ transactionId });
-      setCandidates(list);
+      const list = await callAction(() => getNoteCandidates({ transactionId }));
+      // Before: a failure was an unhandled rejection and the list stayed unset.
+      if (list.ok) setCandidates(list.data);
+      else setError(list.message);
     };
     // The native <dialog> doesn't fire an "open" event we can rely on; do it
     // imperatively from `open()` above instead. Kept as effect to react to
@@ -107,8 +109,9 @@ export function NoteButton({
         onClick={async () => {
           open();
           if (hasCounterparty && candidates === null) {
-            const list = await getNoteCandidates({ transactionId });
-            setCandidates(list);
+            const list = await callAction(() => getNoteCandidates({ transactionId }));
+            if (list.ok) setCandidates(list.data);
+            else setError(list.message);
           }
         }}
         title={hasNote ? note ?? "" : "Add a note"}

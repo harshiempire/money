@@ -9,8 +9,8 @@ import {
 import { transactionHref } from "@/lib/transactions/href";
 import {
   getLinkedTransactionPreview,
-  type LinkedTransactionPreview,
 } from "./actions";
+import type { LinkedTransactionPreview } from "@/lib/transactions/types";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 
 function scrollToTransaction(id: string) {
@@ -60,8 +60,9 @@ export function LinkedTransactionLink({
     dialogRef.current?.showModal();
     startTransition(async () => {
       try {
-        const data = await getLinkedTransactionPreview({ transactionId });
-        setPreview(data);
+        const result = await getLinkedTransactionPreview({ transactionId });
+        if (result.ok) setPreview(result.data);
+        else setError("Could not load this transaction.");
       } catch {
         setError("Could not load this transaction.");
       }

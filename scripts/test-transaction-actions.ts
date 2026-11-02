@@ -26,6 +26,7 @@ const { db, schema } = await import("../src/db");
 const { runAction } = await import("../src/lib/action/core");
 const { CurrentUser, Db } = await import("../src/lib/action/services");
 const H = await import("../src/app/transactions/transaction-handlers");
+const RD = await import("../src/app/transactions/transaction-read-handlers");
 
 type Result = { ok: boolean; code?: string; message?: string; data?: any };
 const userId = crypto.randomUUID();
@@ -91,6 +92,17 @@ try {
   expect("bulk note → { updated: 2 }", r.ok && r.data?.updated === 2 && (await get(t3)).note === "bulk", r);
   r = await call(H.applyNoteToTransactionsSpec, { transactionIds: [t3, foreign], note: "evil" });
   expect("bulk note including a foreign id → FORBIDDEN, nothing changed", r.code === "FORBIDDEN" && (await get(t3)).note === "bulk" && (await get(foreign)).note === null, r);
+
+  console.log("reads");
+  r = await call(RD.getNoteCandidatesSpec, { transactionId: t1 });
+  expect("note candidates for T1 → T3, T2 (newest first, T1 excluded)", r.ok && JSON.stringify(r.data.map((c: { id: string }) => c.id)) === JSON.stringify([t3, t2]), r.data);
+  const [split] = await db.insert(schema.splits).values({ transactionId: t1, totalPaise: 50000, yourSharePaise: 20000 }).returning();
+  const [asha] = await db.insert(schema.splitParticipants).values({ splitId: split.id, personName: "Asha", expectedAmountPaise: 30000 }).returning();
+  await db.insert(schema.settlements).values({ splitParticipantId: asha.id, amountPaise: 10000, method: "cash" });
+  r = await call(RD.getLinkedTransactionPreviewSpec, { transactionId: t1 });
+  expect("preview: split ₹300 expected, ₹100 settled, ₹200 outstanding", r.ok && r.data.split?.expectedReimbursePaise === 30000 && r.data.split.settledReimbursePaise === 10000 && r.data.split.outstandingReimbursePaise === 20000 && r.data.split.status === "partial", r.data?.split);
+  r = await call(RD.getLinkedTransactionPreviewSpec, { transactionId: foreign });
+  expect("preview of another user's transaction → FORBIDDEN", r.code === "FORBIDDEN", r);
 
   console.log("auto-detect");
   r = await call(H.autoDetectTransfersSpec);

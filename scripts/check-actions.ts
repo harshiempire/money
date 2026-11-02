@@ -21,7 +21,6 @@ const LEGACY = new Set([
   "src/app/import/actions.ts",
   "src/app/spend/actions.ts",
   "src/app/talk/actions.ts",
-  "src/app/transactions/actions.ts",
 ]);
 
 const BARE_EXPORT = /^export\s+(async\s+)?function\s+(\w+)/gm;
