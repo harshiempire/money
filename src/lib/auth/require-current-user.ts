@@ -11,7 +11,6 @@ export type CurrentUser = {
 /** The session's user, or null. Never throws. Used by `defineAction`. */
 export async function sessionUser(): Promise<CurrentUser | null> {
   try {
-    // auth() is overloaded (middleware | session); call with no args for session.
     const session = await auth();
     if (!session || typeof session !== "object" || !("user" in session)) {
       return null;
@@ -28,14 +27,12 @@ export async function sessionUser(): Promise<CurrentUser | null> {
   }
 }
 
-/** For server components — redirects to login when unauthenticated. */
 export async function requireCurrentUser(): Promise<CurrentUser> {
   const user = await sessionUser();
   if (!user) redirect("/login");
   return user;
 }
 
-/** For server actions — throws so the client gets an error instead of a redirect. */
 export async function requireCurrentUserAction(): Promise<CurrentUser> {
   const user = await sessionUser();
   if (!user) throw new ForbiddenError("Not authenticated");

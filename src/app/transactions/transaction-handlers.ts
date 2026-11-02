@@ -5,7 +5,14 @@ import { schema } from "@/db";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { detectTransferPairs } from "@/domain/transfers/detect";
 import type { ActionSpec } from "@/lib/action/core";
+import { Conflict, Forbidden } from "@/lib/action/errors";
 import { owns } from "@/lib/action/ownership";
+import { ForbiddenError } from "@/lib/auth/forbidden";
+import {
+  StaleValueError,
+  categoryIsTransfer,
+  setCategoryForActor,
+} from "@/lib/transactions/category-for-actor";
 import { CurrentUser, query, type Db } from "@/lib/action/services";
 
 /**
@@ -25,24 +32,8 @@ type Spec<I, IEncoded, A = void> = ActionSpec<I, IEncoded, A, CurrentUser | Db>;
 
 const TransactionRef = Schema.Struct({ transactionId: Schema.String });
 
-const categoryIsTransfer = Effect.fnUntraced(function* (
-  categoryId: string,
-  userId: string,
-) {
-  const [cat] = yield* query((db) =>
-    db
-      .select({ kind: schema.categories.kind })
-      .from(schema.categories)
-      .where(
-        and(
-          eq(schema.categories.id, categoryId),
-          eq(schema.categories.userId, userId),
-        ),
-      )
-      .limit(1),
-  );
-  return cat?.kind === "transfer" || cat?.kind === "investment";
-});
+const isTransferCategory = (categoryId: string, userId: string) =>
+  Effect.promise(() => categoryIsTransfer(categoryId, userId));
 
 // ─── setTransactionCategory ──────────────────────────────────────────────────
 
@@ -50,6 +41,8 @@ const SetCategoryInput = Schema.Struct({
   transactionId: Schema.String,
   // "" clears the category (the picker's "—" option).
   categoryId: Schema.String,
+  /** The category the caller last saw (null = none); a changed one isn't overwritten. */
+  expectedCurrentCategoryId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 export const setTransactionCategorySpec: Spec<
@@ -60,25 +53,30 @@ export const setTransactionCategorySpec: Spec<
   revalidate: ["/transactions", "/"],
   handler: Effect.fn("setTransactionCategory")(function* (input) {
     const user = yield* CurrentUser;
-    const { accountId } = yield* owns.transaction(input.transactionId);
-    const newCategoryId = input.categoryId === "" ? null : input.categoryId;
-    if (newCategoryId) {
-      yield* owns.category(newCategoryId);
-    }
-    const isTransfer = newCategoryId
-      ? yield* categoryIsTransfer(newCategoryId, user.id)
-      : false;
-
-    yield* query((db) =>
-      db
-        .update(schema.transactions)
-        .set({ categoryId: newCategoryId, isTransfer })
-        .where(
-          and(
-            eq(schema.transactions.id, input.transactionId),
-            eq(schema.transactions.accountId, accountId),
-          ),
+    // The shared write (also used by the assistant): ownership, the
+    // stale-card check, category ownership, transfer flag, update. Only the
+    // declared fields are passed — a client can't force `isTransfer`.
+    yield* Effect.tryPromise({
+      try: () =>
+        setCategoryForActor(
+          { userId: user.id },
+          {
+            transactionId: input.transactionId,
+            categoryId: input.categoryId,
+            ...(input.expectedCurrentCategoryId !== undefined
+              ? { expectedCurrentCategoryId: input.expectedCurrentCategoryId }
+              : {}),
+          },
         ),
+      catch: (err) => err,
+    }).pipe(
+      Effect.catch((err): Effect.Effect<never, Forbidden | Conflict> =>
+        err instanceof ForbiddenError
+          ? Effect.fail(new Forbidden())
+          : err instanceof StaleValueError
+            ? Effect.fail(new Conflict({ message: err.message }))
+            : Effect.die(err),
+      ),
     );
   }),
 };
@@ -88,7 +86,7 @@ export const setTransactionCategorySpec: Spec<
 export const applyCategoryToCounterpartySpec: Spec<
   typeof TransactionRef.Type,
   typeof TransactionRef.Encoded,
-  { updated: number }
+  { updated: number; ids: string[] }
 > = {
   input: TransactionRef,
   revalidate: ["/transactions", "/"],
@@ -106,11 +104,11 @@ export const applyCategoryToCounterpartySpec: Spec<
         .where(eq(schema.transactions.id, input.transactionId))
         .limit(1),
     );
-    if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0 };
+    if (!txn || !txn.counterpartyId || !txn.categoryId) return { updated: 0, ids: [] };
     const counterpartyId = txn.counterpartyId;
     const categoryId = txn.categoryId;
 
-    const isTransfer = yield* categoryIsTransfer(categoryId, user.id);
+    const isTransfer = yield* isTransferCategory(categoryId, user.id);
 
     yield* owns.counterparty(counterpartyId);
 
@@ -140,7 +138,7 @@ export const applyCategoryToCounterpartySpec: Spec<
         .returning({ id: schema.transactions.id }),
     );
 
-    return { updated: updated.length };
+    return { updated: updated.length, ids: updated.map((r) => r.id) };
   }),
 };
 
@@ -205,6 +203,11 @@ export const setTransactionNeedsReviewSpec: Spec<
 const SetNoteInput = Schema.Struct({
   transactionId: Schema.String,
   note: Schema.String,
+  /**
+   * The note the caller last saw. When given, a note that has changed since
+   * is not overwritten — the assistant's cards can sit open for a while.
+   */
+  expectedCurrentNote: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 export const setTransactionNoteSpec: Spec<
@@ -215,6 +218,20 @@ export const setTransactionNoteSpec: Spec<
   revalidate: ["/transactions", "/"],
   handler: Effect.fn("setTransactionNote")(function* (input) {
     const { accountId } = yield* owns.transaction(input.transactionId);
+    if (input.expectedCurrentNote !== undefined) {
+      const [current] = yield* query((db) =>
+        db
+          .select({ note: schema.transactions.note })
+          .from(schema.transactions)
+          .where(eq(schema.transactions.id, input.transactionId))
+          .limit(1),
+      );
+      if ((current?.note ?? "").trim() !== (input.expectedCurrentNote ?? "").trim()) {
+        return yield* new Conflict({
+          message: "The note changed since this card was made. Ask again to get a fresh card.",
+        });
+      }
+    }
     const cleaned = input.note.trim();
     yield* query((db) =>
       db

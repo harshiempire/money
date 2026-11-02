@@ -1,4 +1,3 @@
-/** Quick Neon connectivity check. Usage: bun run db:ping */
 import { sql } from "drizzle-orm";
 import { db } from "./lib/db";
 

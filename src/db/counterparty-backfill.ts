@@ -38,7 +38,6 @@ export async function backfillCounterparties(
       ),
     );
 
-  // Cache existing counterparties by key to avoid one SELECT per row.
   const existing = await db
     .select({
       id: schema.counterparties.id,

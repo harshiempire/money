@@ -62,6 +62,12 @@ try {
   r = await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: "" });
   row = await get(t1);
   expect("'' clears category and transfer flag", r.ok && row.categoryId === null && !row.isTransfer, row);
+  r = await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: food, expectedCurrentCategoryId: xfer });
+  expect("stale card (category changed since) → CONFLICT, untouched", r.code === "CONFLICT" && r.message === "The category changed since this card was made. Ask again to get a fresh card." && (await get(t1)).categoryId === null, r);
+  r = await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: food, isTransfer: true });
+  row = await get(t1);
+  expect("a client-supplied isTransfer is ignored (Food → not a transfer)", r.ok && row.categoryId === food && !row.isTransfer, row);
+  await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: "" });
   r = await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: theirs });
   expect("another user's category → FORBIDDEN", r.code === "FORBIDDEN", r);
   r = await call(H.setTransactionCategorySpec, { transactionId: foreign, categoryId: food });
@@ -73,7 +79,7 @@ try {
   await call(H.setTransactionCategorySpec, { transactionId: t1, categoryId: food });
   r = await call(H.applyCategoryToCounterpartySpec, { transactionId: t1 });
   const [cp] = await db.select().from(schema.counterparties).where(eq(schema.counterparties.id, swiggy.id));
-  expect("from T1 → { updated: 2 }, both siblings now Food", r.ok && r.data?.updated === 2 && (await get(t2)).categoryId === food && (await get(t3)).categoryId === food, r);
+  expect("from T1 → { updated: 2, ids: [T2, T3] }, both siblings now Food", r.ok && r.data?.updated === 2 && JSON.stringify([...r.data.ids].sort()) === JSON.stringify([t2, t3].sort()) && (await get(t2)).categoryId === food && (await get(t3)).categoryId === food, r);
   expect("…and SWIGGY's default category is Food", cp.defaultCategoryId === food, cp);
 
   console.log("flags and notes");
@@ -83,6 +89,8 @@ try {
   expect("review flag on", r.ok && (await get(t2)).needsReview, r);
   r = await call(H.setTransactionNoteSpec, { transactionId: t2, note: "  hi  " });
   expect("note trimmed", r.ok && (await get(t2)).note === "hi", r);
+  r = await call(H.setTransactionNoteSpec, { transactionId: t2, note: "x", expectedCurrentNote: "something else" });
+  expect("stale note card → CONFLICT, note kept", r.code === "CONFLICT" && r.message === "The note changed since this card was made. Ask again to get a fresh card." && (await get(t2)).note === "hi", r);
   r = await call(H.setTransactionNoteSpec, { transactionId: t2, note: "   " });
   expect("blank note → null", r.ok && (await get(t2)).note === null, r);
   r = await call(H.applyNoteToTransactionsSpec, { transactionIds: [t2, t3], note: " bulk " });

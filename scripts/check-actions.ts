@@ -17,6 +17,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LEGACY = new Set([
+  // Ask Money assistant (merged from main 2026-11-02) — migrate in a follow-up.
+  "src/app/assistant/actions.ts",
+  "src/app/assistant/tag-actions.ts",
   "src/app/talk/actions.ts",
 ]);
 

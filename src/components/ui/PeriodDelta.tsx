@@ -1,9 +1,5 @@
 import { formatPaise } from "@/lib/format";
 
-/**
- * "+₹X vs previous (label)" delta line, coloured spend/inflow by direction.
- * Shared by the dashboard and the spend report.
- */
 export function PeriodDelta({
   delta,
   previousLabel,

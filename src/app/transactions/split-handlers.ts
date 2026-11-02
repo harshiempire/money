@@ -72,6 +72,8 @@ const CreateSplitInput = Schema.Struct({
   yourSharePaise: Schema.Number,
   note: Schema.NullOr(Schema.String),
   participants: Schema.Array(ParticipantInput),
+  /** Refuse instead of editing when a split already exists (assistant cards). */
+  expectNoExistingSplit: Schema.optional(Schema.Boolean),
 });
 
 export const createSplitSpec: Spec<
@@ -138,6 +140,12 @@ export const createSplitSpec: Spec<
         .where(eq(schema.splits.transactionId, input.transactionId))
         .limit(1),
     );
+    if (existingSplit && input.expectNoExistingSplit) {
+      return yield* new Conflict({
+        message:
+          "This payment already has a split. Edit it from the Split button in the table so settlements aren't lost.",
+      });
+    }
 
     // Read-only guard against destroying settled money. Must run before the
     // write transaction opens — settledAmountByParticipantIds queries the
@@ -266,13 +274,17 @@ export const createSplitSpec: Spec<
 
 // ─── deleteSplit ─────────────────────────────────────────────────────────────
 
-const TransactionRef = Schema.Struct({ transactionId: Schema.String });
+const DeleteSplitInput = Schema.Struct({
+  transactionId: Schema.String,
+  /** Refuse if any money was settled against the split (assistant Undo). */
+  expectNoSettlements: Schema.optional(Schema.Boolean),
+});
 
 export const deleteSplitSpec: Spec<
-  typeof TransactionRef.Type,
-  typeof TransactionRef.Encoded
+  typeof DeleteSplitInput.Type,
+  typeof DeleteSplitInput.Encoded
 > = {
-  input: TransactionRef,
+  input: DeleteSplitInput,
   revalidate: SETTLEMENT_PATHS,
   handler: Effect.fn("deleteSplit")(function* (input) {
     yield* owns.transaction(input.transactionId);
@@ -315,6 +327,11 @@ export const deleteSplitSpec: Spec<
             ),
           ),
       );
+      if (input.expectNoSettlements && rows.length > 0) {
+        return yield* new Conflict({
+          message: "Money was settled against this split since. Remove it from the table instead.",
+        });
+      }
       affectedInflowIds = [
         ...new Set(
           rows

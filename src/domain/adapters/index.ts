@@ -14,13 +14,11 @@ import { bobAdapter } from "./bob/parser";
 export interface BankAdapter {
   /** Slug used in the DB's `bank` column. */
   readonly name: string;
-  /** Quick sniff to decide whether this adapter should handle the file. */
   detect: (
     file: Buffer,
     mime: string,
     ctx: AdapterContext,
   ) => Effect.Effect<boolean, PdfPasswordError>;
-  /** Parse the file into the canonical shape, or fail with ParseError. */
   parse: (
     file: Buffer,
     ctx: AdapterContext,
@@ -29,11 +27,6 @@ export interface BankAdapter {
 
 const REGISTRY: readonly BankAdapter[] = [bobAdapter];
 
-/**
- * Walk the registry and return the first adapter whose `detect` says yes.
- * Fails with AdapterNotFound when nothing matches — caller should then
- * route the user to the generic CSV column-mapper UI.
- */
 export const pickAdapter = (
   file: Buffer,
   mime: string,

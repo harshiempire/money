@@ -160,7 +160,6 @@ export default async function ReimbursementsPage({
   if (period.to) txnFilters.push(lte(schema.transactions.txnDate, period.to));
   const txnWhere = and(...txnFilters);
 
-  // Splits attached to transactions in this account and period.
   const splitsRaw = await db
     .select({
       splitId: schema.splits.id,
@@ -298,7 +297,6 @@ export default async function ReimbursementsPage({
   const outstanding = rows.filter((r) => r.outstandingPaise > 0);
   const settled = rows.filter((r) => r.outstandingPaise === 0);
 
-  // Ageing summary across outstanding rows.
   const buckets = new Map<string, { count: number; total: number }>();
   for (const r of outstanding) {
     const k = ageBucket(r.ageDays);

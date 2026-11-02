@@ -15,6 +15,7 @@ import {
   IconUpload,
   IconMore,
 } from "./icons";
+import { AssistantDock } from "./assistant/AssistantDock";
 
 const NAV_GROUPS = [
   {
@@ -148,6 +149,8 @@ export function AppShell({
           {children}
         </div>
       </div>
+
+      <AssistantDock />
 
       {moreOpen && (
         <button

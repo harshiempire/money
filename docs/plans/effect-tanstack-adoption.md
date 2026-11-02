@@ -72,6 +72,10 @@ Each PR migrates the actions **and** their client callers together, because the 
 
 Done when: zero `throw new Error` for expected cases in action files, zero `err.message` reads in client callers, and AGENTS.md's action table points at `defineAction`. **Status 2026-11-02: done on this branch** (`check:actions` legacy list empty here); only `talk/actions.ts` remains, on `chore/talk-prototype`.
 
+### Merge with main (2026-11-02)
+
+main gained the Ask Money assistant while Phase 2 was in progress. The merge re-applied main's new logic in the handlers: `expectNoExistingSplit` / `expectNoSettlements` on splits, the second-net-event guard and `{ netEventId }` return, `setCategoryForActor` (now throwing `StaleValueError` for stale cards) with `expectedCurrentCategoryId`, `expectedCurrentNote`, and `{ updated, ids }` from apply-to-all. `components/assistant/ops.ts` and `AssistantDock` call the actions through `unwrap()`. Verified against main's own implementations on local-dev (26 steps identical). Follow-up: migrate `src/app/assistant/actions.ts` and `tag-actions.ts` (on the check:actions legacy list).
+
 ## Phase 3: TanStack Form on the dialogs (one PR per dialog)
 
 Dependency: `@tanstack/react-form`. Validation uses the Phase 1 input schemas through Standard Schema (`Schema.toStandardSchemaV1(...)`, the v4 name), so client and server rules are the same code.

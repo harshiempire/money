@@ -84,6 +84,9 @@ try {
   expect("event: inflow linked, note trimmed", evs.length === 1 && evs[0].inflowTransactionId === inflow.id && evs[0].note === "first", evs[0]);
   let legs = await legsOf(evs[0].id);
   expect("two bank legs carrying the inflow id", legs.length === 2 && legs.every((l) => l.method === "bank" && l.inflowTransactionId === inflow.id), legs);
+  expect("…and it returns { netEventId } of the saved event", r.ok && (r as { data?: { netEventId?: string } }).data?.netEventId === evs[0].id, r);
+  r = await save({ eventDate: d, inflowTransactionId: inflow.id, legs: [R(asha.id, 30000, "bank"), R(bala.id, 30000, "bank")] });
+  expect("second event on the same inflow → INVALID 'already net settled'", r.code === "INVALID" && r.message === "This transaction is already net settled. Open Net ✓ to change it." && (await events()).length === 1, r);
 
   r = await save({ eventDate: d, legs: [R(asha.id, 5000, "offset"), P(dev.id, 5000)] });
   expect("Asha already settled → CONFLICT 'exceeds outstanding by 50'", r.message === "Receivable leg exceeds outstanding by 50", r);

@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { eq, or, type SQL } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { schema } from "@/db";
 import { getOrCreatePerson } from "@/db/person";
@@ -32,7 +32,7 @@ import { validateNetEventInvariant } from "@/lib/net-events/validate";
  * Integration check: scripts/test-net-event-actions.ts.
  */
 
-type Spec<I, IEncoded> = ActionSpec<I, IEncoded, void, CurrentUser | Db>;
+type Spec<I, IEncoded, A = void> = ActionSpec<I, IEncoded, A, CurrentUser | Db>;
 
 const ALL_PATHS = ["/transactions", "/reimbursements", "/people", "/spend", "/"] as const;
 
@@ -109,7 +109,8 @@ const fetchTransactionAmount = Effect.fnUntraced(function* (transactionId: strin
 
 export const saveNetEventSpec: Spec<
   typeof SaveNetEventInput.Type,
-  typeof SaveNetEventInput.Encoded
+  typeof SaveNetEventInput.Encoded,
+  { netEventId: string }
 > = {
   input: SaveNetEventInput,
   revalidate: ALL_PATHS,
@@ -192,6 +193,33 @@ export const saveNetEventSpec: Spec<
     }
     yield* Effect.all(ownershipChecks, { concurrency: "unbounded", discard: true });
 
+    // A new event on a transaction that already has one would spend its bank
+    // amount twice. Editing goes through netEventId; this only guards creation
+    // (e.g. a stale assistant card, or a double-submitted form).
+    if (!input.netEventId) {
+      const linked: SQL[] = [];
+      if (input.inflowTransactionId) {
+        linked.push(eq(schema.netEvents.inflowTransactionId, input.inflowTransactionId));
+      }
+      if (input.outflowTransactionId) {
+        linked.push(eq(schema.netEvents.outflowTransactionId, input.outflowTransactionId));
+      }
+      if (linked.length > 0) {
+        const [existing] = yield* query((db) =>
+          db
+            .select({ id: schema.netEvents.id })
+            .from(schema.netEvents)
+            .where(or(...linked))
+            .limit(1),
+        );
+        if (existing) {
+          return yield* new Invalid({
+            message: "This transaction is already net settled. Open Net ✓ to change it.",
+          });
+        }
+      }
+    }
+
     const [inflowAmount, outflowAmount] = yield* Effect.all(
       [
         input.inflowTransactionId
@@ -237,7 +265,7 @@ export const saveNetEventSpec: Spec<
       { concurrency: "unbounded", discard: true },
     );
 
-    yield* transaction((tx) =>
+    const savedEventId = yield* transaction((tx) =>
       Effect.gen(function* () {
         if (input.netEventId) {
           const netEventId = input.netEventId;
@@ -314,6 +342,7 @@ export const saveNetEventSpec: Spec<
         }
 
         yield* Effect.promise(() => tx.insert(schema.settlements).values(settlementRows));
+        return event.id;
       }),
     ).pipe(
       Effect.catchDefect((defect) =>
@@ -331,6 +360,8 @@ export const saveNetEventSpec: Spec<
           : Effect.die(defect),
       ),
     );
+
+    return { netEventId: savedEventId };
   }),
 };
 

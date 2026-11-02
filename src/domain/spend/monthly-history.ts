@@ -20,7 +20,6 @@ export interface MonthlySpendRow {
   outstandingReimbursePaise: number;
 }
 
-/** Last N calendar months of spend summary (newest first). */
 export async function monthlySpendHistory(
   accountId: string,
   monthCount = 12,
@@ -62,7 +61,6 @@ export async function monthlySpendHistory(
   });
 }
 
-/** Earliest transaction month through current month for month picker bounds. */
 export async function transactionMonthBounds(
   accountId: string,
 ): Promise<{ earliest: string | null; latest: string }> {

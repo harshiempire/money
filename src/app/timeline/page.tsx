@@ -39,7 +39,6 @@ export default async function TimelinePage({
     period.to,
   );
 
-  // Biggest movers in the period: top 10 debits and credits by amount.
   const filters = [eq(schema.transactions.accountId, account.id)];
   if (period.from) filters.push(gte(schema.transactions.txnDate, period.from));
   if (period.to) filters.push(lte(schema.transactions.txnDate, period.to));
@@ -148,7 +147,6 @@ export default async function TimelinePage({
   );
 }
 
-/** Round SVG coords so server and client produce identical attribute strings. */
 const svgCoord = (n: number) => Number(n.toFixed(1));
 
 function BalanceChart({

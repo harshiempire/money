@@ -94,7 +94,6 @@ export function buildReimbursementLinks(
   return byExpense;
 }
 
-/** Plain-English account of a credit's leftover, or null when there isn't one. */
 function residualSummary(
   residual: CreditResidual | undefined,
   expenseLinks: ExpenseLink[] | undefined,

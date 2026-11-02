@@ -11,7 +11,6 @@ export function StatHero({
   valuePaise: number;
   /** Resolved by caller; dashboards use netSelfPaise >= 0 ? "spend" : "inflow". */
   tone: "spend" | "inflow";
-  /** e.g. the "(net inflow)" tag on the dashboard. */
   suffix?: React.ReactNode;
   /** Meta row below the number (delta, burn rate, counts, links). */
   children?: React.ReactNode;

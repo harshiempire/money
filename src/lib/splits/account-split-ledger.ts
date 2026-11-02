@@ -116,5 +116,4 @@ export function buildOpenReceivablesFromLedger(
     .filter((r) => r.outstandingPaise > 0);
 }
 
-/** Per-request cached account split graph (dedupes transactions + reimbursements). */
 export const getAccountSplitLedger = cache(loadAccountSplitLedgerImpl);

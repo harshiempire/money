@@ -1,11 +1,3 @@
-/**
- * Pure validation for split and settlement writes.
- *
- * These live outside the server actions so they can be tested without a
- * database — the actions stay responsible for the reads (what is already
- * settled, what the inflow is) and call in here to decide.
- */
-
 export interface ParticipantDraft {
   id?: string;
   personName: string;
@@ -93,7 +85,6 @@ export function validateNoDuplicateParticipants(
   return OK;
 }
 
-/** total === your share + Σ participants, to the paise. */
 export function validateSplitBalances(input: {
   totalPaise: number;
   yourSharePaise: number;
@@ -194,11 +185,6 @@ export function validateSplitTotalMatchesTransaction(input: {
   return OK;
 }
 
-/**
- * A participant id on the way in is a claim that this row already exists on
- * *this* split. An id that doesn't belong here is either a stale dialog or
- * a forged request; silently treating it as a new row hides both.
- */
 export function validateParticipantIdsBelongToSplit(
   participants: ParticipantDraft[],
   existingIds: ReadonlySet<string>,
@@ -280,10 +266,6 @@ export function cleanAllocations(
   };
 }
 
-/**
- * A Net Settle bank leg consumes part of the same credit. Ordinary Settle
- * never touches those rows, so it can only allocate what they left.
- */
 export function validateInflowCapacity(input: {
   inflowAmountPaise: number;
   reservedByNetSettlePaise: number;

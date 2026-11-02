@@ -19,8 +19,6 @@ import { sql } from "drizzle-orm";
 import { db, schema } from "./lib/db";
 import { formatPaise } from "../src/lib/format";
 
-// ─── Preflight: make sure the schema this script depends on is migrated ──────
-
 try {
   await db.select({ id: schema.settlements.id }).from(schema.settlements).limit(1);
   await db
@@ -53,8 +51,6 @@ try {
   throw err;
 }
 
-// ─── User labels (for attributing findings, not for filtering) ───────────────
-
 const users = await db
   .select({ id: schema.users.id, email: schema.users.email })
   .from(schema.users);
@@ -64,8 +60,6 @@ function userLabel(userId: string | null | undefined): string {
   if (!userId) return "(unknown user)";
   return emailByUserId.get(userId) ?? userId;
 }
-
-// ─── Small helpers ─────────────────────────────────────────────────────────
 
 const p = (n: unknown): number => Number(n ?? 0);
 const rupees = (n: unknown): string => formatPaise(p(n));
@@ -178,8 +172,6 @@ if (residualCredits.length === 0) {
 }
 section("1. Credits with settlement residual", residualCredits.length);
 
-// ─── 2. Splits that don't balance ────────────────────────────────────────────
-
 type UnbalancedSplitRow = {
   userId: string;
   splitId: string;
@@ -231,8 +223,6 @@ if (unbalancedSplits.length === 0) {
 }
 section("2. Splits that don't balance", unbalancedSplits.length);
 
-// ─── 3. Over-settled participants ────────────────────────────────────────────
-
 type OverSettledParticipantRow = {
   userId: string;
   participantId: string;
@@ -283,8 +273,6 @@ if (overSettledParticipants.length === 0) {
 }
 section("3. Over-settled participants", overSettledParticipants.length);
 
-// ─── 4. Over-settled owed expenses ───────────────────────────────────────────
-
 type OverSettledOwedExpenseRow = {
   userId: string;
   owedExpenseId: string;
@@ -327,8 +315,6 @@ if (overSettledOwedExpenses.length === 0) {
   }
 }
 section("4. Over-settled owed expenses", overSettledOwedExpenses.length);
-
-// ─── 5. Orphaned settlement rows ─────────────────────────────────────────────
 
 type OrphanNoSourceRow = {
   userId: string | null;
@@ -417,8 +403,6 @@ if (orphanNoTarget.length === 0) {
 section("5a. Orphaned settlements (bank w/o inflow, offset w/o net-event)", orphanNoSource.length);
 section("5b. Orphaned settlements (no target)", orphanNoTarget.length);
 
-// ─── 6. Dangling person links ────────────────────────────────────────────────
-
 type DanglingParticipantRow = {
   userId: string;
   participantId: string;
@@ -500,11 +484,6 @@ if (danglingOwedExpenses.length === 0) {
 section("6a. Split participants with dangling person link", danglingParticipants.length);
 section("6b. Owed expenses with dangling person link", danglingOwedExpenses.length);
 
-// ─── 7. Reimbursement credits with nothing recorded against them ─────────────
-// Check 1 starts from settlement rows, so a credit filed under a
-// "reimbursement" category that never got a settlement, a leftover decision,
-// or an overpayment payable is invisible to it. Surface those here.
-
 type UnsettledReimbursementRow = {
   userId: string;
   txnId: string;
@@ -551,8 +530,6 @@ if (unsettledReimbursements.length === 0) {
   }
 }
 section("7. Reimbursement-category credits with no settlement", unsettledReimbursements.length);
-
-// ─── Summary ──────────────────────────────────────────────────────────────
 
 console.log("\n=== SUMMARY ===");
 for (const { label, count } of summary) {

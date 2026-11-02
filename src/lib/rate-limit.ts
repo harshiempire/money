@@ -66,3 +66,11 @@ export async function checkRegisterRateLimit(ip: string): Promise<boolean> {
   const result = await lim.limit(ip);
   return result.success;
 }
+
+/** Assistant calls spend the owner's ChatGPT limit; keep a runaway tab from draining it. */
+export async function checkAssistantRateLimit(userId: string): Promise<boolean> {
+  const lim = limiter("assistant-user", 30, "10 m");
+  if (!lim) return true;
+  const result = await lim.limit(userId);
+  return result.success;
+}

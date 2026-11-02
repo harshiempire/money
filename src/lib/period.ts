@@ -1,7 +1,3 @@
-/**
- * Resolve a period from query params. If both from and to are missing,
- * caller can fall back to the latest statement period.
- */
 export interface Period {
   from: string | null;
   to: string | null;
@@ -18,7 +14,6 @@ export interface CalendarMonthPeriod extends Period {
   isPartial: boolean;
 }
 
-/** Full calendar month; `to` is last day of month or today if current month. */
 export function calendarMonthPeriod(
   year: number,
   month: number,
@@ -43,7 +38,6 @@ export function calendarMonthPeriod(
   };
 }
 
-/** Shift YYYY-MM by delta months. */
 export function shiftCalendarMonth(monthKey: string, delta: number): string {
   const [y, m] = monthKey.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -97,13 +91,11 @@ const parseIso = (s: string) => {
   return new Date(y, m - 1, d);
 };
 
-/** Inclusive day count between two ISO date strings. */
 export function inclusiveDayCount(from: string, to: string): number {
   const ms = parseIso(to).getTime() - parseIso(from).getTime();
   return Math.max(1, Math.floor(ms / 86_400_000) + 1);
 }
 
-/** Shift a bounded period back by its own length (for period-over-period compare). */
 export function previousPeriodWindow(
   from: string,
   to: string,

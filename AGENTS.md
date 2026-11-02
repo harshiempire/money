@@ -30,16 +30,11 @@ Pre-auth, all finance data was keyed to a fixed user:
 SEED_USER_ID = "00000000-0000-0000-0000-000000000001"
 ```
 
-Defined in [`src/db/constants.ts`](src/db/constants.ts) (re-exported from [`src/db/seed-user.ts`](src/db/seed-user.ts)).
+Defined in [`src/db/constants.ts`](src/db/constants.ts).
 
 **Bootstrap** ([`scripts/bootstrap-owner.ts`](scripts/bootstrap-owner.ts)) sets `email` + `password_hash` on **that same row** — no FK migration, no second user for legacy data. The first human operator logs in as this user and sees all historical transactions/imports.
 
 New users get a **new UUID** via registration; they start with empty data (`ensureDefaultCategories` + `getOrCreateAccountForBank` on first use).
-
-### Deprecated (must not use in app code)
-
-- `ensureSeedUser()` — throws; use `requireCurrentUser()` or `requireCurrentUserAction()`
-- `ensureDefaultBobAccount()` — re-export alias only; use `getOrCreateAccountForBank(userId, "bob")`
 
 ---
 
@@ -127,6 +122,8 @@ export const deleteThing = defineAction("deleteThing", {
 | [`src/app/transactions/actions.ts`](src/app/transactions/actions.ts) | 8 (category, counterparty, transfer, note, candidates, bulk note, autoDetectTransfers) |
 | [`src/app/transactions/split-actions.ts`](src/app/transactions/split-actions.ts) | 4 (createSplit, deleteSplit, recordSettlement, clearSettlement) |
 | [`src/app/auth/actions.ts`](src/app/auth/actions.ts) | `registerUser` |
+| [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) | 5, all read-only (bootstrap, turn, card data, blank card, apply-to-all preview) — see Ask Money below |
+| [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts) | Tag a month (`suggestTagChunk` is a draft), `applySuggestedTags`, `undoSuggestedTags`, context notes, `rememberPayeeDefault` |
 
 **Middleware does not protect server actions** — each action must authenticate and authorize itself.
 
@@ -140,6 +137,8 @@ export const deleteThing = defineAction("deleteThing", {
 
 - `password_hash` — nullable (OAuth users later); Credentials users must have it
 - `token_version` — integer, default 0
+
+`assistant_context_note` (migration `0012_assistant_context_note`): standing notes for Ask Money, scoped by `user_id`. **Run `0012` before deploying** the build that reads this table. Ask Money reads it on every turn. A missing table is treated as no notes, the same way a missing `ai_connection` table is tolerated, so the panel still opens. Saving a note stays unavailable until the migration has run. The model only receives rows that pass `modelSafeText`. A note the user saves that would be filtered shows a warning and is still stored. A note the model proposes is a pending card; the row is inserted when the user applies.
 
 ### `db:push` vs `db:migrate`
 
@@ -185,6 +184,9 @@ Copy [`.env.example`](.env.example).
 | `UPSTASH_REDIS_REST_URL` | Prod recommended | Rate limits |
 | `UPSTASH_REDIS_REST_TOKEN` | Prod recommended | Rate limits |
 | `SKIP_AUTH_BOOTSTRAP_CHECK` | Optional | Skip prod instrumentation gate |
+| `AI_ALLOWED_USER_IDS` | Optional | Comma-separated user ids allowed AI in the Ask Money panel (empty = off) |
+| `AI_TOKEN_ENCRYPTION_KEY` | With AI | 32-byte base64 key sealing ChatGPT tokens; same value locally and in Vercel |
+| `MONEY_AI_MODEL` | Optional | Model slug on the ChatGPT Codex backend (default `gpt-6-luna`) |
 
 ---
 
@@ -193,9 +195,9 @@ Copy [`.env.example`](.env.example).
 1. `bun install`
 2. Set env (see above)
 3. If DB was push-created: `bun run baseline-migrations`
-4. `bun run db:migrate` (or `db:push` on empty dev DB)
+4. `bun run db:migrate` (or `db:push` on empty dev DB). Migration `0012_assistant_context_note` has to be applied before the Ask Money deploy that reads it.
 5. `bun run bootstrap-owner` — **before** serving traffic in prod
-6. `bun run build` / deploy
+6. `bun run build` / deploy only after step 4 has finished on that database
 7. Log in at `/login` with `BOOTSTRAP_EMAIL` — confirm legacy data on dashboard
 8. Optional: register a second user at `/register` — must see **empty** tenant
 
@@ -210,14 +212,25 @@ Production: [`src/instrumentation.ts`](src/instrumentation.ts) fails fast if see
 - [ ] Never accept `accountId` / `userId` from FormData for authorization — resolve from session
 - [ ] Import/upload: bind to `getOrCreateAccountForBank(sessionUser.id, "bob")` only
 - [ ] Credentials `authorize`: fail closed if `!passwordHash`
-- [ ] Do not reintroduce runtime `ensureSeedUser()` inserts
+- [ ] Do not reintroduce runtime seed-user inserts; resolve the user with `requireCurrentUser()` / `requireCurrentUserAction()`
 
 ---
+
+## Supply-chain security (do not weaken)
+
+On 2026-09-25 a config-injection worm force-pushed an obfuscated payload into every branch and Vercel built it (see [`docs/security/2026-09-25-polinrider-incident.md`](docs/security/2026-09-25-polinrider-incident.md)).
+
+- [`scripts/security/preflight.mjs`](scripts/security/preflight.mjs) runs **before** `next dev` / `next build` (`package.json`, `vercel.json`) and in CI ([`.github/workflows/security-preflight.yml`](.github/workflows/security-preflight.yml)). Keep `dev`/`build` starting with `node scripts/security/preflight.mjs &&` — the guard itself fails if they don't.
+- It blocks: payload markers / heavy obfuscation in code, hidden or overlong lines and process/eval APIs in `*.config.*`, fonts or images that are really JavaScript, `.vscode` tasks that run on folder open, `temp_auto_push.bat`, a `.gitignore` that stops ignoring `.env*` / statements / `.vscode`, and new install hooks.
+- If it fails: **do not** open the folder in an editor with automatic tasks, and do not "fix" it by editing the guard. Compare against the last known-good commit.
+- Never commit `.vscode/tasks.json` with `runOn: folderOpen`. Config files stay short and declarative.
+- The guard file must not contain the literal campaign marker strings (public scanners search for them) — write patterns as regexes.
 
 ## Common commands
 
 ```bash
 bun run dev
+bun run security:check   # supply-chain preflight (also runs before dev/build)
 bun run typecheck
 bun run check:actions
 DATABASE_URL="$(cat ~/.money-scratch/local-dev/dburl)" bun run test:split-actions   # local-dev branch only; refuses any other DB
@@ -257,6 +270,32 @@ House rules on top of that guide:
 - Upgrading Effect: bump the exact pinned version, re-read `node_modules/effect/AGENTS.md` for changes, then `bun run typecheck && bun test && bun run build`.
 
 ---
+
+## Ask Money assistant (floating panel, ⌘/Ctrl+J)
+
+Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assistant/`](src/components/assistant/). Server entry points: [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) (`assistantTurn`, `getAssistantBootstrap`, `loadAssistantTxns`, `prepareAssistantOp`, `prepareApplyToAll`) and [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts). Agent: [`src/lib/assistant/agent.ts`](src/lib/assistant/agent.ts). Month tagging and standing notes: [`actor-ops.ts`](src/lib/assistant/actor-ops.ts) is the callable core. It takes a `MoneyActor` (`userId` + `accountId`) the caller has already authenticated. `loadTagMonth` selects the month, `draftTagChunk` builds the suggestion list (model guesses are an optional input; the function does not call a model), `applyTagDraft` / `undoTagDraft` write through `setCategoryForActor`, and `readStandingNotes` / `proposeStandingNote` read and propose notes. The Ask Money tool definitions and the React panel are wrappers. There is no MCP server or CLI in this app. [`tag-batch.ts`](src/lib/assistant/tag-batch.ts) holds the pure draft rules, [`tag-suggest.ts`](src/lib/assistant/tag-suggest.ts) is the one model call per chunk, [`tag-store.ts`](src/lib/assistant/tag-store.ts) is the account-scoped read, and [`TagReview.tsx`](src/components/assistant/TagReview.tsx) is the review modal.
+
+**Agent contract — do not weaken:**
+- **Read tools run; write tools only propose.** `search_transactions` / `get_open_balances` / `query` / `describe_table` / `show_transactions` execute against the session user's account. `propose_note|split|itemized_split|category|net_settle|context_note` return a draft rendered as a pending card; nothing is written until the user presses Apply, which calls the **existing** server actions (`setTransactionNote`, `createSplit`, `setTransactionCategory`, `saveNetEvent`, or `addContextNote`) with the user's edited values. Those return `ActionResult`; [`ops.ts`](src/components/assistant/ops.ts) calls them through `unwrap()` so a failure still throws (with the server's message) and the card never reports a write that didn't happen. `suggest_tags` only opens a review draft. Never give the model a tool that writes.
+- **Tag a month.** "Tag June" (or the **Tag &lt;month&gt;** button, defaulting to the latest month that still has uncategorized rows) drafts categories for that month's uncategorized payments. The server selects the rows and hands out `T1…` refs. History and the user's own notes decide a row when they can; the model only suggests a category, a short reason, and high/medium/low/none for the rest, in chunks of 12 so a month stays inside the 12-step / 120-second turn limits. The draft never writes. High confidence is pre-selected only when it came from history (two or more earlier payments to that payee, one category) or from a note that names one category. A model-only guess is never pre-selected. Low confidence is labelled "needs your input". If the same payee was already tagged in two categories, the row lists both and does not pick. Rows that already have a category are skipped, including transfers that are already categorized. Uncategorized rows flagged as transfers stay in the draft and are marked as transfers. A generic payee label (`Payee`, `Self`, `Unknown`, `Opening Balance`) does not count as the same payee. Apply and Undo run in chunks of 50 with no database transaction per chunk. If the server saves a chunk but the browser never gets the reply, the UI shows those rows as 'Not saved' and Undo does not cover them. Undo state lives only in browser memory, so a page reload loses it. Each call runs `applyTagDraft`, which loops `setCategoryForActor` with `expectedCurrentCategoryId` (the same stale guard as `setTransactionCategory`). One stale row does not roll back the others. The review shows which rows saved and which did not. Undo covers the saved rows the browser still has and writes back the `isTransfer` flag recorded at apply. `TagDraftRow.kind` is `"suggest"` today and `"needs_answer"` is reserved for a later questions step. There is no saved-rule control. After apply, the panel may offer to set `counterparty.default_category_id` when that payee has none. If a default already exists, the offer names the old and new categories and the write waits for that confirmation. The Tag button reloads its default month after apply and undo. No new env var. `MONEY_TAG_SUGGEST_STUB=1` fills model-only rows in `next dev` and is ignored when `NODE_ENV` is production.
+- **Preview everything.** Every change — including the card's category dropdown and "apply to all from this payee" — opens a pending card first. The panel never writes on a single click.
+- **Refs, not ids.** The model sees transactions as `T1…`/`CURRENT` handed out by the server in that turn. `CURRENT` (the focus id from the browser) is re-checked against the account every turn. A ref from a search with several matches is refused until the user picks. A ref found only by `query` can be shown (`show_transactions`) but not proposed on in that turn — SQL isn't grounded in the user's words the way a search is; once shown it becomes `CURRENT` for the next message.
+- **Query sandbox** ([`query-tables.ts`](src/lib/assistant/query-tables.ts), [`query-sandbox.ts`](src/lib/assistant/query-sandbox.ts)). `query` runs the model's SQL on a throwaway in-memory SQLite copy of the user's data, never on Neon. The copy holds only the columns in `QUERY_TABLES` (same model view as below, refs instead of ids), loaded by `loadQueryData` scoped to the account/user. It runs in a separate `node --permission` process with an empty environment (no secrets, no files, no child processes); SQLite's authorizer allows only reading those tables and `QUERY_FUNCTIONS` (no writes, PRAGMA, ATTACH, schema reads, recursion); `query_only`, size limits, one statement, 100-row cap; a slow query is stopped by killing the process (SQLite can't be interrupted from JS). Needs Node 24.10+ for the authorizer — without it the sandbox refuses to start. Money columns ending in `_paise` are turned into rupees by code before the model sees them. Keep the brief in the instructions short (every step resends it); details go in `describe_table`.
+- **Ask, don't guess.** Split participants and the net-settle person must be names the user actually wrote in the chat ([`namedByUser`](src/lib/assistant/find-intent.ts)); otherwise the tool returns an error and the model asks.
+- **What the model sees** ([`model-view.ts`](src/lib/assistant/model-view.ts)): date, amount, direction, a payee name (display name → purpose → bank payee name; never a UPI handle or any part of one, nothing with 5+ digits), the user's notes, category names, split status, known person names, open amounts owed between the user and a named person, and standing notes that pass `modelSafeText`. A standing note or transaction note that contains `@` or 5+ digits is omitted entirely. Never raw bank descriptions, ref ids, account balances or DB ids. Amounts and dates on the tag review come from the database.
+- **Exact money.** Amounts/dates the model passes are re-read by the server ([`groundIntent`](src/lib/assistant/find-intent.ts)): anything not in the user's own words is dropped (small models invent years). Card math is integer paise ([`card-math.ts`](src/lib/assistant/card-math.ts)); equal-split remainder paise go to the user. Itemised bills: the model copies each price, its count and who had it ([`groundBillItems`](src/lib/assistant/find-intent.ts) refuses any price the user didn't write, so the model can't total or divide); `itemizedShares` pools items with the same people and divides once, and the card lists the items and flags any gap between them and the payment rather than folding it into a share.
+- **Stale/duplicate safety.** Apply passes guards: `createSplit({ expectNoExistingSplit })`, `setTransactionNote({ expectedCurrentNote })`, `setTransactionCategory({ expectedCurrentCategoryId })`; `saveNetEvent` refuses a second event on the same transaction and returns `{ netEventId }` for Undo; `deleteSplit({ expectNoSettlements })` for split Undo. `applySuggestedTags` uses the same category guard per row and returns applied, skipped, and failed counts. The panel blocks double-clicks per card and flags a reload mid-save instead of retrying.
+- **Undo** reverses through existing actions (`deleteSplit` only when nothing was settled since, `deleteNetEvent`, previous note/category).
+- **Data vs inference.** Trace lines ("Looked up in your Money data"), cards and "why it matched" reasons are Money data; the reply text carries an "✦ AI" or "Built-in" tag.
+
+**Model access** is the owner's own ChatGPT plan via the Codex "Sign in with ChatGPT" OAuth flow — not an API key. Unofficial and undocumented; it can break at any time. Every failure degrades to the AI-free reader ([`rules-intent.ts`](src/lib/assistant/rules-intent.ts), find-only) with the reason from [`src/lib/ai/failure.ts`](src/lib/ai/failure.ts). Wire format mirrors codex-rs: `store: false`, output items replayed verbatim, `include: ["reasoning.encrypted_content"]` ([`responses.ts`](src/lib/ai/chatgpt/responses.ts)).
+
+- **Never** run one user's requests on another user's ChatGPT connection. Access = listed in `AI_ALLOWED_USER_IDS` **and** has their own `ai_connection` row.
+- **Tokens**: `ai_connection` stores AES-GCM–sealed tokens bound to `${userId}:chatgpt`. Refresh tokens are single-use — refresh only inside [`getChatgptAccess`](src/lib/ai/chatgpt/token-store.ts) (row lock). Never log tokens or send them to the browser.
+- **Connect / disconnect**: `bun run connect-chatgpt [--email …] [--disconnect]` on your machine (needs a browser and port 1455). Don't copy `~/.codex/auth.json` — shared refresh tokens log each other out.
+
+---
+
 
 ## Domain / ingest (unchanged by auth)
 

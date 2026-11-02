@@ -112,6 +112,8 @@ try {
   expect("valid split → ok", r.ok, r);
   expect("split row: total 100000, your share 40000, note 'dinner'", s.split?.totalPaise === 100000 && s.split?.yourSharePaise === 40000 && s.split?.note === "dinner", s.split);
   expect("participants Asha:30000, Bala:30000", JSON.stringify(s.participants) === JSON.stringify(["Asha:30000", "Bala:30000"]), s.participants);
+  r = await call(specs.createSplitSpec, { transactionId: debit.id, totalPaise: 100000, yourSharePaise: 40000, note: null, participants, expectNoExistingSplit: true });
+  expect("assistant card on an already-split payment → CONFLICT, refused", r.code === "CONFLICT" && r.message === "This payment already has a split. Edit it from the Split button in the table so settlements aren't lost.", r);
   const persons = await db.select().from(schema.persons).where(eq(schema.persons.userId, userId));
   expect("persons Asha + Bala created and linked", persons.length === 2, persons.map((p) => p.name));
 
@@ -181,6 +183,8 @@ try {
   await call(specs.recordSettlementSpec, { inflowTransactionId: credit.id, allocations: [{ splitParticipantId: ids.Bala, amountPaise: 30000 }], residual: { kind: "written_off", note: null } });
   s = await state(debit.id, credit.id);
   expect("(setup) Bala settled, ₹300 written off", s.disposition === "written_off:30000", s.disposition);
+  r = await call(specs.deleteSplitSpec, { transactionId: debit.id, expectNoSettlements: true });
+  expect("assistant undo with money settled → CONFLICT, split kept", r.code === "CONFLICT" && r.message === "Money was settled against this split since. Remove it from the table instead." && !!(await state(debit.id, credit.id)).split, r);
   r = await call(specs.deleteSplitSpec, { transactionId: debit.id });
   s = await state(debit.id, credit.id);
   expect("delete → ok", r.ok, r);

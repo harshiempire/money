@@ -38,7 +38,6 @@ function stripTrailingDecimalZero(s: string): string {
   return s.replace(/\.0(?=[kLCr]|$)/, "");
 }
 
-/** Compact INR label for charts (deterministic, no Intl). */
 export const formatPaiseShort = (
   paise: number | null | undefined,
 ): string => {
@@ -81,10 +80,6 @@ export const formatDate = (iso: string | null | undefined): string => {
   return `${d}-${m}-${y}`;
 };
 
-/**
- * Best-effort display label from the raw description. Falls back to a
- * truncated description so every row has *something* readable.
- */
 export const counterpartyLabel = (raw: string): string => {
   const upi = raw.match(/^UPI\/\d+\/[\d:]+\/(?:UPI|UDIR)\/([^\s/]+)/i);
   if (upi) return upi[1].replace(/\s+/g, "").toLowerCase();
