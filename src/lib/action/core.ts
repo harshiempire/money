@@ -1,4 +1,12 @@
-import { Cause, Effect, Exit, Layer, Option, Schema, SchemaIssue } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+  SchemaIssue,
+} from "effect";
 import { Invalid, toFailure, type ActionError } from "./errors";
 import { GENERIC_ERROR_MESSAGE, type ActionResult } from "./result";
 
@@ -7,17 +15,22 @@ import { GENERIC_ERROR_MESSAGE, type ActionResult } from "./result";
  * `bun test` without Next or a database.
  */
 
-export interface ActionSpec<I, IEncoded, A, R> {
+export interface ActionSpec<I, IEncoded, A, R, Data = A> {
   /** Every argument from the browser is decoded with this before use. */
   readonly input: Schema.Codec<I, IEncoded>;
   readonly handler: (input: I) => Effect.Effect<A, ActionError, R>;
-  /** Paths to revalidate — only after the handler succeeds. */
-  readonly revalidate?: readonly string[];
+  /**
+   * Paths to revalidate — only after the handler succeeds. A function picks
+   * them from the handler's result (e.g. different paths when nothing changed).
+   */
+  readonly revalidate?: readonly string[] | ((data: A) => readonly string[]);
   /**
    * Optional: revalidate only when this returns true for the handler's result
    * (e.g. a ledger core's `result.revalidate` — false when nothing changed).
    */
   readonly revalidateWhen?: (data: A) => boolean;
+  /** Public success data, projected after revalidation inspects the handler result. */
+  readonly toData?: (data: A) => Data;
 }
 
 export interface RunOptions<R, A = unknown> {
@@ -53,11 +66,11 @@ export const decodeInput = <I, IEncoded>(
     }),
   );
 
-export async function runAction<I, IEncoded, A, R>(
-  spec: ActionSpec<I, IEncoded, A, R>,
+export async function runAction<I, IEncoded, A, R, Data = A>(
+  spec: ActionSpec<I, IEncoded, A, R, Data>,
   raw: unknown,
   options: RunOptions<R, A>,
-): Promise<ActionResult<A>> {
+): Promise<ActionResult<Data>> {
   const program = decodeInput(spec.input, raw).pipe(
     Effect.flatMap(spec.handler),
     Effect.provide(options.layer),
@@ -66,8 +79,22 @@ export async function runAction<I, IEncoded, A, R>(
   const exit = await Effect.runPromiseExit(program);
 
   if (Exit.isSuccess(exit)) {
-    options.onSuccess?.(exit.value);
-    return { ok: true, data: exit.value };
+    // The write has committed: a failure while revalidating must not turn the
+    // result into a failure (the user would retry a write that succeeded).
+    try {
+      options.onSuccess?.(exit.value);
+    } catch (err) {
+      options.rethrow?.(err);
+      (options.log ?? console.error)(
+        `[action:${options.name}] succeeded, but revalidation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return {
+      ok: true,
+      data: spec.toData
+        ? spec.toData(exit.value)
+        : (exit.value as unknown as Data),
+    };
   }
 
   const failure = Cause.findErrorOption(exit.cause);

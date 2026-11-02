@@ -16,7 +16,12 @@ const Input = Schema.Struct({
 });
 
 function spec<A>(
-  handler: ActionSpec<typeof Input.Type, typeof Input.Encoded, A, CurrentUser>["handler"],
+  handler: ActionSpec<
+    typeof Input.Type,
+    typeof Input.Encoded,
+    A,
+    CurrentUser
+  >["handler"],
 ): ActionSpec<typeof Input.Type, typeof Input.Encoded, A, CurrentUser> {
   return { input: Input, handler };
 }
@@ -38,11 +43,15 @@ describe("runAction", () => {
 
   test("onSuccess receives the handler's result (for revalidateWhen)", async () => {
     let seen: unknown;
-    await runAction(spec(() => Effect.succeed({ revalidate: false })), good, {
-      name: "t",
-      layer: signedIn,
-      onSuccess: (data) => (seen = data),
-    });
+    await runAction(
+      spec(() => Effect.succeed({ revalidate: false })),
+      good,
+      {
+        name: "t",
+        layer: signedIn,
+        onSuccess: (data) => (seen = data),
+      },
+    );
     expect(seen).toEqual({ revalidate: false });
   });
 
@@ -60,10 +69,14 @@ describe("runAction", () => {
   });
 
   test("no session wins over bad input (anonymous callers learn nothing)", async () => {
-    const result = await runAction(spec(() => Effect.void), { nope: 1 }, {
-      name: "t",
-      layer: signedOut,
-    });
+    const result = await runAction(
+      spec(() => Effect.void),
+      { nope: 1 },
+      {
+        name: "t",
+        layer: signedOut,
+      },
+    );
     expect(result).toMatchObject({ ok: false, code: "UNAUTHENTICATED" });
   });
 
@@ -74,7 +87,11 @@ describe("runAction", () => {
       { transactionId: "t-1", amountPaise: 12.5 },
       { name: "t", layer: signedIn },
     );
-    expect(result).toMatchObject({ ok: false, code: "INVALID", field: "amountPaise" });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "INVALID",
+      field: "amountPaise",
+    });
     expect(ran).toBe(false);
   });
 
@@ -84,7 +101,10 @@ describe("runAction", () => {
       { ...good, userId: "someone-else" },
       { name: "t", layer: signedIn },
     );
-    expect(result).toEqual({ ok: true, data: ["amountPaise", "transactionId"] });
+    expect(result).toEqual({
+      ok: true,
+      data: ["amountPaise", "transactionId"],
+    });
   });
 
   test("a validator failure keeps its message (the bug this fixes)", async () => {
@@ -104,7 +124,11 @@ describe("runAction", () => {
 
   test("Invalid with a field is reported against that field", async () => {
     const result = await runAction(
-      spec(() => Effect.fail(new Invalid({ message: "Too much", field: "allocations.1" }))),
+      spec(() =>
+        Effect.fail(
+          new Invalid({ message: "Too much", field: "allocations.1" }),
+        ),
+      ),
       good,
       { name: "t", layer: signedIn },
     );
@@ -117,10 +141,14 @@ describe("runAction", () => {
   });
 
   test("Forbidden gives one generic answer", async () => {
-    const result = await runAction(spec(() => Effect.fail(new Forbidden())), good, {
-      name: "t",
-      layer: signedIn,
-    });
+    const result = await runAction(
+      spec(() => Effect.fail(new Forbidden())),
+      good,
+      {
+        name: "t",
+        layer: signedIn,
+      },
+    );
     expect(result).toEqual({
       ok: false,
       code: "FORBIDDEN",
@@ -130,7 +158,13 @@ describe("runAction", () => {
 
   test("Unavailable keeps its retry message", async () => {
     const result = await runAction(
-      spec(() => Effect.fail(new Unavailable({ message: "Database connection timed out. Try again." }))),
+      spec(() =>
+        Effect.fail(
+          new Unavailable({
+            message: "Database connection timed out. Try again.",
+          }),
+        ),
+      ),
       good,
       { name: "t", layer: signedIn },
     );
@@ -154,23 +188,34 @@ describe("runAction", () => {
         onSuccess: () => (revalidated = true),
       },
     );
-    expect(result).toEqual({ ok: false, code: "INTERNAL", message: GENERIC_ERROR_MESSAGE });
+    expect(result).toEqual({
+      ok: false,
+      code: "INTERNAL",
+      message: GENERIC_ERROR_MESSAGE,
+    });
     expect(logs[0]).toContain("[action:createSplit]");
     expect(logs[0]).toContain("postgres://secret");
     expect(revalidated).toBe(false);
   });
 
   test("rethrow can re-raise control-flow defects (redirect/notFound)", async () => {
-    const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;/login" });
+    const redirect = Object.assign(new Error("NEXT_REDIRECT"), {
+      digest: "NEXT_REDIRECT;/login",
+    });
     await expect(
-      runAction(spec(() => Effect.die(redirect)), good, {
-        name: "t",
-        layer: signedIn,
-        log: quiet,
-        rethrow: (d) => {
-          if ((d as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw d;
+      runAction(
+        spec(() => Effect.die(redirect)),
+        good,
+        {
+          name: "t",
+          layer: signedIn,
+          log: quiet,
+          rethrow: (d) => {
+            if ((d as { digest?: string }).digest?.startsWith("NEXT_REDIRECT"))
+              throw d;
+          },
         },
-      }),
+      ),
     ).rejects.toBe(redirect);
   });
 });
@@ -206,7 +251,10 @@ describe("transaction", () => {
     const { state, layer } = fakeDb();
     const error = new Invalid({ message: "A person name is required." });
     const result = await Effect.runPromise(
-      transaction(() => Effect.fail(error)).pipe(Effect.result, Effect.provide(layer)),
+      transaction(() => Effect.fail(error)).pipe(
+        Effect.result,
+        Effect.provide(layer),
+      ),
     );
     expect(Result.isFailure(result)).toBe(true);
     expect(Result.isFailure(result) && result.failure).toBe(error);
@@ -230,5 +278,82 @@ describe("transaction", () => {
       ),
     );
     expect(id).toBe("u-1");
+  });
+});
+
+describe("success data projection", () => {
+  test("revalidation sees the core receipt while the browser receives only its value", async () => {
+    const receipt = {
+      revalidate: true,
+      value: { netEventId: "event-1" },
+      changeId: "internal-change",
+    };
+    let seen: unknown;
+    const result = await runAction(
+      {
+        input: Input,
+        handler: Effect.fn("receipt")(function* () {
+          return receipt;
+        }),
+        toData: (r) => r.value,
+      },
+      good,
+      {
+        name: "receipt",
+        layer: signedIn,
+        onSuccess: (r) => {
+          seen = r;
+        },
+      },
+    );
+    expect(seen).toBe(receipt);
+    expect(result).toEqual({ ok: true, data: { netEventId: "event-1" } });
+  });
+
+  test("a void action keeps void data even when its receipt controls revalidation", async () => {
+    const result = await runAction(
+      {
+        input: Input,
+        handler: Effect.fn("voidReceipt")(function* () {
+          return { revalidate: false };
+        }),
+        toData: () => undefined,
+      },
+      good,
+      { name: "voidReceipt", layer: signedIn },
+    );
+    expect(result).toEqual({ ok: true, data: undefined });
+  });
+
+  test("failure never projects data or runs success effects", async () => {
+    let projected = false;
+    let succeeded = false;
+    const result = await runAction(
+      {
+        input: Input,
+        handler: Effect.fn("failedReceipt")(function* () {
+          return yield* new Invalid({ message: "Cannot save" });
+        }),
+        toData: () => {
+          projected = true;
+          return "unexpected";
+        },
+      },
+      good,
+      {
+        name: "failedReceipt",
+        layer: signedIn,
+        onSuccess: () => {
+          succeeded = true;
+        },
+      },
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "INVALID",
+      message: "Cannot save",
+    });
+    expect(projected).toBe(false);
+    expect(succeeded).toBe(false);
   });
 });

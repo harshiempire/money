@@ -31,10 +31,10 @@ import { CurrentUser, Db } from "./services";
  *   message — internals never leak.
  * - `redirect()` / `notFound()` thrown inside a handler still work.
  */
-export function defineAction<I, IEncoded, A>(
+export function defineAction<I, IEncoded, A, Data = A>(
   name: string,
-  spec: ActionSpec<I, IEncoded, A, CurrentUser | Db>,
-): (input: IEncoded) => Promise<ActionResult<A>> {
+  spec: ActionSpec<I, IEncoded, A, CurrentUser | Db, Data>,
+): (input: IEncoded) => Promise<ActionResult<Data>> {
   return (raw) =>
     runAction(spec, raw, {
       name,
@@ -48,10 +48,10 @@ export function defineAction<I, IEncoded, A>(
  * For the few actions that run without a session (registration). The handler
  * cannot ask for `CurrentUser` — the type won't allow it.
  */
-export function definePublicAction<I, IEncoded, A>(
+export function definePublicAction<I, IEncoded, A, Data = A>(
   name: string,
-  spec: ActionSpec<I, IEncoded, A, Db>,
-): (input: IEncoded) => Promise<ActionResult<A>> {
+  spec: ActionSpec<I, IEncoded, A, Db, Data>,
+): (input: IEncoded) => Promise<ActionResult<Data>> {
   return (raw) =>
     runAction(spec, raw, {
       name,
@@ -82,11 +82,15 @@ export function asFormAction<I>(
 }
 
 function revalidateFor<A>(
-  spec: { readonly revalidate?: readonly string[]; readonly revalidateWhen?: (data: A) => boolean },
+  spec: {
+    readonly revalidate?: readonly string[] | ((data: A) => readonly string[]);
+    readonly revalidateWhen?: (data: A) => boolean;
+  },
   data: A,
 ): void {
   if (spec.revalidateWhen && !spec.revalidateWhen(data)) return;
-  spec.revalidate?.forEach((p) => revalidatePath(p));
+  const paths = typeof spec.revalidate === "function" ? spec.revalidate(data) : spec.revalidate;
+  paths?.forEach((p) => revalidatePath(p));
 }
 
 const CurrentUserLive = Layer.effect(
