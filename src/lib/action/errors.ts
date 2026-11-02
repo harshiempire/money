@@ -29,12 +29,22 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
   message: Schema.String,
 }) {}
 
+/**
+ * A transient infrastructure failure the user can retry (e.g. the database
+ * connection timed out). Only for failures with a deliberate user-facing
+ * message — anything else unexpected should stay a defect.
+ */
+export class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {
+  message: Schema.String,
+}) {}
+
 export type ActionError =
   | Unauthenticated
   | Forbidden
   | NotFound
   | Invalid
-  | Conflict;
+  | Conflict
+  | Unavailable;
 
 export function toFailure(error: ActionError): ActionFailure {
   switch (error._tag) {
@@ -58,5 +68,7 @@ export function toFailure(error: ActionError): ActionFailure {
         : { ok: false, code: "INVALID", message: error.message, field: error.field };
     case "Conflict":
       return { ok: false, code: "CONFLICT", message: error.message };
+    case "Unavailable":
+      return { ok: false, code: "UNAVAILABLE", message: error.message };
   }
 }

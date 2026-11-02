@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Layer, Result, Schema } from "effect";
 import { runAction, type ActionSpec } from "./core";
-import { Forbidden, Invalid, Unauthenticated } from "./errors";
+import { Forbidden, Invalid, Unauthenticated, Unavailable } from "./errors";
 import { CurrentUser, Db, transaction, type Database } from "./services";
 import { check } from "./validation";
 import { GENERIC_ERROR_MESSAGE } from "./result";
@@ -115,6 +115,19 @@ describe("runAction", () => {
       ok: false,
       code: "FORBIDDEN",
       message: "You don't have access to that.",
+    });
+  });
+
+  test("Unavailable keeps its retry message", async () => {
+    const result = await runAction(
+      spec(() => Effect.fail(new Unavailable({ message: "Database connection timed out. Try again." }))),
+      good,
+      { name: "t", layer: signedIn },
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "UNAVAILABLE",
+      message: "Database connection timed out. Try again.",
     });
   });
 

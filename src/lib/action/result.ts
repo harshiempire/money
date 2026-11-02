@@ -14,6 +14,7 @@ export type ActionErrorCode =
   | "NOT_FOUND"
   | "INVALID"
   | "CONFLICT"
+  | "UNAVAILABLE"
   | "INTERNAL";
 
 export type ActionFailure = {

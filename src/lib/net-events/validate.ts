@@ -1,19 +1,19 @@
-import type { NetEventLeg } from "@/app/transactions/net-event-actions";
+import type { LegAmount, NetEventLeg } from "./legs";
 
-export function sumReceivableLegs(legs: NetEventLeg[]): number {
+export function sumReceivableLegs(legs: ReadonlyArray<LegAmount>): number {
   return legs
     .filter((l) => l.kind === "receivable")
     .reduce((s, l) => s + l.amountPaise, 0);
 }
 
-export function sumPayableLegs(legs: NetEventLeg[]): number {
+export function sumPayableLegs(legs: ReadonlyArray<LegAmount>): number {
   return legs
     .filter((l) => l.kind === "payable")
     .reduce((s, l) => s + l.amountPaise, 0);
 }
 
 export function validateNetEventInvariant(
-  legs: NetEventLeg[],
+  legs: ReadonlyArray<LegAmount>,
   inflowAmountPaise: number,
   outflowAmountPaise: number,
 ): { ok: true } | { ok: false; message: string } {
