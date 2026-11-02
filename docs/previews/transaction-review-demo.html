@@ -1,0 +1,177 @@
+<style>
+#money-review-demo { color: var(--foreground); font-family: var(--font-sans); }
+#money-review-demo * { box-sizing: border-box; }
+#money-review-demo .demo-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+#money-review-demo button, #money-review-demo select { font: inherit; color: var(--foreground); background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+#money-review-demo button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+#money-review-demo button:disabled, #money-review-demo select:disabled { opacity: .65; }
+#money-review-demo .demo-mode { display: flex; flex-wrap: wrap; gap: 6px; }
+#money-review-demo label { display: flex; align-items: center; gap: 6px; }
+#money-review-demo .subtle { color: var(--muted-foreground); }
+#money-review-demo .summary { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+#money-review-demo .queue { font-weight: 500; }
+#money-review-demo .transactions { border-top: 1px solid var(--border); }
+#money-review-demo .transaction { display: grid; grid-template-columns: minmax(100px, 1fr) 90px minmax(140px, 1fr) 130px; align-items: center; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+#money-review-demo .amount { text-align: end; font-variant-numeric: tabular-nums; }
+#money-review-demo .merchant { font-weight: 500; }
+#money-review-demo .summary-title { margin: 20px 0 8px; font-weight: 500; }
+#money-review-demo .category-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; min-height: 28px; }
+#money-review-demo .category-total { display: flex; gap: 8px; font-variant-numeric: tabular-nums; }
+#money-review-demo .save-status { margin-top: 16px; padding: 12px 0; min-height: 48px; border-top: 1px solid var(--border); }
+#money-review-demo .save-status[data-error="true"] { color: var(--destructive); }
+#money-review-demo .demo-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; }
+@media (max-width: 540px) {
+  #money-review-demo .transaction { grid-template-columns: 1fr 1fr; gap: 10px; }
+  #money-review-demo .transaction button { justify-self: end; }
+  #money-review-demo .transaction select { min-width: 0; width: 100%; }
+}
+</style>
+<div id="money-review-demo">
+  <div class="demo-controls">
+    <div class="demo-mode" role="group" aria-label="Update behavior">
+      <button type="button" data-mode="current" aria-pressed="false">Current flow</button>
+      <button type="button" data-mode="collections" aria-pressed="true">With TanStack DB</button>
+    </div>
+    <label><input type="checkbox" id="money-fail-save"> Fail next save</label>
+  </div>
+  <div class="summary">
+    <span class="queue" id="money-review-count" aria-live="polite"></span>
+    <span class="subtle">Sample data · 3 transactions</span>
+  </div>
+  <div class="transactions" id="money-demo-rows"></div>
+  <div class="summary-title">Category totals · these 3 transactions</div>
+  <div class="category-summary" id="money-category-totals" aria-live="polite"></div>
+  <div class="save-status" id="money-save-status" role="status" aria-live="polite">Change a category or mark a transaction reviewed.</div>
+  <div class="demo-foot">
+    <button type="button" id="money-reset-demo">Reset demo</button>
+    <span class="subtle">Simulated 1.5 s save · no real data or network requests</span>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('money-review-demo');
+  const rowsEl = root.querySelector('#money-demo-rows');
+  const totalsEl = root.querySelector('#money-category-totals');
+  const countEl = root.querySelector('#money-review-count');
+  const statusEl = root.querySelector('#money-save-status');
+  const failEl = root.querySelector('#money-fail-save');
+  const resetEl = root.querySelector('#money-reset-demo');
+  const categories = ['Uncategorised', 'Dining', 'Groceries', 'Transport'];
+  const initial = [
+    { id: 'cafe', name: 'Corner café', amount: 48000, category: 'Uncategorised', review: true },
+    { id: 'market', name: 'Neighbourhood market', amount: 126000, category: 'Groceries', review: true },
+    { id: 'metro', name: 'Metro recharge', amount: 20000, category: 'Transport', review: false }
+  ];
+  const copy = (value) => value.map(row => ({ ...row }));
+  const money = (paise) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(paise / 100);
+  let committed = copy(initial);
+  let displayed = copy(initial);
+  let mode = 'collections';
+  let pending = false;
+  let timer;
+
+  function status(message, error = false) {
+    statusEl.textContent = message;
+    statusEl.dataset.error = String(error);
+  }
+
+  function render() {
+    rowsEl.replaceChildren();
+    for (const row of displayed) {
+      const line = document.createElement('div');
+      line.className = 'transaction';
+      const name = document.createElement('span');
+      name.className = 'merchant';
+      name.textContent = row.name;
+      const amount = document.createElement('span');
+      amount.className = 'amount';
+      amount.textContent = money(row.amount);
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `Category for ${row.name}`);
+      for (const category of categories) {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        select.append(option);
+      }
+      select.value = row.category;
+      select.disabled = pending;
+      select.addEventListener('change', () => mutate(row.id, { category: select.value }, `${row.name} category`));
+      const review = document.createElement('button');
+      review.type = 'button';
+      review.textContent = row.review ? 'Mark reviewed' : 'Reviewed ✓';
+      review.setAttribute('aria-label', row.review ? `Mark ${row.name} reviewed` : `${row.name} is reviewed`);
+      review.disabled = pending || !row.review;
+      review.addEventListener('click', () => mutate(row.id, { review: false }, `${row.name} review flag`));
+      line.append(name, amount, select, review);
+      rowsEl.append(line);
+    }
+    const count = displayed.filter(row => row.review).length;
+    countEl.textContent = `${count} awaiting review`;
+    totalsEl.replaceChildren();
+    for (const category of categories) {
+      const total = displayed.filter(row => row.category === category).reduce((sum, row) => sum + row.amount, 0);
+      if (!total) continue;
+      const item = document.createElement('span');
+      item.className = 'category-total';
+      const label = document.createElement('span');
+      label.className = 'subtle';
+      label.textContent = category;
+      const value = document.createElement('span');
+      value.textContent = money(total);
+      item.append(label, value);
+      totalsEl.append(item);
+    }
+    for (const button of root.querySelectorAll('[data-mode]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+      button.disabled = pending;
+    }
+    failEl.disabled = pending;
+  }
+
+  function mutate(id, patch, description) {
+    if (pending) return;
+    const fail = failEl.checked;
+    failEl.checked = false;
+    pending = true;
+    const next = committed.map(row => row.id === id ? { ...row, ...patch } : { ...row });
+    if (mode === 'collections') {
+      displayed = copy(next);
+      status('UI and related totals updated immediately · saving…');
+    } else {
+      status('Saving… · row, review count and totals await the server result.');
+    }
+    render();
+    timer = setTimeout(() => {
+      pending = false;
+      if (fail) {
+        displayed = copy(committed);
+        status(mode === 'collections' ? 'Save failed · row, review count and totals rolled back together.' : 'Save failed · confirmed values retained.', true);
+      } else {
+        committed = copy(next);
+        displayed = copy(committed);
+        status(`Server confirmed · ${description} saved.`);
+      }
+      render();
+    }, 1500);
+  }
+
+  for (const button of root.querySelectorAll('[data-mode]')) {
+    button.addEventListener('click', () => {
+      mode = button.dataset.mode;
+      status(mode === 'collections' ? 'Change a category: its row and category totals update together.' : 'Change a category: confirmed values update after the simulated save.');
+      render();
+    });
+  }
+  resetEl.addEventListener('click', () => {
+    clearTimeout(timer);
+    pending = false;
+    committed = copy(initial);
+    displayed = copy(initial);
+    failEl.checked = false;
+    status('Change a category or mark a transaction reviewed.');
+    render();
+  });
+  render();
+})();
+</script>
