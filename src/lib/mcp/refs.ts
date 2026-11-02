@@ -21,3 +21,13 @@ export function transactionRev(key: Uint8Array, userId: string, transactionId: s
     userId, transactionId, fields.categoryId, fields.note, fields.isTransfer, fields.needsReview,
   ])).digest("base64url").slice(0, 12)}`;
 }
+
+/** Entity refs bind the user AND selected account; JSON domain separation prevents ambiguity. */
+function entityRef(prefix: "shr" | "owe" | "stl", key: Uint8Array, userId: string, accountId: string, id: string): string {
+  return `${prefix}_${createHmac("sha256", key)
+    .update(JSON.stringify([`money:mcp:${prefix}:v1`, userId, accountId, id]))
+    .digest("base64url").slice(0, 22)}`;
+}
+export const shareRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("shr", key, userId, accountId, id);
+export const owedRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("owe", key, userId, accountId, id);
+export const settlementRef = (key: Uint8Array, userId: string, accountId: string, id: string) => entityRef("stl", key, userId, accountId, id);

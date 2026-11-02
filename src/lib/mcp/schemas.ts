@@ -8,7 +8,7 @@ export const Month = Schema.String.check(Schema.isPattern(/^\d{4}-(0[1-9]|1[0-2]
   description: "Calendar month in YYYY-MM format; cannot be combined with from/to. Omit all range fields for all time.",
 });
 export const EmptyInput = Schema.Struct({});
-const Day = Schema.String.check(
+export const Day = Schema.String.check(
   Schema.isPattern(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/u),
   Schema.makeFilter((value: string) => {
     const [year, month, day] = value.split("-").map(Number);

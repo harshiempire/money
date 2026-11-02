@@ -15,6 +15,7 @@ import { buildOverview } from "./overview";
 import { loadMcpSummary } from "./summary";
 import { McpToolError } from "./pagination";
 import type { PeriodInput } from "./schemas";
+import { loadMcpReadModel } from "./model-read-ops";
 
 const t = schema.transactions;
 const defaultCategory = alias(schema.categories, "payee_default_category");
@@ -44,6 +45,7 @@ async function loadOpenShares(actor: MoneyActor, input: PeriodInput) {
 }
 
 export const mcpReadOps: McpOps = {
+  readModel: (actor) => loadMcpReadModel(actor, () => mcpReadOps.listTransactions(actor, {})),
   listCategories: (actor) => loadCategories(actor.userId),
   async listTransactions(actor, input) {
     const bounds = resolveMcpPeriod(input);

@@ -25,7 +25,19 @@ import {
   type PeriodSummary,
 } from "./schemas";
 
+import type { McpReadModel } from "./read-model";
+import { buildReadView, getTransactions, getOpenBalances, pagePayees } from "./model-view";
+import { findPayments } from "./find-payments";
+import { buildMcpQueryTables, describeMcpTable, formatMcpQueryResult } from "./query-tables";
+import { createQuerySandbox } from "@/lib/assistant/query-sandbox";
+import {
+  GetTransactionsInput, GetTransactionsOutput, PeopleOutput, OpenBalancesInput, OpenBalancesOutput,
+  PayeesInput, PayeesOutput, FindPaymentsInput, FindPaymentsOutput,
+  QueryInput, QueryOutput, DescribeTableInput, DescribeTableOutput,
+} from "./read-schemas";
+
 export interface McpOps {
+  readModel(actor: MoneyActor): Promise<McpReadModel>;
   listCategories(actor: MoneyActor): Promise<
     Array<{
       id: string;
@@ -120,6 +132,7 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
     {
       instructions:
         "Start with get_overview. Never assume a month; look across months or all time when needed. " +
+        "Prefer get_open_balances, find_payments, get_transactions and list_people; use query for questions those tools do not answer. " +
         "Amounts are exact rupee strings; never do money math in your head, use tool results. " +
         "A person can have several UPI handles; do not assume one handle identifies all their payments. " +
         "Never bypass the MCP with DB scripts, app internals or .env files. If a tool is missing, say so. " +
@@ -203,6 +216,45 @@ export function buildMcpServer(principal: McpPrincipal, ops: McpOps, key: Uint8A
         return result({ notes: await ops.standingNotes(actor) });
       }),
   );
+  const loadView = async () => buildReadView(await ops.readModel(actor), actor, key, revKey);
+  server.registerTool("get_transactions", {
+    title: "Get transaction details", description: "Read 1–50 txn_ refs with the full bank view, splits, participant shares, every settlement allocation, linked net event and sourced owed expenses. Unknown refs are listed without failing the batch.",
+    inputSchema: standard(GetTransactionsInput), outputSchema: standard(GetTransactionsOutput), annotations: read,
+  }, (input) => safely(async () => result(getTransactions(await loadView(), input.refs))));
+  server.registerTool("list_people", {
+    title: "List people and learned handles", description: "Read every saved or historical person, open balances, share count and last activity. seen_handles are learned from settlements, not confirmed: a person may pay from several keys and one key may pay for several people.",
+    inputSchema: standard(EmptyInput), outputSchema: standard(PeopleOutput), annotations: read,
+  }, () => safely(async () => result({ people: (await loadView()).people })));
+  server.registerTool("get_open_balances", {
+    title: "Get open balances", description: "Read outstanding split shares (they owe you) and user-owned owed expenses (you owe them), with oldest-first lines and up to 20 newest unlinked credits from learned handles per person. Optional person is a case-insensitive exact name; unknown names return close names.",
+    inputSchema: standard(OpenBalancesInput), outputSchema: standard(OpenBalancesOutput), annotations: read,
+  }, (input) => safely(async () => result(getOpenBalances(await loadView(), input.person))));
+  server.registerTool("list_payees", {
+    title: "List payees", description: "Page counterparties appearing in this account by row count descending. Filter key/display name by substring. Totals include full bank amounts and transfers; seen_person associations are learned from settlements, not confirmed.",
+    inputSchema: standard(PayeesInput), outputSchema: standard(PayeesOutput), annotations: read,
+  }, (input) => safely(async () => result(pagePayees(await loadView(), input))));
+  server.registerTool("find_payments", {
+    title: "Find payment candidates", description: "Rank bank payments by amount (whole payment, participant share, or within ±2%), date distance, payee text and person evidence. At least one of amount, text or person is required. One clear top candidate means use it and say which payment; several close candidates means ask the owner.",
+    inputSchema: standard(FindPaymentsInput), outputSchema: standard(FindPaymentsOutput), annotations: read,
+  }, (input) => safely(async () => result(findPayments(await loadView(), input))));
+  server.registerTool("query", {
+    title: "Query Money data", description: "Read-only SQLite over transactions, payees, people, splits, shares, settlements, net_events, owed, categories and standing_notes. Use describe_table for columns. Prefer purpose-built tools when they fit. Integer _paise money columns return exact rupee strings; refs work in all tools. One SELECT, max 100 rows; SQL runs only on an in-memory copy.",
+    inputSchema: standard(QueryInput), outputSchema: standard(QueryOutput), annotations: read,
+  }, (input) => safely(async () => {
+    const sandbox = createQuerySandbox(async () => {
+      const [view, categories, notes] = await Promise.all([loadView(), ops.listCategories(actor), ops.standingNotes(actor)]);
+      return buildMcpQueryTables(view, categories, notes);
+    });
+    try {
+      const outcome = await sandbox.run(input.sql);
+      if (!outcome.ok) throw new McpToolError(outcome.error);
+      return result(formatMcpQueryResult(outcome));
+    } finally { sandbox.close(); }
+  }));
+  server.registerTool("describe_table", {
+    title: "Describe a Money table", description: "Get the precise columns, units, scope and ref joins for one curated MCP query table. This model includes full unredacted data for this account and user-owned people/owed expenses; no database ids or secrets.",
+    inputSchema: standard(DescribeTableInput), outputSchema: standard(DescribeTableOutput), annotations: read,
+  }, (input) => safely(async () => result(describeMcpTable(input.name))));
   if (scopeAllows(principal.scope, "propose")) {
     server.registerTool(
       "propose_tags",

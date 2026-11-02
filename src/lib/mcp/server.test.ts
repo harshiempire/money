@@ -7,7 +7,9 @@ import type { StoredTagRow } from "./proposal";
 import { buildOverview } from "./overview";
 import { resolveMcpPeriod } from "./range";
 import type { PeriodInput } from "./schemas";
+import { readFixture } from "./read-fixtures";
 
+const phase2Tools = ["get_transactions", "list_people", "get_open_balances", "list_payees", "find_payments", "query", "describe_table"];
 const key = deriveMcpRefKey("protocol-test");
 const principal: McpPrincipal = {
   actor: {
@@ -31,6 +33,7 @@ function fixture(
   const drafts: Array<{ rows: StoredTagRow[] }> = [];
   const summaries: PeriodInput[] = [];
   const ops: McpOps = {
+    readModel: async () => readFixture(),
     overview: async () => buildOverview([], [], []),
     listCategories: async () => categories,
     listTransactions: async () => [],
@@ -149,13 +152,14 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
         const { json } = await call(scope, "tools/list");
         expect(json.result.tools.map((t: { name: string }) => t.name)).toEqual(
           scope === "read"
-            ? ["get_overview", "list_categories", "list_transactions", "get_period_summary", "list_standing_notes"]
+            ? ["get_overview", "list_categories", "list_transactions", "get_period_summary", "list_standing_notes", ...phase2Tools]
             : [
                 "get_overview",
                 "list_categories",
                 "list_transactions",
                 "get_period_summary",
                 "list_standing_notes",
+                ...phase2Tools,
                 "propose_tags",
                 ...(scope === "write" ? ["update_transactions", "set_payee_default", "list_changes", "undo_change"] : []),
               ],
@@ -165,6 +169,11 @@ for (const protocolVersion of ["2025-11-25", "2026-07-28"]) {
           expect(tool.title).toEqual(expect.any(String));
           expect(tool.description).toEqual(expect.any(String));
           expect(tool.description.length).toBeGreaterThan(20);
+          if (phase2Tools.includes(tool.name)) {
+            expect(tool.annotations.readOnlyHint).toBe(true);
+            expect(tool.outputSchema.type).toBe("object");
+            expect(tool.outputSchema.required.length).toBeGreaterThan(0);
+          }
         }
         expect(list.inputSchema.properties.month).toMatchObject({
           type: "string",
@@ -376,7 +385,7 @@ test("self-contained instructions include shared guidance and write guidance onl
       const brief = init.json.result.instructions;
       expect(brief).toStartWith("Start with get_overview.");
       for (const text of ["Never assume a month", "across months or all time", "exact rupee strings", "money math in your head",
-        "several UPI handles", "Never bypass the MCP", "DB scripts", "app internals", ".env files", "tool is missing", "propose_tags stays draft-only"])
+        "several UPI handles", "Never bypass the MCP", "DB scripts", "app internals", ".env files", "tool is missing", "propose_tags stays draft-only", "Prefer get_open_balances, find_payments, get_transactions and list_people", "use query"])
         expect(brief).toContain(text);
       if (scope === "write") {
         for (const text of ["read current refs and revs", "fresh idempotency key per request", "identical retry", "report what changed", "change id", "undo_change", "Connections"])
@@ -416,3 +425,36 @@ test("standing notes and categories are returned unfiltered without database ids
     expect(notes.json.result.structuredContent).toEqual({ notes: ["Pay ravi@bank 9876543210"] });
   } finally { await handler.close(); }
 });
+
+for (const scope of ["read", "propose", "write"] as const) {
+  test(`phase 2 tools execute through the SDK with structured output for ${scope}`, async () => {
+    const { call, handler } = fixture();
+    try {
+      const args: Record<string, object> = {
+        get_transactions: { refs: ["unknown", transactionRef(key, "alice", "private-bill")] },
+        list_people: {}, get_open_balances: { person: "kIrAn" }, list_payees: { limit: 1 },
+        find_payments: { amount: "274", person: "Kiran" }, describe_table: { name: "shares" },
+        query: { sql: "select ref, amount_paise, note from transactions order by date limit 1" },
+      };
+      for (const name of phase2Tools) {
+        const { json } = await call(scope, "tools/call", { name, arguments: args[name] });
+        expect(json.error).toBeUndefined();
+        expect(json.result.isError).not.toBe(true);
+        expect(json.result.structuredContent).toBeTruthy();
+        expect(JSON.stringify(json.result.structuredContent)).not.toContain("private-");
+        if (name === "get_transactions") {
+          expect(json.result.structuredContent.unknown_refs).toEqual(["unknown"]);
+          expect(json.result.structuredContent.transactions[0].split.shares[0].left).toBe("194.00");
+        }
+        if (name === "find_payments") expect(json.result.structuredContent.candidates[0].amount).toBe("567.00");
+        if (name === "query") expect(json.result.structuredContent.rows[0][1]).toBe("12.00");
+      }
+      const invalid = await call(scope, "tools/call", { name: "find_payments", arguments: { date: "2026-07-31" } });
+      expect(invalid.json.error ?? invalid.json.result?.isError).toBeTruthy();
+      const unknown = await call(scope, "tools/call", { name: "get_open_balances", arguments: { person: "Ravi" } });
+      expect(unknown.json.result.isError).toBe(true); expect(unknown.json.result.content[0].text).toContain("Ravi Teja");
+      const refused = await call(scope, "tools/call", { name: "query", arguments: { sql: "select * from sqlite_schema" } });
+      expect(refused.json.result.isError).toBe(true);
+    } finally { await handler.close(); }
+  });
+}
