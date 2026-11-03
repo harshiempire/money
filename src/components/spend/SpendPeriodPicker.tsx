@@ -1,10 +1,12 @@
+import { MonthJump } from "@/components/spend/MonthJump";
 import { PRESET_PERIODS } from "@/lib/period";
+import { currentMonthKey } from "@/lib/spend/month-jump";
 import {
   adjacentMonthHref,
   spendPeriodHref,
-  type ResolvedSpendPeriod,
   type SpendSearchParams,
-} from "@/lib/spend/period";
+} from "@/lib/spend/period-href";
+import type { ResolvedSpendPeriod } from "@/lib/spend/period";
 
 export function SpendPeriodPicker({
   resolved,
@@ -18,6 +20,12 @@ export function SpendPeriodPicker({
   statementPeriods?: Array<{ periodStart: string; periodEnd: string }>;
 }) {
   const { period, mode, monthKey, isPartial } = resolved;
+  const todayMonthKey = currentMonthKey();
+  const anchorMonthKey =
+    monthKey ??
+    (period.from && /^\d{4}-\d{2}/.test(period.from)
+      ? period.from.slice(0, 7)
+      : undefined);
   const prevHref =
     monthKey && mode === "month" ? adjacentMonthHref(monthKey, -1, basePath) : null;
   const nextHref =
@@ -53,7 +61,14 @@ export function SpendPeriodPicker({
             <span className="w-10" />
           )}
           <div className="text-center">
-            <div className="font-medium">{period.label}</div>
+            <MonthJump
+              variant="label"
+              label={period.label}
+              selectedMonthKey={monthKey}
+              anchorMonthKey={anchorMonthKey}
+              todayMonthKey={todayMonthKey}
+              basePath={basePath}
+            />
             {isPartial && (
               <div className="text-xs text-neutral-500">Month in progress</div>
             )}
@@ -105,6 +120,15 @@ export function SpendPeriodPicker({
         >
           Statement
         </a>
+        {mode !== "month" && (
+          <MonthJump
+            variant="chip"
+            label="Jump to month"
+            anchorMonthKey={anchorMonthKey}
+            todayMonthKey={todayMonthKey}
+            basePath={basePath}
+          />
+        )}
       </div>
 
       <form
