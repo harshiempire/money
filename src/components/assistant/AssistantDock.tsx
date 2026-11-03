@@ -10,6 +10,7 @@ import {
   type AssistantBootstrap,
   type TurnResult,
 } from "@/app/assistant/actions";
+import { unwrap } from "@/lib/action/result";
 import { setTransactionNeedsReview } from "@/app/transactions/actions";
 import {
   openProposedTagDraft,
@@ -433,7 +434,7 @@ export function AssistantDock() {
     },
     onReview: () =>
       withCard(async () => {
-        await setTransactionNeedsReview({ transactionId: t.id, needsReview: !t.needsReview });
+        unwrap(await setTransactionNeedsReview({ transactionId: t.id, needsReview: !t.needsReview }));
         await refreshTxns([t.id]);
       }),
     onSplit: () => (t.drCr === "credit" ? spawnOp("net", t) : t.split ? showInTable(t) : spawnOp("split", t)),

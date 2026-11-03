@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import type { CategoryTransactionRow } from "@/domain/spend/net";
+import { callAction } from "@/lib/action/result";
 import { getCategoryTransactions } from "@/app/spend/actions";
 
 export function CategoryAccordion({
@@ -29,11 +30,9 @@ export function CategoryAccordion({
     if (rows !== null || pending) return;
     setError(null);
     startTransition(async () => {
-      try {
-        setRows(await getCategoryTransactions({ categoryId, from, to }));
-      } catch {
-        setError("Could not load transactions for this category.");
-      }
+      const result = await callAction(() => getCategoryTransactions({ categoryId, from, to }));
+      if (result.ok) setRows(result.data);
+      else setError(result.code === "INTERNAL" ? "Could not load transactions for this category." : result.message);
     });
   };
 

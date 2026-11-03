@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { callAction } from "@/lib/action/result";
 import {
   applyCategoryToCounterparty,
   setTransactionCategory,
@@ -96,10 +97,13 @@ export function RowActions({
         onChange={(e) => {
           const next = e.target.value;
           startTransition(async () => {
-            await setTransactionCategory({
-              transactionId,
-              categoryId: next,
-            });
+            const result = await callAction(() =>
+              setTransactionCategory({
+                transactionId,
+                categoryId: next,
+              }),
+            );
+            if (!result.ok) window.alert(result.message);
           });
         }}
         className="rounded border border-neutral-300 bg-transparent px-1.5 py-0.5 text-xs dark:border-neutral-700"
@@ -119,7 +123,10 @@ export function RowActions({
           title="Apply this category to all unset transactions from the same counterparty"
           onClick={() => {
             startTransition(async () => {
-              await applyCategoryToCounterparty({ transactionId });
+              const result = await callAction(() =>
+                applyCategoryToCounterparty({ transactionId }),
+              );
+              if (!result.ok) window.alert(result.message);
             });
           }}
           className="rounded border border-neutral-300 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
@@ -136,10 +143,13 @@ export function RowActions({
           onChange={(e) => {
             const next = e.target.checked;
             startTransition(async () => {
-              await setTransactionTransfer({
-                transactionId,
-                isTransfer: next,
-              });
+              const result = await callAction(() =>
+                setTransactionTransfer({
+                  transactionId,
+                  isTransfer: next,
+                }),
+              );
+              if (!result.ok) window.alert(result.message);
             });
           }}
         />

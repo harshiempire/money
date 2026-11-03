@@ -13,6 +13,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "check:actions": "bun run scripts/check-actions.ts",
+    "test:actions-db": "bun test --no-env-file --conditions=react-server ./scripts/actions.db.test.ts",
     "test": "bun test",
     "security:check": "node scripts/security/preflight.mjs",
     "db:generate": "drizzle-kit generate",

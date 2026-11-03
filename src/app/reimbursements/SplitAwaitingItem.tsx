@@ -9,6 +9,7 @@ import {
   type CashSettlement,
 } from "./CashSettlementDialog";
 import { undoWriteOff, writeOffParticipantShare } from "./actions";
+import { callAction } from "@/lib/action/result";
 
 export interface WriteoffSettlement {
   id: string;
@@ -112,31 +113,21 @@ export function SplitAwaitingItem({
   const confirmForgive = () => {
     if (!participantToForgive) return;
     startTransition(async () => {
-      try {
-        await writeOffParticipantShare({
+      const result = await callAction(() =>
+        writeOffParticipantShare({
           splitParticipantId: participantToForgive.participantId,
           note: forgiveReason,
-        });
-        closeForgiveDialog();
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to forgive share";
-        console.error("[writeOffParticipantShare]", err);
-        window.alert(msg);
-      }
+        }),
+      );
+      if (result.ok) closeForgiveDialog();
+      else window.alert(result.message);
     });
   };
 
   const undo = (settlementId: string) => {
     startTransition(async () => {
-      try {
-        await undoWriteOff({ settlementId });
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to undo writeoff";
-        console.error("[undoWriteOff]", err);
-        window.alert(msg);
-      }
+      const result = await callAction(() => undoWriteOff({ settlementId }));
+      if (!result.ok) window.alert(result.message);
     });
   };
 

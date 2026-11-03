@@ -6,6 +6,7 @@ import {
   saveNetEvent,
 } from "./net-event-actions";
 import type { NetEventLeg } from "@/lib/net-events/legs";
+import { callAction } from "@/lib/action/result";
 import type { CategoryOption } from "./RowActions";
 import type {
   PayableOption,
@@ -371,37 +372,40 @@ function NetSettleForm({
     }
 
     startTransition(async () => {
-      try {
-        const legs = buildLegs(
-          receivables,
-          receivableAllocs,
-          payables,
-          payableAllocs,
-          localPayables,
-          inflowTransactionId,
-          inflowAmountPaise,
-        );
+      const legs = buildLegs(
+        receivables,
+        receivableAllocs,
+        payables,
+        payableAllocs,
+        localPayables,
+        inflowTransactionId,
+        inflowAmountPaise,
+      );
 
-        await saveNetEvent({
+      const result = await callAction(() =>
+        saveNetEvent({
           netEventId: existingNetEventId,
           eventDate,
           inflowTransactionId,
           outflowTransactionId,
           note: note.trim() || undefined,
           legs,
-        });
-        onClose();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to save net event");
-      }
+        }),
+      );
+      if (result.ok) onClose();
+      else setError(result.message);
     });
   };
 
   const remove = () => {
     if (!existingNetEventId) return;
+    setError(null);
     startTransition(async () => {
-      await deleteNetEvent({ netEventId: existingNetEventId });
-      onClose();
+      const result = await callAction(() =>
+        deleteNetEvent({ netEventId: existingNetEventId }),
+      );
+      if (result.ok) onClose();
+      else setError(result.message);
     });
   };
 
