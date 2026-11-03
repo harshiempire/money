@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { ActionError, callAction, unwrap, type ActionFailure } from "@/lib/action/result";
 import {
   assistantTurn,
   getAssistantBootstrap,
@@ -10,7 +11,6 @@ import {
   type AssistantBootstrap,
   type TurnResult,
 } from "@/app/assistant/actions";
-import { unwrap } from "@/lib/action/result";
 import { setTransactionNeedsReview } from "@/app/transactions/actions";
 import {
   openProposedTagDraft,
@@ -56,6 +56,7 @@ function thinkingText(message: string, resumed: boolean): string {
 }
 
 function errorText(e: unknown, fallback: string): string {
+  if (e instanceof ActionError && e.code === "INTERNAL") return fallback;
   // Production builds replace server-action error messages with a generic one.
   if (e instanceof Error && e.message && !/server components render|digest/i.test(e.message)) return e.message;
   return fallback;
@@ -199,14 +200,14 @@ export function AssistantDock() {
   // ─── Loading ───────────────────────────────────────────────────────────
   const refreshTxns = useCallback(async (ids: string[]) => {
     if (ids.length === 0) return [];
-    const fresh = await loadAssistantTxns({ ids });
+    const fresh = unwrap(await callAction(() => loadAssistantTxns({ ids })));
     setTxns((t) => ({ ...t, ...Object.fromEntries(fresh.map((x) => [x.id, x])) }));
     return fresh;
   }, []);
 
   useEffect(() => {
     if (!open || !hydrated) return;
-    getAssistantBootstrap().then(setBoot).catch(() => {});
+    callAction(() => getAssistantBootstrap()).then(unwrap).then(setBoot).catch(() => {});
     // Cards may be stale after navigating or editing in the table.
     refreshTxns(Object.keys(txns)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -284,27 +285,27 @@ export function AssistantDock() {
     try {
       // Tell the model when the focus is a row the user picked, so "the one I selected" isn't searched for again.
       const focusPicked = !!focusId && messagesRef.current.some((m) => m.kind === "pick" && m.picked === focusId);
-      res = await assistantTurn({ message, history, focusTxnId: focusId, resumedAfterPick: opts.resumedAfterPick, focusPicked });
+      res = await callAction(() => assistantTurn({ message, history, focusTxnId: focusId, resumedAfterPick: opts.resumedAfterPick, focusPicked }));
     } catch {
       res = null;
     }
 
     setMessages((all) => {
       const rest = all.filter((m) => m.id !== thinkingId);
-      if (!res) {
+      if (!res || (!res.ok && res.code === "INTERNAL")) {
         return [...rest, { kind: "ai", id: uid(), text: "That didn't go through. Nothing was changed.", retry: true }];
       }
-      if (!res.ok) return [...rest, { kind: "ai", id: uid(), text: res.error }];
-      const reader = res.reader;
-      const added = res.messages.map((m) => toChat(m, reader));
-      const meta = limitMeta(res.limits);
+      if (!res.ok) return [...rest, { kind: "ai", id: uid(), text: res.message }];
+      const reader = res.data.reader;
+      const added = res.data.messages.map((m) => toChat(m, reader));
+      const meta = limitMeta(res.data.limits);
       if (meta && added[0]?.kind === "ai") added[0] = { ...added[0], meta };
       return [...rest, ...added];
     });
     if (res?.ok) {
-      const fresh = res.txns;
+      const fresh = res.data.txns;
       setTxns((t) => ({ ...t, ...Object.fromEntries(fresh.map((x) => [x.id, x])) }));
-      setFocus(res.focusTxnId);
+      setFocus(res.data.focusTxnId);
     }
     busyRef.current = false;
     setBusy(false);
@@ -334,7 +335,7 @@ export function AssistantDock() {
           : undefined,
       });
       if (msg.draft.op === "context_note") {
-        const notes = await listContextNotesAction();
+        const notes = unwrap(await callAction(() => listContextNotesAction()));
         setBoot((b) => (b ? { ...b, contextNotes: notes } : b));
       }
       // A net settle can finish splits on other rows — refresh every card.
@@ -355,12 +356,12 @@ export function AssistantDock() {
     updateOp(msg.id, { status: "undoing", error: undefined });
     try {
       const txnId = draftTxnId(msg.draft);
-      const [fresh] = txnId ? await loadAssistantTxns({ ids: [txnId] }) : [];
+      const [fresh] = txnId ? unwrap(await callAction(() => loadAssistantTxns({ ids: [txnId] }))) : [];
       const text = await undoDraft(msg.draft, msg.undo, fresh);
       updateOp(msg.id, { status: "undone" });
       push({ kind: "ai", id: uid(), text, link: txnId });
       if (msg.undo.kind === "context_note") {
-        const notes = await listContextNotesAction();
+        const notes = unwrap(await callAction(() => listContextNotesAction()));
         setBoot((b) => (b ? { ...b, contextNotes: notes } : b));
       }
       await refreshTxns(Object.keys(txns));
@@ -378,10 +379,11 @@ export function AssistantDock() {
       update(msgId, (m) => (m.kind === "ai" && m.action ? { ...m, action: { ...m.action, state } } : m));
     setState("running");
     try {
-      const res = await prepareApplyToAll({ txnId });
+      const res = await callAction(() => prepareApplyToAll({ txnId }));
+      if (!res.ok && res.code === "INTERNAL") unwrap(res);
       setState("done");
-      if (res.ok) push({ kind: "op", id: uid(), draft: res.draft, status: "pending" });
-      else push({ kind: "ai", id: uid(), text: res.reason });
+      if (res.ok) push({ kind: "op", id: uid(), draft: res.data.draft, status: "pending" });
+      else push({ kind: "ai", id: uid(), text: failureText(res, "Couldn't check that. Try again.") });
     } catch (e) {
       setState(undefined);
       push({ kind: "ai", id: uid(), text: errorText(e, "Couldn't check that. Try again.") });
@@ -404,9 +406,10 @@ export function AssistantDock() {
   const spawnOp = (kind: "split" | "note" | "net", t: TxnCardData) =>
     withCard(async () => {
       setFocus(t.id);
-      const res = await prepareAssistantOp({ kind, txnId: t.id });
+      const res = await callAction(() => prepareAssistantOp({ kind, txnId: t.id }));
+      if (!res.ok && res.code === "INTERNAL") unwrap(res);
       if (!res.ok) {
-        push({ kind: "ai", id: uid(), text: res.reason, link: t.id });
+        push({ kind: "ai", id: uid(), text: failureText(res, "That didn't save. Try again."), link: t.id });
         return;
       }
       const intro: Record<OpDraft["op"], string> = {
@@ -417,7 +420,7 @@ export function AssistantDock() {
         cat_all: "",
         context_note: "",
       };
-      push({ kind: "ai", id: uid(), text: intro[res.draft.op] }, { kind: "op", id: uid(), draft: res.draft, status: "pending" });
+      push({ kind: "ai", id: uid(), text: intro[res.data.draft.op] }, { kind: "op", id: uid(), draft: res.data.draft, status: "pending" });
     });
 
   const cardHandlers = (t: TxnCardData) => ({
@@ -489,18 +492,18 @@ export function AssistantDock() {
     let suggester: "model" | "history" | "stub" = "history";
     try {
       for (;;) {
-        const res = await suggestTagChunk({ year, month, offset });
+        const res = await callAction(() => suggestTagChunk({ year, month, offset }));
         if (gen !== batchGen.current) return;
         if (!res.ok) {
-          setBatch((b) => (b ? { ...b, phase: "review", error: res.error } : b));
+          setBatch((b) => (b ? { ...b, phase: "review", error: failureText(res, "Couldn't draft tags.") } : b));
           return;
         }
-        label = res.label;
-        total = res.total;
-        if (res.suggester !== "history") suggester = res.suggester;
-        rows.push(...res.rows);
-        for (const txn of res.txns) batchTxns[txn.id] = txn;
-        const done = res.nextOffset === null;
+        label = res.data.label;
+        total = res.data.total;
+        if (res.data.suggester !== "history") suggester = res.data.suggester;
+        rows.push(...res.data.rows);
+        for (const txn of res.data.txns) batchTxns[txn.id] = txn;
+        const done = res.data.nextOffset === null;
         setBatch({
           year,
           month,
@@ -516,8 +519,8 @@ export function AssistantDock() {
           result: null,
           undoRows: [],
         });
-        if (res.nextOffset === null) return;
-        offset = res.nextOffset;
+        if (res.data.nextOffset === null) return;
+        offset = res.data.nextOffset;
       }
     } catch (e) {
       if (gen !== batchGen.current) return;
@@ -533,7 +536,7 @@ export function AssistantDock() {
   }, [messages]);
 
   const refreshBoot = async () => {
-    const next = await getAssistantBootstrap().catch(() => null);
+    const next = await callAction(() => getAssistantBootstrap()).then(unwrap).catch(() => null);
     if (next) setBoot(next);
   };
 
@@ -559,35 +562,35 @@ export function AssistantDock() {
       undoRows: [],
     });
     try {
-      const res = await openProposedTagDraft({ draftId });
+      const res = await callAction(() => openProposedTagDraft({ draftId }));
       if (gen !== batchGen.current) return;
       if (!res.ok) {
-        setBatch((b) => (b ? { ...b, phase: "review", error: res.error } : b));
+        setBatch((b) => (b ? { ...b, phase: "review", error: failureText(res, "Couldn't open those proposed tags.") } : b));
         return;
       }
       setBatch((b) =>
         b
           ? {
               ...b,
-              draftId: res.draftId,
-              label: res.label,
-              total: res.total,
+              draftId: res.data.draftId,
+              label: res.data.label,
+              total: res.data.total,
               summary: [
-                `${res.sourceLabel} proposed ${res.total} tag${res.total === 1 ? "" : "s"}`,
-                res.title,
+                `${res.data.sourceLabel} proposed ${res.data.total} tag${res.data.total === 1 ? "" : "s"}`,
+                res.data.title,
                 "nothing is saved until you press Apply",
               ]
                 .filter(Boolean)
                 .join(" · "),
-              loaded: res.rows.length,
-              rows: res.rows,
-              txns: Object.fromEntries(res.txns.map((txn) => [txn.id, txn])),
+              loaded: res.data.rows.length,
+              rows: res.data.rows,
+              txns: Object.fromEntries(res.data.txns.map((txn) => [txn.id, txn])),
               phase: "review",
               notice:
-                res.changed > 0
-                  ? res.changed === 1
+                res.data.changed > 0
+                  ? res.data.changed === 1
                     ? "1 row changed since this was proposed and was left out."
-                    : `${res.changed} rows changed since this was proposed and were left out.`
+                    : `${res.data.changed} rows changed since this was proposed and were left out.`
                   : undefined,
             }
           : b,
@@ -606,9 +609,9 @@ export function AssistantDock() {
     setDraftBusy(true);
     setDraftError(null);
     try {
-      const res = await resolveProposedTagDraft({ draftId, status: "dismissed" });
+      const res = await callAction(() => resolveProposedTagDraft({ draftId, status: "dismissed" }));
       if (!res.ok) {
-        setDraftError(res.error);
+        setDraftError(failureText(res, "Couldn't dismiss that draft. Try again."));
         return;
       }
       setDismissingDraft(null);
@@ -635,7 +638,7 @@ export function AssistantDock() {
     for (const slice of chunkApplyRows(selected)) {
       setBatch((b) => (b ? { ...b, phase: "applying", applyDone: cursor, applyTotal: total } : b));
       try {
-        const res = await applySuggestedTags({ rows: slice });
+        const res = unwrap(await callAction(() => applySuggestedTags({ rows: slice })));
         applied.push(...res.applied);
         failed.push(...res.failed);
       } catch (e) {
@@ -708,11 +711,11 @@ export function AssistantDock() {
     });
     if (batch.draftId && applied.length > 0) {
       try {
-        const res = await resolveProposedTagDraft({ draftId: batch.draftId, status: "applied" });
+        const res = await callAction(() => resolveProposedTagDraft({ draftId: batch.draftId, status: "applied" }));
         if (!res.ok) {
           setBatch((b) =>
             b && b.draftId === batch.draftId
-              ? { ...b, error: `Tags saved, but the draft couldn't be marked applied. ${res.error}` }
+              ? { ...b, error: res.code === "INTERNAL" ? "Tags saved, but the draft couldn't be marked applied." : `Tags saved, but the draft couldn't be marked applied. ${res.message}` }
               : b,
           );
         }
@@ -735,7 +738,7 @@ export function AssistantDock() {
     let cursor = 0;
     for (const slice of chunkApplyRows(batch.undoRows)) {
       try {
-        const res = await undoSuggestedTags({ rows: slice });
+        const res = unwrap(await callAction(() => undoSuggestedTags({ rows: slice })));
         restored += res.restored;
         failed += res.failed;
       } catch {
@@ -1065,7 +1068,7 @@ export function AssistantDock() {
           onUndo={() => void undoBatch()}
           onRememberChoice={async (offer) => {
             try {
-              const res = await rememberPayeeDefault({
+              const res = await rememberDefault({
                 counterpartyId: offer.counterpartyId,
                 categoryId: offer.categoryId,
                 confirmFromCategoryId: offer.existingCategoryId ?? null,
@@ -1093,7 +1096,7 @@ export function AssistantDock() {
             }
           }}
           onRemember={(offer) => {
-            void rememberPayeeDefault({
+            void rememberDefault({
               counterpartyId: offer.counterpartyId,
               categoryId: offer.categoryId,
               confirmFromCategoryId: offer.existingCategoryId ?? null,
@@ -1158,4 +1161,15 @@ export function AssistantDock() {
       )}
     </>
   );
+}
+
+function failureText(result: ActionFailure, fallback: string): string {
+  return result.code === "INTERNAL" ? fallback : result.message;
+}
+
+async function rememberDefault(input: Parameters<typeof rememberPayeeDefault>[0]) {
+  const result = await callAction(() => rememberPayeeDefault(input));
+  if (!result.ok) return { ok: false as const, error: failureText(result, "Couldn't update that default.") };
+  if (result.data.confirm) return { ok: false as const, ...result.data };
+  return { ok: true as const };
 }

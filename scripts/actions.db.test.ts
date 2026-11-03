@@ -8,7 +8,7 @@
  * process-wide.
  */
 import { expect, test } from "bun:test";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { eq, inArray } from "drizzle-orm";
 import { isTestDatabase } from "./lib/local-dev-guard";
 import { runAction, type ActionSpec } from "@/lib/action/core";
@@ -828,6 +828,246 @@ dbTest(
   30000,
 );
 
+dbTest("connection tokens: create/list/revoke, validation and actor isolation", () => fixture(async (f) => {
+  const a = await import("@/app/connections/connection-handlers");
+  const created = unwrap(await f.call(a.createMcpTokenSpec, { name: " Test agent ", scope: "write", userId: f.other, accountId: f.otherAccount }));
+  expect(created.token).toMatch(/^mny_/);
+  expect(created.hint).toBeString();
+  expect(created.id).toBeString();
+  expect(Object.keys(created).sort()).toEqual(["hint", "id", "token"]);
+  expect(unwrap(await f.call(a.listMcpTokensSpec, undefined))).toMatchObject([{ id: created.id, name: "Test agent", scope: "write", revokedAt: null }]);
+  expect(unwrap(await f.call(a.listMcpTokensSpec, undefined, true))).toEqual([]);
+  failure(await f.call(a.createMcpTokenSpec, 42), "INVALID", "Choose a name and a read, propose or write scope.");
+  failure(await f.call(a.createMcpTokenSpec, { scope: "read" }), "INVALID", "Choose a name and a read, propose or write scope.");
+  failure(await f.call(a.createMcpTokenSpec, { name: 42, scope: "read" }), "INVALID", "Choose a name and a read, propose or write scope.");
+  failure(await f.call(a.createMcpTokenSpec, { name: " ", scope: "read" }), "INVALID", "Use a token name between 1 and 40 characters.");
+  failure(await f.call(a.revokeMcpTokenSpec, { id: 42 }), "INVALID", "Choose a token first.");
+  failure(await f.call(a.revokeMcpTokenSpec, { id: crypto.randomUUID() }), "NOT_FOUND", "That token isn't available.");
+  failure(await f.call(a.revokeMcpTokenSpec, { id: created.id }, true), "NOT_FOUND", "That token isn't available.");
+  expect(unwrap(await f.call(a.revokeMcpTokenSpec, { id: created.id }))).toBeUndefined();
+  expect(unwrap(await f.call(a.revokeMcpTokenSpec, { id: created.id }))).toBeUndefined();
+  expect(unwrap(await f.call(a.listMcpTokensSpec, undefined))[0].revokedAt).toBeString();
+  // Creation ignores caller-supplied actor ids even in the other tenant.
+  const otherToken = unwrap(await f.call(a.createMcpTokenSpec, { name: "Other agent", scope: "read", userId: f.user, accountId: f.account }, true));
+  expect(unwrap(await f.call(a.listMcpTokensSpec, undefined)).some(r => r.id === otherToken.id)).toBe(false);
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("ledger history: list/undo, foreign id, custom stale message and success-only revalidation", () => fixture(async (f) => {
+  const a = await import("@/app/connections/connection-handlers");
+  unwrap(await f.call(f.txns.setTransactionNoteSpec, { transactionId: f.debit, note: "One" }));
+  const page = unwrap(await f.call(a.listLedgerChangesSpec, { before: 42 }));
+  expect(page.available).toBe(true);
+  expect(page.rows).toHaveLength(1);
+  expect(unwrap(await f.call(a.listLedgerChangesSpec, undefined, true)).rows).toEqual([]);
+  const changeId = page.rows[0].id;
+  f.paths.length = 0;
+  failure(await f.call(a.undoLedgerChangeSpec, { changeId: null }), "INVALID", "Choose a change first.");
+  failure(await f.call(a.undoLedgerChangeSpec, { changeId }, true), "NOT_FOUND", "That change isn't available.");
+  expect(f.paths).toEqual([]);
+  expect(unwrap(await f.call(a.undoLedgerChangeSpec, { changeId }))).toBeUndefined();
+  expect((await f.read()).note).toBeNull();
+  expect(f.paths).toEqual(["/transactions", "/reimbursements", "/people", "/spend", "/", "/connections"]);
+  failure(await f.call(a.undoLedgerChangeSpec, { changeId }), "CONFLICT", "That change was already undone.");
+  unwrap(await f.call(f.txns.setTransactionNoteSpec, { transactionId: f.debit, note: "Two" }));
+  const latest = unwrap(await f.call(a.listLedgerChangesSpec, undefined)).rows[0].id;
+  await f.db.update(f.schema.transactions).set({ note: "Changed later" }).where(eq(f.schema.transactions.id, f.debit));
+  f.paths.length = 0;
+  failure(await f.call(a.undoLedgerChangeSpec, { changeId: latest }), "CONFLICT", "Nothing was undone. A target or its related shares, settlements or people changed after this change. Review the latest values first.");
+  expect(f.paths).toEqual([]);
+  expect((await f.read()).note).toBe("Changed later");
+}), 30000);
+
+dbTest("proposed drafts: open/resolve with original messages and foreign tenant refusal", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/proposed-tag-handlers");
+  const draftId = crypto.randomUUID();
+  await f.db.insert(f.schema.mcpTagDrafts).values({ id: draftId, userId: f.user, accountId: f.account, sourceLabel: "Test agent", title: "Review", rows: [{ transactionId: f.debit, categoryId: f.category, expectedCurrentCategoryId: null, confidence: "high", reason: "Test suggestion" }] });
+  failure(await f.call(a.openProposedTagDraftSpec, { draftId: 42 }), "INVALID", "Choose a proposed draft first.");
+  failure(await f.call(a.openProposedTagDraftSpec, { draftId }, true), "NOT_FOUND", "That pending draft isn't available.");
+  const opened = unwrap(await f.call(a.openProposedTagDraftSpec, { draftId }));
+  expect(opened).toMatchObject({ draftId, label: "Review · Test agent", sourceLabel: "Test agent", title: "Review", total: 1, changed: 0 });
+  expect(opened.txns.map(t => t.id)).toEqual([f.debit]);
+  expect((await f.read()).categoryId).toBeNull();
+  failure(await f.call(a.resolveProposedTagDraftSpec, { draftId, status: "pending" }), "INVALID", "Choose a pending draft and an applied or dismissed status.");
+  failure(await f.call(a.resolveProposedTagDraftSpec, { draftId, status: "dismissed" }, true), "NOT_FOUND", "That pending draft isn't available.");
+  expect(unwrap(await f.call(a.resolveProposedTagDraftSpec, { draftId, status: "dismissed" }))).toBeUndefined();
+  failure(await f.call(a.openProposedTagDraftSpec, { draftId }), "NOT_FOUND", "That pending draft isn't available.");
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("context notes: save/update/delete/add/list, tolerances, warnings and foreign ids", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/tag-handlers");
+  failure(await f.call(a.saveContextNoteSpec, { body: 42 }), "INVALID", "Write a note first.");
+  failure(await f.call(a.addContextNoteSpec, { body: " " }), "INVALID", "Write a note first.");
+  failure(await f.call(a.deleteContextNoteSpec, { id: 42 }), "NOT_FOUND", "That note isn't available.");
+  const saved = unwrap(await f.call(a.saveContextNoteSpec, { body: "  Sample shop is Food  ", id: 42 }));
+  expect(saved.note.body).toBe("Sample shop is Food");
+  failure(await f.call(a.saveContextNoteSpec, { id: saved.note.id, body: "Other" }, true), "NOT_FOUND", "That note isn't available.");
+  // Main silently succeeds for an unknown/foreign note; it must leave the row intact.
+  expect(unwrap(await f.call(a.deleteContextNoteSpec, { id: saved.note.id }, true))).toBeUndefined();
+  expect(unwrap(await f.call(a.listContextNotesActionSpec, undefined, true))).toEqual([]);
+  expect(unwrap(await f.call(a.saveContextNoteSpec, { id: saved.note.id, body: "New text" })).note.body).toBe("New text");
+  const warned = unwrap(await f.call(a.saveContextNoteSpec, { body: "Details 12345" }));
+  expect(warned.warning).toBeString();
+  const added = unwrap(await f.call(a.addContextNoteSpec, { body: "x".repeat(600), userId: f.other, accountId: f.otherAccount }));
+  const notes = unwrap(await f.call(a.listContextNotesActionSpec, undefined));
+  expect(notes).toHaveLength(3);
+  expect(notes.find(n => n.id === added.id)?.body).toHaveLength(500);
+  const other = unwrap(await f.call(a.addContextNoteSpec, { body: "Other tenant", userId: f.user }, true));
+  expect(unwrap(await f.call(a.listContextNotesActionSpec, undefined)).some(n => n.id === other.id)).toBe(false);
+  expect(unwrap(await f.call(a.deleteContextNoteSpec, { id: saved.note.id }))).toBeUndefined();
+  expect(unwrap(await f.call(a.listContextNotesActionSpec, undefined))).toHaveLength(2);
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("tag suggestions: stub, loose offset, validation and tenant-scoped snapshots", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/tag-handlers");
+  const previous = process.env.MONEY_TAG_SUGGEST_STUB;
+  process.env.MONEY_TAG_SUGGEST_STUB = "1";
+  try {
+    failure(await f.call(a.suggestTagChunkSpec, { year: "2026", month: 10, offset: 0 }), "INVALID", "Pick a month to tag.");
+    const draft = unwrap(await f.call(a.suggestTagChunkSpec, { year: 2026, month: 10, offset: "not a number" }));
+    expect(draft).toMatchObject({ label: "Oct 2026", total: 3, suggester: "stub", nextOffset: null });
+    expect(draft.txns.some(t => t.id === f.foreign)).toBe(false);
+    expect(draft.rows.every(r => !r.selected)).toBe(true);
+    const other = unwrap(await f.call(a.suggestTagChunkSpec, { year: 2026, month: 10, offset: null, ids: [f.debit] }, true));
+    expect(other.txns.map(t => t.id)).toEqual([f.foreign]);
+    expect((await f.read()).categoryId).toBeNull();
+    expect(f.paths).toEqual([]);
+  } finally {
+    if (previous === undefined) delete process.env.MONEY_TAG_SUGGEST_STUB; else process.env.MONEY_TAG_SUGGEST_STUB = previous;
+  }
+}), 30000);
+
+dbTest("tag apply/undo: stale and foreign rows, sanitizers, overflow and conditional revalidation", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/tag-handlers");
+  const row = { transactionId: f.debit, categoryId: f.category, expectedCurrentCategoryId: null };
+  const empty = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [null, {}, 42, { transactionId: 42, categoryId: f.category }] }));
+  expect(empty).toEqual({ applied: [], failed: [], skipped: 0 });
+  expect(f.paths).toEqual([]);
+  const applied = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [row, { ...row, transactionId: f.foreign }] }));
+  expect(applied.applied).toHaveLength(1);
+  expect(applied.failed).toHaveLength(1);
+  expect(f.paths).toEqual(["/transactions", "/"]);
+  f.paths.length = 0;
+  const stale = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [row] }));
+  expect(stale.failed[0].reason).toBe("The category changed since this card was made. Ask again to get a fresh card.");
+  expect(f.paths).toEqual([]);
+  const foreignApply = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [row] }, true));
+  expect(foreignApply.failed).toHaveLength(1);
+  expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: applied.applied }, true))).toEqual({ restored: 0, failed: 1 });
+  expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: [row] }))).toEqual({ restored: 0, failed: 1 });
+  expect(f.paths).toEqual([]);
+  expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: applied.applied }))).toEqual({ restored: 1, failed: 0 });
+  expect((await f.read()).categoryId).toBeNull();
+  expect(f.paths).toEqual(["/transactions", "/"]);
+  f.paths.length = 0;
+  expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: applied.applied }))).toEqual({ restored: 0, failed: 1 });
+  const overflow = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: Array.from({ length: 402 }, () => row) }));
+  expect(overflow.applied).toHaveLength(1);
+  expect(overflow.failed.filter(r => r.reason === "Only 50 rows can be saved at a time.")).toHaveLength(350);
+  expect(overflow.applied.length + overflow.failed.length).toBe(400); // main ignores rows after 400
+  f.paths.length = 0;
+  expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: Array.from({ length: 52 }, () => row) }))).toEqual({ restored: 0, failed: 52 });
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("payee defaults: first default, confirmation data, guarded replacement and foreign ids", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/tag-handlers");
+  const second = crypto.randomUUID();
+  await f.db.insert(f.schema.categories).values({ id: second, userId: f.user, name: "Other", kind: "spend" });
+  failure(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: 42, categoryId: f.category }), "INVALID", "Pick a payee and a category.");
+  failure(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: f.payee, categoryId: f.foreignCategory }), "NOT_FOUND", "That payee or category isn't available.");
+  failure(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: f.payee, categoryId: f.foreignCategory }, true), "NOT_FOUND", "That payee or category isn't available.");
+  expect(unwrap(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: f.payee, categoryId: f.category }))).toEqual({});
+  const confirm = unwrap(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: f.payee, categoryId: second }));
+  expect(confirm).toEqual({ confirm: true, existingCategoryId: f.category, existingCategoryName: "Food", nextCategoryName: "Other" });
+  expect(unwrap(await f.call(a.rememberPayeeDefaultSpec, { counterpartyId: f.payee, categoryId: second, confirmFromCategoryId: f.category }))).toEqual({});
+  expect((await f.db.select().from(f.schema.counterparties).where(eq(f.schema.counterparties.id, f.payee)))[0].defaultCategoryId).toBe(second);
+  expect((await f.read()).categoryId).toBeNull();
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("assistant apply-to-all preview: all messages, successful draft and foreign id", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/assistant-handlers");
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: f.foreign }), "NOT_FOUND", "That transaction isn't available.");
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: 42 }), "NOT_FOUND", "That transaction isn't available.");
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: f.debit }, true), "NOT_FOUND", "That transaction isn't available.");
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: f.debit }), "INVALID", "Set a category on this payment first.");
+  await f.db.update(f.schema.transactions).set({ categoryId: f.category, counterpartyId: null }).where(eq(f.schema.transactions.id, f.debit));
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: f.debit }), "INVALID", "This payment has no recognised payee to match others by.");
+  await f.db.update(f.schema.transactions).set({ counterpartyId: f.payee }).where(eq(f.schema.transactions.id, f.debit));
+  expect(unwrap(await f.call(a.prepareApplyToAllSpec, { txnId: f.debit }))).toEqual({ draft: { op: "cat_all", txnId: f.debit, categoryId: f.category, payee: "Kiran", count: 2 } });
+  await f.db.update(f.schema.transactions).set({ categoryId: f.category }).where(inArray(f.schema.transactions.id, [f.credit, f.sibling]));
+  failure(await f.call(a.prepareApplyToAllSpec, { txnId: f.debit }), "INVALID", "No other uncategorized payments from this payee.");
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("assistant cards/reads/bootstrap: drafts, no guessed person and foreign ids dropped", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/assistant-handlers");
+  const tag = await import("@/app/assistant/tag-handlers");
+  for (const kind of ["note", "split", "net"]) {
+    failure(await f.call(a.prepareAssistantOpSpec, { kind, txnId: f.foreign }), "NOT_FOUND", "That transaction isn't available.");
+    failure(await f.call(a.prepareAssistantOpSpec, { kind, txnId: f.debit }, true), "NOT_FOUND", "That transaction isn't available.");
+  }
+  expect(unwrap(await f.call(a.prepareAssistantOpSpec, { kind: "note", txnId: f.debit }))).toMatchObject({ draft: { op: "note", note: "", currentNote: null, txnId: f.debit } });
+  expect(unwrap(await f.call(a.prepareAssistantOpSpec, { kind: "split", txnId: f.debit }))).toMatchObject({ draft: { op: "split", parts: [{ name: "", amt: "", known: false }] } });
+  failure(await f.call(a.prepareAssistantOpSpec, { kind: "split", txnId: f.credit }), "INVALID", "Only a payment you made can be split. Money you received can be net settled instead.");
+  failure(await f.call(a.prepareAssistantOpSpec, { kind: "net", txnId: f.credit }), "INVALID", "I can't tell who sent this. Ask me, e.g. \"Nitin sent me this — net settle it\".");
+  expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: [f.debit, f.foreign, 42, null] })).map(t => t.id)).toEqual([f.debit]);
+  expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: [f.debit, f.foreign] }, true)).map(t => t.id)).toEqual([f.foreign]);
+  expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: 42 }))).toEqual([]);
+  const note = unwrap(await f.call(tag.addContextNoteSpec, { body: "Sample context" }));
+  const boot = unwrap(await f.call(a.getAssistantBootstrapSpec, undefined));
+  expect(boot).toMatchObject({ aiState: "off", accountName: "Test", contextNotes: [{ id: note.id, body: "Sample context" }], proposedDrafts: [] });
+  expect(boot.categories.map(c => c.id)).toEqual([f.category]);
+  const other = unwrap(await f.call(a.getAssistantBootstrapSpec, undefined, true));
+  expect(other.contextNotes).toEqual([]);
+  expect(other.categories.map(c => c.id)).toEqual([f.foreignCategory]);
+  expect(f.paths).toEqual([]);
+  await f.makeShare();
+  failure(await f.call(a.prepareAssistantOpSpec, { kind: "split", txnId: f.debit }), "CONFLICT", "This payment already has a split. Edit it from the Split button in the table so existing settlements aren't lost.");
+}), 30000);
+
+dbTest("assistant turn: empty, rules find, tag June, permissive history and foreign focus", () => fixture(async (f) => {
+  const a = await import("@/app/assistant/assistant-handlers");
+  failure(await f.call(a.assistantTurnSpec, { message: " \n ", history: null, focusTxnId: null }), "INVALID", "Type something to ask.");
+  const history = [null, { role: "bad", text: "bad" }, ...Array.from({ length: 25 }, () => ({ role: "user", text: "x".repeat(700) }))];
+  const found = unwrap(await f.call(a.assistantTurnSpec, { message: "  Find the ₹40 payment  ", history, focusTxnId: f.foreign, resumedAfterPick: "yes", focusPicked: 1 }));
+  expect(found.reader).toBe("rules");
+  expect(found.focusTxnId).not.toBe(f.foreign);
+  expect(found.txns.map(t => t.id)).toContain(f.credit);
+  const tagged = unwrap(await f.call(a.assistantTurnSpec, { message: "tag June 2026", history: 42, focusTxnId: f.foreign }));
+  expect(tagged).toMatchObject({ reader: "rules", txns: [], focusTxnId: null, limits: null });
+  expect(tagged.messages).toContainEqual({ kind: "tag_run", year: 2026, month: 6 });
+  const other = unwrap(await f.call(a.assistantTurnSpec, { message: "tag June 2026", history: [], focusTxnId: f.debit }, true));
+  expect(other.focusTxnId).toBeNull();
+  expect(f.paths).toEqual([]);
+}), 30000);
+
+dbTest("every migrated assistant/connection spec authenticates before input decoding", () => fixture(async (f) => {
+  const { Unauthenticated } = await import("@/lib/action/errors");
+  const connection = await import("@/app/connections/connection-handlers");
+  const draft = await import("@/app/assistant/proposed-tag-handlers");
+  const assistant = await import("@/app/assistant/assistant-handlers");
+  const tag = await import("@/app/assistant/tag-handlers");
+  const specs = [connection.listMcpTokensSpec, connection.createMcpTokenSpec, connection.revokeMcpTokenSpec,
+    connection.listLedgerChangesSpec, connection.undoLedgerChangeSpec, draft.openProposedTagDraftSpec, draft.resolveProposedTagDraftSpec,
+    assistant.getAssistantBootstrapSpec, assistant.assistantTurnSpec, assistant.loadAssistantTxnsSpec, assistant.prepareAssistantOpSpec, assistant.prepareApplyToAllSpec,
+    tag.listContextNotesActionSpec, tag.saveContextNoteSpec, tag.deleteContextNoteSpec, tag.addContextNoteSpec, tag.suggestTagChunkSpec, tag.applySuggestedTagsSpec, tag.undoSuggestedTagsSpec, tag.rememberPayeeDefaultSpec];
+  expect(specs).toHaveLength(20);
+  const anonymous = Layer.merge(Layer.effect(CurrentUser, Effect.fail(new Unauthenticated())), Layer.succeed(Db, f.db));
+  let decoded = false;
+  const raw = Object.defineProperty({}, "message", { enumerable: true, get() { decoded = true; throw new Error("Input decoded before auth"); } });
+  // Each concrete spec keeps its own input/output types; the union needs no test casts.
+  for (const spec of specs) {
+    const result = await runAction({ input: spec.input, handler: () => { throw new Error("Handler ran without auth"); } }, raw,
+      { name: "anonymous-action", layer: anonymous });
+    failure(result, "UNAUTHENTICATED", "Your session has ended. Sign in again.");
+  }
+  expect(decoded).toBe(false);
+}), 30000);
+
 dbTest(
   "registration: public FormData validation, duplicate email, real hash/insert/categories and redirect",
   () =>
@@ -920,3 +1160,45 @@ dbTest(
     }),
   30000,
 );
+
+// These framework-boundary mocks run last; all rules/DB behavior above is real.
+dbTest("assistant sanitization and validation/rate ordering retain main's limits and messages", () => fixture(async (f) => {
+  const { mock } = await import("bun:test");
+  const assistant = await import("@/app/assistant/assistant-handlers");
+  const tag = await import("@/app/assistant/tag-handlers");
+  const agentModule = await import("@/lib/assistant/agent");
+  const realAgent = { runAgentTurn: agentModule.runAgentTurn, runRulesTurn: agentModule.runRulesTurn };
+  const rateModule = await import("@/lib/rate-limit");
+  const realRate = { ...rateModule };
+  let seen: import("@/lib/assistant/agent").TurnContext | undefined;
+  let allowed = true;
+  let rateCalls = 0;
+  mock.module("@/lib/assistant/agent", () => ({
+    ...realAgent,
+    runRulesTurn: async (ctx: import("@/lib/assistant/agent").TurnContext) => {
+      seen = ctx;
+      return { messages: [], txnIds: [], focusTxnId: ctx.focusTxnId, limits: null };
+    },
+  }));
+  mock.module("@/lib/rate-limit", () => ({ ...realRate, checkAssistantRateLimit: async () => { rateCalls++; return allowed; } }));
+  try {
+    const valid = Array.from({ length: 25 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `${i}:` + "x".repeat(700) }));
+    // Invalid tail entries must be filtered BEFORE taking the last twenty.
+    unwrap(await f.call(assistant.assistantTurnSpec, { message: " " + "q".repeat(1100) + " ", history: [...valid, ...Array(25).fill(null)], focusTxnId: f.foreign }));
+    expect(seen?.message).toBe("q".repeat(1000));
+    expect(seen?.history).toEqual(valid.slice(-20).map(h => ({ ...h, text: h.text.slice(0, 600) })));
+    expect(seen?.focusTxnId).toBeNull();
+    allowed = false;
+    rateCalls = 0;
+    failure(await f.call(assistant.assistantTurnSpec, { message: " " }), "INVALID", "Type something to ask.");
+    failure(await f.call(tag.suggestTagChunkSpec, { year: 2026, month: 42 }), "INVALID", "Pick a month to tag.");
+    expect(rateCalls).toBe(0);
+    failure(await f.call(assistant.assistantTurnSpec, { message: "Find a payment" }), "UNAVAILABLE", "Too many requests in a short time. Try again in a few minutes.");
+    failure(await f.call(tag.suggestTagChunkSpec, { year: 2026, month: 10, offset: 0 }), "UNAVAILABLE", "Too many requests in a short time. Try again in a few minutes.");
+    expect(rateCalls).toBe(2);
+  } finally {
+    mock.module("@/lib/assistant/agent", () => realAgent);
+    mock.module("@/lib/rate-limit", () => realRate);
+    mock.restore();
+  }
+}), 30000);

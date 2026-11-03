@@ -1,12 +1,13 @@
 "use client";
 import { useRef, useState } from "react";
+import { callAction, unwrap } from "@/lib/action/result";
 import { listLedgerChanges, undoLedgerChange } from "./actions";
 const changeDateFormat = new Intl.DateTimeFormat("en-IN", {
   dateStyle: "medium",
   timeStyle: "short",
   timeZone: "Asia/Kolkata",
 });
-type Changes = Awaited<ReturnType<typeof listLedgerChanges>>;
+type Changes = Extract<Awaited<ReturnType<typeof listLedgerChanges>>, { ok: true }>["data"];
 // Appends rows not already shown; `page` supplies the cursor.
 function append(current: Changes, page: Changes): Changes {
   if (!current.available || !page.available) return page;
@@ -26,13 +27,13 @@ export function RecentChanges({ initial }: { initial: Changes }) {
     setBusy(true);
     setError(null);
     try {
-      const result = await undoLedgerChange({ changeId: id });
+      const result = await callAction(() => undoLedgerChange({ changeId: id }));
       if (!result.ok) {
-        setError(result.error ?? "Couldn't undo this change.");
+        setError(result.code === "INTERNAL" ? "Couldn't confirm whether Undo finished. Reload this page before trying again." : result.message);
         return;
       }
       setConfirm(null);
-      const first = await listLedgerChanges();
+      const first = unwrap(await callAction(() => listLedgerChanges(undefined)));
       // Keep older pages the user already opened; their cursor still points past the last row shown.
       setChanges((current) => {
         const merged = append(first, current);
@@ -52,7 +53,7 @@ export function RecentChanges({ initial }: { initial: Changes }) {
     setLoadingOlder(true);
     setError(null);
     try {
-      const page = await listLedgerChanges({ before: changes.nextCursor });
+      const page = unwrap(await callAction(() => listLedgerChanges({ before: changes.nextCursor })));
       setChanges((current) => append(current, page));
     } catch {
       setError("Couldn't load older changes.");

@@ -1,5 +1,6 @@
 "use client";
 
+import { callAction } from "@/lib/action/result";
 import { useState } from "react";
 import { deleteContextNote, listContextNotesAction, saveContextNote } from "@/app/assistant/tag-actions";
 import { standingNoteModelWarning, type ContextNote } from "@/lib/assistant/tag-batch";
@@ -21,8 +22,9 @@ export function ContextNotesButton({
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
-    const next = await listContextNotesAction();
-    onChange(next);
+    const next = await callAction(() => listContextNotesAction());
+    if (next.ok) onChange(next.data);
+    else setError(next.message);
   };
 
   const add = async () => {
@@ -30,13 +32,13 @@ export function ContextNotesButton({
     setError(null);
     setWarning(null);
     try {
-      const res = await saveContextNote({ body: draft });
+      const res = await callAction(() => saveContextNote({ body: draft }));
       if (!res.ok) {
-        setError(res.error);
+        setError(res.message);
         return;
       }
       setDraft("");
-      setWarning(res.warning ?? null);
+      setWarning(res.data.warning ?? null);
       await refresh();
     } finally {
       setBusy(false);
@@ -72,13 +74,13 @@ export function ContextNotesButton({
                       disabled={busy}
                       onClick={async () => {
                         setBusy(true);
-                        const res = await saveContextNote({ id: note.id, body: editBody });
+                        const res = await callAction(() => saveContextNote({ id: note.id, body: editBody }));
                         setBusy(false);
                         if (!res.ok) {
-                          setError(res.error);
+                          setError(res.message);
                           return;
                         }
-                        setWarning(res.warning ?? null);
+                        setWarning(res.data.warning ?? null);
                         setEditing(null);
                         await refresh();
                       }}
@@ -99,7 +101,8 @@ export function ContextNotesButton({
                   <button
                     type="button"
                     onClick={async () => {
-                      await deleteContextNote({ id: note.id });
+                      const res = await callAction(() => deleteContextNote({ id: note.id }));
+                      if (!res.ok) { setError(res.message); return; }
                       await refresh();
                     }}
                   >

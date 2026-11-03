@@ -10,9 +10,8 @@
  * "use server" file skips all three — and its thrown error messages are
  * replaced by a digest in production.
  *
- * LEGACY lists files not migrated yet. Each migration PR removes its file;
- * the script also fails if a listed file is already clean, so the list can
- * only shrink.
+ * Every current action is migrated. LEGACY is deliberately empty; the same
+ * scanner enforces wrappers for every "use server" file.
  *
  * Usage: bun run check:actions
  */
@@ -20,14 +19,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isUseServerFile, unwrappedExports } from "./lib/server-action-exports";
 
-const LEGACY = new Set([
-  // Follow-ups, not in this PR.
-  "src/app/assistant/actions.ts",
-  "src/app/assistant/proposed-tag-actions.ts",
-  "src/app/assistant/tag-actions.ts",
-  "src/app/connections/actions.ts",
-  "src/app/talk/actions.ts",
-]);
+const LEGACY = new Set<string>();
 
 const problems: string[] = [];
 const seen = new Set<string>();
@@ -53,8 +45,6 @@ for (const path of files) {
   }
 }
 
-// A LEGACY path that doesn't exist here is fine: talk/actions.ts lives on its
-// own branch until it merges.
 
 if (problems.length > 0) {
   console.error("check:actions failed:\n" + problems.map((p) => `  - ${p}`).join("\n"));
