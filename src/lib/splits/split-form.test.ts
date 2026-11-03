@@ -9,7 +9,9 @@ import {
   paiseToRupeesStr,
   rupeesToPaise,
   splitBalanceError,
+  splitFormSignature,
   validateSplitForm,
+  type SplitFormExisting,
   type SplitFormParticipant,
   type SplitFormValues,
 } from "./split-form";
@@ -147,6 +149,54 @@ describe("initialSplitFormValues", () => {
 
   test("the add-participant row has no id", () => {
     expect(newParticipantRow()).toStrictEqual({ personName: "", expectedRupees: "" });
+  });
+});
+
+describe("splitFormSignature", () => {
+  const existing: SplitFormExisting = {
+    yourSharePaise: 4000,
+    note: "Team lunch",
+    participants: [
+      {
+        id: "part-1",
+        personName: "Alex Example",
+        expectedAmountPaise: 6000,
+        settledAmountPaise: 1000,
+      },
+    ],
+  };
+
+  test("identical splits have equal signatures regardless of object identity or property order", () => {
+    expect(splitFormSignature(existing)).toBe(
+      splitFormSignature({
+        participants: existing.participants.map((p) => ({
+          settledAmountPaise: p.settledAmountPaise,
+          expectedAmountPaise: p.expectedAmountPaise,
+          personName: p.personName,
+          id: p.id,
+        })),
+        note: existing.note,
+        yourSharePaise: existing.yourSharePaise,
+      }),
+    );
+    expect(splitFormSignature(null)).toBe(splitFormSignature(null));
+  });
+
+  test.each([
+    ["share", { ...existing, yourSharePaise: 4001 }],
+    ["note", { ...existing, note: "Dinner" }],
+    ["null note", { ...existing, note: null }],
+    ["id", { ...existing, participants: [{ ...existing.participants[0], id: "part-2" }] }],
+    ["name", { ...existing, participants: [{ ...existing.participants[0], personName: "Sam Sample" }] }],
+    ["amount", { ...existing, participants: [{ ...existing.participants[0], expectedAmountPaise: 6001 }] }],
+    ["settled amount", { ...existing, participants: [{ ...existing.participants[0], settledAmountPaise: 1001 }] }],
+    ["removed participant", { ...existing, participants: [] }],
+  ])("changes when the saved %s changes", (_, changed) => {
+    expect(splitFormSignature(changed)).not.toBe(splitFormSignature(existing));
+  });
+
+  test("null and a saved split have different signatures", () => {
+    expect(splitFormSignature(null)).not.toBe(splitFormSignature(existing));
   });
 });
 

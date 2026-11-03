@@ -33,7 +33,26 @@ export interface SplitFormExisting {
     id: string;
     personName: string;
     expectedAmountPaise: number;
+    settledAmountPaise?: number;
   }>;
+}
+
+/** Saved values and settlement warnings that a reopened form must reflect. */
+export function splitFormSignature(existing: SplitFormExisting | null): string {
+  return JSON.stringify(
+    existing === null
+      ? null
+      : [
+          existing.yourSharePaise,
+          existing.note,
+          existing.participants.map((p) => [
+            p.id,
+            p.personName,
+            p.expectedAmountPaise,
+            p.settledAmountPaise ?? 0,
+          ]),
+        ],
+  );
 }
 
 /** Exactly what the dialog sends to `createSplit`. */
