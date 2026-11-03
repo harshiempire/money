@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import { useForm, useSelector } from "@tanstack/react-form";
 import { formatPaise } from "@/lib/format";
 import {
@@ -17,6 +18,7 @@ import {
   initialSplitFormValues,
   newParticipantRow,
   paiseToRupeesStr,
+  splitFormSignature,
   validateSplitForm,
 } from "@/lib/splits/split-form";
 import { createSplit, deleteSplit } from "./split-actions";
@@ -124,7 +126,19 @@ export function SplitButton({
   knownPersonNames: string[];
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const open = () => dialogRef.current?.showModal();
+  const signature = splitFormSignature(existing);
+  const [formSnapshot, setFormSnapshot] = useState(() => ({ signature, key: 0 }));
+  const open = () => {
+    if (dialogRef.current?.open) return;
+    // Keep drafts across reopening, but rebuild after a saved split changes.
+    // Only opening may remount the form; revalidation must not interrupt edits.
+    // flushSync: remount before showModal, so the dialog never opens on (or
+    // focuses into) the stale form for a frame.
+    if (signature !== formSnapshot.signature) {
+      flushSync(() => setFormSnapshot({ signature, key: formSnapshot.key + 1 }));
+    }
+    dialogRef.current?.showModal();
+  };
   const close = () => dialogRef.current?.close();
 
   return (
@@ -147,6 +161,7 @@ export function SplitButton({
         className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
       >
         <SplitForm
+          key={formSnapshot.key}
           transactionId={transactionId}
           amountPaise={amountPaise}
           existing={existing}
