@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useForm, useSelector } from "@tanstack/react-form";
 import {
   applyNoteToTransactions,
   getNoteCandidates,
@@ -9,6 +10,12 @@ import {
 import { callAction } from "@/lib/action/result";
 import type { NoteCandidate } from "./actions";
 import { formatDate, formatPaiseSigned } from "@/lib/format";
+import {
+  buildNotePayloads,
+  initialNoteFormValues,
+  noteSelectionWarning,
+  toggleNotePick,
+} from "@/lib/notes/note-form";
 
 export function NoteButton({
   transactionId,
@@ -20,16 +27,14 @@ export function NoteButton({
   hasCounterparty: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [draft, setDraft] = useState(note ?? "");
+  const [defaultValues] = useState(() => initialNoteFormValues(note));
   const [candidates, setCandidates] = useState<NoteCandidate[] | null>(null);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const open = () => {
-    setDraft(note ?? "");
-    setPicked(new Set());
+    form.reset(initialNoteFormValues(note), { keepDefaultValues: true });
     setFeedback(null);
     setError(null);
     setCandidates(null);
@@ -55,30 +60,25 @@ export function NoteButton({
   });
 
   const togglePick = (id: string) => {
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    form.setFieldValue("picked", (prev) => toggleNotePick(prev, id));
   };
 
-  const save = () => {
-    setError(null);
-    startTransition(async () => {
+  const form = useForm({
+    defaultValues,
+    // Blank notes are allowed. The checked-row warning must not block Save.
+    onSubmit: async ({ value }) => {
+      const payloads = buildNotePayloads(value, transactionId);
       const saved = await callAction(() =>
-        setTransactionNote({ transactionId, note: draft }),
+        setTransactionNote(payloads.save),
       );
       if (!saved.ok) {
         setError(saved.message);
         return;
       }
-      if (picked.size > 0 && draft.trim().length > 0) {
+      if (payloads.apply) {
+        const input = payloads.apply;
         const applied = await callAction(() =>
-          applyNoteToTransactions({
-            transactionIds: [...picked],
-            note: draft,
-          }),
+          applyNoteToTransactions(input),
         );
         if (!applied.ok) {
           setError(`Saved here, but not on the other rows: ${applied.message}`);
@@ -95,6 +95,17 @@ export function NoteButton({
       } else {
         close();
       }
+    },
+  });
+  const values = useSelector(form.store, (s) => s.values);
+  const { draft, picked } = values;
+  const selectionWarning = noteSelectionWarning(values);
+
+  const save = () => {
+    if (pending || form.state.isSubmitting) return;
+    setError(null);
+    startTransition(async () => {
+      await form.handleSubmit();
     });
   };
 
@@ -136,14 +147,18 @@ export function NoteButton({
               Close
             </button>
           </header>
-          <textarea
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            placeholder="e.g. F1 TV subscription"
-            className="w-full rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
-          />
+          <form.Field name="draft">
+            {(field) => (
+              <textarea
+                autoFocus
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+                rows={3}
+                placeholder="e.g. F1 TV subscription"
+                className="w-full rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+              />
+            )}
+          </form.Field>
 
           {hasCounterparty && (
             <div className="mt-4">
@@ -156,7 +171,7 @@ export function NoteButton({
                     <button
                       type="button"
                       onClick={() =>
-                        setPicked(new Set(candidates.map((c) => c.id)))
+                        form.setFieldValue("picked", new Set(candidates.map((c) => c.id)))
                       }
                       className="underline-offset-4 hover:underline"
                     >
@@ -164,7 +179,7 @@ export function NoteButton({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPicked(new Set())}
+                      onClick={() => form.setFieldValue("picked", new Set())}
                       className="underline-offset-4 hover:underline"
                     >
                       None
@@ -210,7 +225,7 @@ export function NoteButton({
                                     // toggling the checkbox.
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    setDraft(c.currentNote ?? "");
+                                    form.setFieldValue("draft", c.currentNote ?? "");
                                   }}
                                   title="Click to copy this note into the textarea"
                                   className="block truncate text-left text-[10px] italic text-amber-700 underline-offset-4 hover:underline dark:text-amber-400"
@@ -241,10 +256,9 @@ export function NoteButton({
                   saving will overwrite them.
                 </p>
               )}
-              {picked.size > 0 && draft.trim().length === 0 && (
+              {selectionWarning && (
                 <p className="mt-2 text-[10px] text-red-600 dark:text-red-400">
-                  Type the note text above first — checked rows are ignored
-                  when the field is empty.
+                  {selectionWarning}
                 </p>
               )}
             </div>

@@ -1,11 +1,15 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { useForm, useSelector } from "@tanstack/react-form";
 import { deleteCashSettlement, recordCashSettlement } from "./actions";
 import { callAction } from "@/lib/action/result";
-
-const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
-const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
+import { paiseToRupeesStr } from "@/lib/splits/split-form";
+import {
+  buildCashSettlementPayload,
+  initialCashSettlementFormValues,
+  validateCashSettlementForm,
+} from "@/lib/settlements/cash-settlement-form";
 
 export interface CashSettlement {
   id: string;
@@ -66,25 +70,31 @@ function CashSettlementForm({
   cashSettlements: CashSettlement[];
   onClose: () => void;
 }) {
-  const [amount, setAmount] = useState(paiseToRupeesStr(outstandingPaise));
-  const [note, setNote] = useState("");
+  // Like the old useState initialisers, page revalidation must not reset these.
+  const [defaultValues] = useState(() =>
+    initialCashSettlementFormValues(outstandingPaise),
+  );
   const [pending, startTransition] = useTransition();
-
-  const parsedPaise = rupeesToPaise(amount);
-  const isValid = Number.isFinite(parsedPaise) && parsedPaise > 0;
-
-  const submit = () => {
-    if (!isValid) return;
-    startTransition(async () => {
+  const form = useForm({
+    defaultValues,
+    validators: {
+      onMount: ({ value }) => validateCashSettlementForm(value),
+      onChange: ({ value }) => validateCashSettlementForm(value),
+    },
+    onSubmit: async ({ value }) => {
       const result = await callAction(() =>
-        recordCashSettlement({
-          splitParticipantId,
-          amountPaise: parsedPaise,
-          note,
-        }),
+        recordCashSettlement(buildCashSettlementPayload(value, splitParticipantId)),
       );
       if (result.ok) onClose();
       else window.alert(result.message);
+    },
+  });
+  const amountError = useSelector(form.store, (s) => s.errors[0]);
+
+  const submit = () => {
+    if (pending || form.state.isSubmitting) return;
+    startTransition(async () => {
+      await form.handleSubmit();
     });
   };
 
@@ -116,24 +126,32 @@ function CashSettlementForm({
       </p>
 
       <div className="mt-4 space-y-3">
-        <label className="block text-sm">
-          <span className="text-xs uppercase text-neutral-500">Amount</span>
-          <input
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="text-xs uppercase text-neutral-500">Note</span>
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="optional"
-            className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-          />
-        </label>
+        <form.Field name="amount">
+          {(field) => (
+            <label className="block text-sm">
+              <span className="text-xs uppercase text-neutral-500">Amount</span>
+              <input
+                inputMode="decimal"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+                className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+              />
+            </label>
+          )}
+        </form.Field>
+        <form.Field name="note">
+          {(field) => (
+            <label className="block text-sm">
+              <span className="text-xs uppercase text-neutral-500">Note</span>
+              <input
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+                placeholder="optional"
+                className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+              />
+            </label>
+          )}
+        </form.Field>
       </div>
 
       {cashSettlements.length > 0 && (
@@ -181,7 +199,7 @@ function CashSettlementForm({
         <button
           type="button"
           onClick={submit}
-          disabled={pending || !isValid || outstandingPaise <= 0}
+          disabled={pending || !!amountError || outstandingPaise <= 0}
           className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
         >
           {pending ? "Saving..." : "Save"}
