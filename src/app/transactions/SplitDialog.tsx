@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useForm, useSelector } from "@tanstack/react-form";
 import { formatPaise } from "@/lib/format";
 import {
   formatSettlementResolution,
@@ -8,6 +9,16 @@ import {
 } from "@/lib/splits/settlement-breakdown";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 import { callAction } from "@/lib/action/result";
+import {
+  autoSuggestYourShare,
+  buildCreateSplitPayload,
+  computeSplitBalance,
+  equalSplitValues,
+  initialSplitFormValues,
+  newParticipantRow,
+  paiseToRupeesStr,
+  validateSplitForm,
+} from "@/lib/splits/split-form";
 import { createSplit, deleteSplit } from "./split-actions";
 
 export interface ExistingSplit {
@@ -147,14 +158,6 @@ export function SplitButton({
   );
 }
 
-interface DraftParticipant {
-  id?: string;
-  personName: string;
-  expectedRupees: string;
-}
-
-const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
-const rupeesToPaise = (r: string) => Math.round(Number.parseFloat(r) * 100);
 
 function SplitForm({
   transactionId,
@@ -171,44 +174,45 @@ function SplitForm({
 }) {
   // The total is the transaction's amount — the server refuses anything else.
   const total = paiseToRupeesStr(amountPaise);
-  const [yourShare, setYourShare] = useState(
-    existing ? paiseToRupeesStr(existing.yourSharePaise) : "",
-  );
-  const [note, setNote] = useState(existing?.note ?? "");
-  const [participants, setParticipants] = useState<DraftParticipant[]>(
-    existing && existing.participants.length > 0
-      ? existing.participants.map((p) => ({
-          id: p.id,
-          personName: p.personName,
-          expectedRupees: paiseToRupeesStr(p.expectedAmountPaise),
-        }))
-      : [{ personName: "", expectedRupees: "" }],
-  );
+  // Captured once, like the useState initialisers this replaced: a later
+  // `existing` from a revalidated page must not reset what is on screen.
+  const [defaultValues] = useState(() => initialSplitFormValues(existing));
   const [pending, startTransition] = useTransition();
+
+  const form = useForm({
+    defaultValues,
+    validators: {
+      onMount: ({ value }) => validateSplitForm(value, total),
+      onChange: ({ value }) => validateSplitForm(value, total),
+    },
+    onSubmit: async ({ value }) => {
+      const input = buildCreateSplitPayload(value, {
+        transactionId,
+        totalRupees: total,
+      });
+      const result = await callAction(() => createSplit(input));
+      if (result.ok) onClose();
+      else window.alert(result.message);
+    },
+  });
+
+  const values = useSelector(form.store, (s) => s.values);
+  const balanceError = useSelector(form.store, (s) => s.errors[0]);
 
   const settledById = new Map(
     (existing?.participants ?? []).map((p) => [p.id, p.settledAmountPaise]),
   );
 
   // Auto-suggest your_share = total / (1 + participants) when both empty.
+  const participantCount = values.participants.length;
   useEffect(() => {
-    if (!existing && yourShare === "" && total !== "") {
-      const t = Number.parseFloat(total);
-      const n = participants.filter((p) => p.personName).length + 1;
-      if (n > 1 && Number.isFinite(t)) {
-        setYourShare((t / n).toFixed(2));
-      }
-    }
+    const suggested = autoSuggestYourShare(form.state.values, total, !!existing);
+    if (suggested !== null) form.setFieldValue("yourShare", suggested);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participants.length]);
+  }, [participantCount]);
 
-  const updateParticipant = (i: number, patch: Partial<DraftParticipant>) => {
-    setParticipants((arr) => arr.map((p, j) => (j === i ? { ...p, ...patch } : p)));
-  };
-  const addParticipant = () =>
-    setParticipants((arr) => [...arr, { personName: "", expectedRupees: "" }]);
   const removeParticipant = (i: number) => {
-    const draft = participants[i];
+    const draft = form.state.values.participants[i];
     const settled = draft.id ? (settledById.get(draft.id) ?? 0) : 0;
     if (settled > 0) {
       const name = draft.personName || "This participant";
@@ -217,88 +221,23 @@ function SplitForm({
       );
       if (!ok) return;
     }
-    setParticipants((arr) => arr.filter((_, j) => j !== i));
+    void form.removeFieldValue("participants", i);
   };
 
   const equalSplit = () => {
-    const totalP = rupeesToPaise(total);
-    const named = participants.filter((p) => p.personName.trim());
-    const n = named.length + 1;
-    if (!Number.isFinite(totalP) || n <= 1) return;
-    // Divide in paise and give the indivisible remainder to your own share, so
-    // the parts always sum back to the total. Splitting ₹1000 three ways as
-    // 333.33 each would leave a paise stranded and trip the balance invariant.
-    const base = Math.floor(totalP / n);
-    const remainder = totalP - base * n;
-    setYourShare(paiseToRupeesStr(base + remainder));
-    setParticipants(
-      named.map((p) => ({
-        id: p.id,
-        personName: p.personName,
-        expectedRupees: paiseToRupeesStr(base),
-      })),
-    );
+    const next = equalSplitValues(form.state.values, total);
+    if (!next) return;
+    form.setFieldValue("yourShare", next.yourShare);
+    form.setFieldValue("participants", next.participants);
   };
 
-  // Live balance check — mirrors the server's invariant (your share +
-  // participants === total) so the Save button can be disabled before the
-  // round-trip. Blank "your share" auto-computes as total − participants,
-  // same as submit() below, which balances by construction.
-  const totalPaiseLive = rupeesToPaise(total);
-  const totalValid = Number.isFinite(totalPaiseLive);
-  const yourSharePaiseLive =
-    yourShare.trim() === "" ? null : rupeesToPaise(yourShare);
-  const participantsSumLive = participants
-    .filter((p) => p.personName.trim() && p.expectedRupees.trim())
-    .reduce((s, p) => {
-      const v = rupeesToPaise(p.expectedRupees);
-      return s + (Number.isFinite(v) ? v : 0);
-    }, 0);
-  const effectiveYourSharePaise =
-    yourSharePaiseLive != null && Number.isFinite(yourSharePaiseLive)
-      ? yourSharePaiseLive
-      : totalValid
-        ? Math.max(0, totalPaiseLive - participantsSumLive)
-        : 0;
-  const residualPaise = totalValid
-    ? totalPaiseLive - (effectiveYourSharePaise + participantsSumLive)
-    : 0;
-  const isBalanced = totalValid && residualPaise === 0;
+  // Live balance line. Save stays disabled while the form-level validator
+  // (the same balance rule) reports an error.
+  const balance = computeSplitBalance(values, total);
 
   const submit = () => {
-    const cleaned = participants
-      .filter((p) => p.personName.trim() && p.expectedRupees.trim())
-      .map((p) => ({
-        id: p.id,
-        personName: p.personName.trim(),
-        expectedAmountPaise: rupeesToPaise(p.expectedRupees),
-      }));
-    const totalPaise = rupeesToPaise(total);
-    // If "your share" is left blank, default to total minus sum of named
-    // participant shares — i.e. "I paid the rest". Falls back to total when
-    // there are no participants, and to 0 if math goes sideways.
-    let yourSharePaise = rupeesToPaise(yourShare);
-    if (!Number.isFinite(yourSharePaise)) {
-      const participantsSum = cleaned.reduce(
-        (s, p) => s + p.expectedAmountPaise,
-        0,
-      );
-      yourSharePaise = Number.isFinite(totalPaise)
-        ? Math.max(0, totalPaise - participantsSum)
-        : 0;
-    }
     startTransition(async () => {
-      const result = await callAction(() =>
-        createSplit({
-          transactionId,
-          totalPaise: Number.isFinite(totalPaise) ? totalPaise : 0,
-          yourSharePaise,
-          note: note.trim() || null,
-          participants: cleaned,
-        }),
-      );
-      if (result.ok) onClose();
-      else window.alert(result.message);
+      await form.handleSubmit();
     });
   };
 
@@ -350,29 +289,37 @@ function SplitForm({
             className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-neutral-500 dark:border-neutral-700"
           />
         </label>
-        <label className="flex flex-col">
-          <span className="text-xs uppercase text-neutral-500">Your share ₹</span>
-          <input
-            inputMode="decimal"
-            value={yourShare}
-            placeholder="auto"
-            onChange={(e) => setYourShare(e.target.value)}
-            className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-          />
-          <span className="mt-1 text-[10px] text-neutral-500">
-            Leave blank to auto-compute as total − participants.
-          </span>
-        </label>
+        <form.Field name="yourShare">
+          {(field) => (
+            <label className="flex flex-col">
+              <span className="text-xs uppercase text-neutral-500">Your share ₹</span>
+              <input
+                inputMode="decimal"
+                value={field.state.value}
+                placeholder="auto"
+                onChange={(e) => field.handleChange(e.target.value)}
+                className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+              />
+              <span className="mt-1 text-[10px] text-neutral-500">
+                Leave blank to auto-compute as total − participants.
+              </span>
+            </label>
+          )}
+        </form.Field>
       </div>
 
-      <label className="mt-3 flex flex-col text-sm">
-        <span className="text-xs uppercase text-neutral-500">Note (optional)</span>
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-        />
-      </label>
+      <form.Field name="note">
+        {(field) => (
+          <label className="mt-3 flex flex-col text-sm">
+            <span className="text-xs uppercase text-neutral-500">Note (optional)</span>
+            <input
+              value={field.state.value}
+              onChange={(e) => field.handleChange(e.target.value)}
+              className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+            />
+          </label>
+        )}
+      </form.Field>
 
       <div className="mt-4">
         <div className="flex items-center justify-between">
@@ -391,65 +338,70 @@ function SplitForm({
             <option key={n} value={n} />
           ))}
         </datalist>
-        <div className="mt-2 space-y-2">
-          {participants.map((p, i) => {
-            const settled = p.id ? (settledById.get(p.id) ?? 0) : 0;
-            return (
-              <div key={i}>
-                <div className="flex items-center gap-2 text-sm">
-                  <input
-                    placeholder="Name"
-                    list="person-names"
-                    value={p.personName}
-                    onChange={(e) =>
-                      updateParticipant(i, { personName: e.target.value })
-                    }
-                    className="flex-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-                  />
-                  <input
-                    inputMode="decimal"
-                    placeholder="₹"
-                    value={p.expectedRupees}
-                    onChange={(e) =>
-                      updateParticipant(i, { expectedRupees: e.target.value })
-                    }
-                    className="w-24 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeParticipant(i)}
-                    className="text-xs text-neutral-500 hover:text-red-600"
-                  >
-                    ✕
-                  </button>
-                </div>
-                {settled > 0 && (
-                  <span className="text-[10px] text-amber-700 dark:text-amber-400">
-                    {formatPaise(settled)} already settled — editing this row is limited.
-                  </span>
-                )}
-              </div>
-            );
-          })}
-          <button
-            type="button"
-            onClick={addParticipant}
-            className="text-xs text-neutral-500 underline-offset-4 hover:underline"
-          >
-            + Add participant
-          </button>
-        </div>
+        <form.Field name="participants" mode="array">
+          {(participantsField) => (
+            <div className="mt-2 space-y-2">
+              {values.participants.map((p, i) => {
+                const settled = p.id ? (settledById.get(p.id) ?? 0) : 0;
+                return (
+                  <div key={i}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <form.Field name={`participants[${i}].personName`}>
+                        {(field) => (
+                          <input
+                            placeholder="Name"
+                            list="person-names"
+                            value={field.state.value}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            className="flex-1 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+                          />
+                        )}
+                      </form.Field>
+                      <form.Field name={`participants[${i}].expectedRupees`}>
+                        {(field) => (
+                          <input
+                            inputMode="decimal"
+                            placeholder="₹"
+                            value={field.state.value}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            className="w-24 rounded border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+                          />
+                        )}
+                      </form.Field>
+                      <button
+                        type="button"
+                        onClick={() => removeParticipant(i)}
+                        className="text-xs text-neutral-500 hover:text-red-600"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {settled > 0 && (
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                        {formatPaise(settled)} already settled — editing this row is limited.
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => participantsField.pushValue(newParticipantRow())}
+                className="text-xs text-neutral-500 underline-offset-4 hover:underline"
+              >
+                + Add participant
+              </button>
+            </div>
+          )}
+        </form.Field>
       </div>
 
       <div className="mt-3 text-xs text-neutral-500">
-        Total {formatPaise(totalValid ? totalPaiseLive : 0)} = your share{" "}
-        {formatPaise(effectiveYourSharePaise)} + participants{" "}
-        {formatPaise(participantsSumLive)}
-        {!isBalanced && (
-          <span className="ml-1 font-medium text-red-600">
-            ({residualPaise >= 0 || !totalValid ? "unaccounted" : "over by"}{" "}
-            {formatPaise(Math.abs(residualPaise))})
-          </span>
+        Total {formatPaise(balance.totalValid ? balance.totalPaise : 0)} = your share{" "}
+        {formatPaise(balance.effectiveYourSharePaise)} + participants{" "}
+        {formatPaise(balance.participantsSumPaise)}
+        {balanceError !== undefined && (
+          <span className="ml-1 font-medium text-red-600">({balanceError})</span>
         )}
       </div>
 
@@ -478,7 +430,7 @@ function SplitForm({
           <button
             type="button"
             onClick={submit}
-            disabled={pending || !isBalanced}
+            disabled={pending || balanceError !== undefined}
             className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           >
             {pending ? "Saving…" : "Save"}
