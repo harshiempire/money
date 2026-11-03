@@ -17,7 +17,7 @@ import { formatPaise } from "@/lib/format";
 // The transaction/split/net actions return ActionResult; unwrap() throws on
 // failure (keeping the server message) so a card never reports a write that
 // didn't happen.
-import { unwrap } from "@/lib/action/result";
+import { callAction, unwrap } from "@/lib/action/result";
 import { netBalance, splitBalance, typedPaise } from "@/lib/assistant/card-math";
 import type { CategoryLite, OpDraft, TxnCardData, UndoInfo } from "@/lib/assistant/types";
 
@@ -72,7 +72,7 @@ export async function applyDraft(
     case "cat_all": {
       // applyCategoryToCounterparty copies this payment's *current* category,
       // so make sure it's still the one the card shows.
-      const [fresh] = await loadAssistantTxns({ ids: [draft.txnId] });
+      const [fresh] = unwrap(await callAction(() => loadAssistantTxns({ ids: [draft.txnId] })));
       if (fresh?.categoryId !== draft.categoryId) {
         throw new Error("This payment's category changed since the card was made. Ask again for a fresh card.");
       }
@@ -107,7 +107,7 @@ export async function applyDraft(
       };
     }
     case "context_note": {
-      const { id } = await addContextNote({ body: draft.body.trim() });
+      const { id } = unwrap(await callAction(() => addContextNote({ body: draft.body.trim() })));
       return { undo: { kind: "context_note", id }, message: "Added to your notes. Ask Money will see it on the next message." };
     }
     case "net": {
@@ -194,8 +194,7 @@ export async function undoDraft(draft: OpDraft, undo: UndoInfo, fresh: TxnCardDa
       unwrap(await deleteNetEvent({ netEventId: undo.netEventId }));
       return "Net event reversed.";
     case "context_note": {
-      const removed = await deleteContextNote({ id: undo.id });
-      if (!removed.ok) throw new Error(removed.error);
+      unwrap(await callAction(() => deleteContextNote({ id: undo.id })));
       return "Removed that note.";
     }
   }

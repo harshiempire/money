@@ -1,9 +1,10 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { callAction, unwrap } from "@/lib/action/result";
 import { createMcpToken, listMcpTokens, revokeMcpToken } from "./actions";
 
-type Token = Awaited<ReturnType<typeof listMcpTokens>>[number];
+type Token = Extract<Awaited<ReturnType<typeof listMcpTokens>>, { ok: true }>["data"][number];
 
 const buttonClass =
   "rounded border border-neutral-300 px-3 py-2 text-xs hover:bg-neutral-100 " +
@@ -47,26 +48,26 @@ export function Connections({
     setBusy(true);
     setError(null);
     try {
-      const res = await createMcpToken({
+      const res = await callAction(() => createMcpToken({
         name: name.trim(),
         scope,
-      });
+      }));
       if (!res.ok) {
-        setError(res.error);
+        setError(res.code === "INTERNAL" ? "Couldn't create a token. Reload the list before trying again." : res.message);
         return;
       }
       setCreated({
-        token: res.token,
+        token: res.data.token,
         command:
           `claude mcp add --transport http money ${window.location.origin}/api/mcp ` +
-          `--header "Authorization: Bearer ${res.token}"`,
+          `--header "Authorization: Bearer ${res.data.token}"`,
       });
       setCopied(null);
       setTokens((prev) => [
         {
-          id: res.id,
+          id: res.data.id,
           name: name.trim(),
-          hint: res.hint,
+          hint: res.data.hint,
           scope,
           createdAt: new Date().toISOString(),
           lastUsedAt: null,
@@ -76,7 +77,7 @@ export function Connections({
       ]);
       setName("");
       try {
-        setTokens(await listMcpTokens());
+        setTokens(unwrap(await callAction(() => listMcpTokens())));
       } catch {
         setError("Token created, but the list couldn't refresh. Copy it now, then reload the page.");
       }
@@ -94,9 +95,9 @@ export function Connections({
     setBusy(true);
     setError(null);
     try {
-      const res = await revokeMcpToken({ id });
+      const res = await callAction(() => revokeMcpToken({ id }));
       if (!res.ok) {
-        setError(res.error);
+        setError(res.code === "INTERNAL" ? "Couldn't confirm the token was revoked. Reload the page to check its status." : res.message);
         return;
       }
       setTokens((prev) =>

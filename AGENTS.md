@@ -116,14 +116,14 @@ export const deleteSplit = defineAction("deleteSplit", {
 - Clients call actions through `callAction()` / `useAction()` and render `result.message`, or `unwrap(result)` where a throw is wanted (assistant `ops.ts`, TanStack Query). Never read `err.message` from a thrown action error.
 - No session → `UNAUTHENTICATED` before input is decoded. `definePublicAction` (no `CurrentUser`) is for session-less actions only (registration); `asFormAction` adapts an action for `useActionState` and keeps the no-JS form post working.
 - The input schema must never carry `userId` / `accountId`; take them from `CurrentUser`.
-- `bun run check:actions` fails on any unwrapped export in a `"use server"` file outside its shrinking legacy list.
+- `bun run check:actions` fails on any unwrapped export in a `"use server"` file. Its legacy set is empty. Logic belongs in a server-only `*-handlers.ts` module exporting `ActionSpec` objects; the `"use server"` module only exports `defineAction` wrappers and client-safe type-only re-exports.
 
-**Legacy actions (still on that list):** first line = `requireCurrentUserAction()`; then ownership asserts for every client-supplied id. Never trust `userId` or `accountId` from the client.
+**Server action modules (all migrated):** authentication comes from the action layer before decoding. Handlers take the user from `CurrentUser`, then check ownership for every client-supplied id. Never trust `userId` or `accountId` from the client.
 
 | File | Exports |
 |------|---------|
 | [`src/app/import/actions.ts`](src/app/import/actions.ts) | `uploadStatement` (1) |
-| [`src/app/transactions/actions.ts`](src/app/transactions/actions.ts) | 8 (category, counterparty, transfer, note, candidates, bulk note, autoDetectTransfers) |
+| [`src/app/transactions/actions.ts`](src/app/transactions/actions.ts) | 9 (category, counterparty, transfer, review flag, note, candidates, bulk note, autoDetectTransfers, linked preview) |
 | [`src/app/transactions/split-actions.ts`](src/app/transactions/split-actions.ts) | 4 (createSplit, deleteSplit, recordSettlement, clearSettlement) |
 | [`src/app/transactions/net-event-actions.ts`](src/app/transactions/net-event-actions.ts) | `saveNetEvent`, `deleteNetEvent` |
 | [`src/app/reimbursements/actions.ts`](src/app/reimbursements/actions.ts) | Cash settlements and participant writeoffs (4) |
@@ -132,7 +132,9 @@ export const deleteSplit = defineAction("deleteSplit", {
 | [`src/app/assistant/actions.ts`](src/app/assistant/actions.ts) | 5, all read-only (bootstrap, turn, card data, blank card, apply-to-all preview) — see Ask Money below |
 | [`src/app/assistant/tag-actions.ts`](src/app/assistant/tag-actions.ts) | Tag a month (`suggestTagChunk` is a draft), `applySuggestedTags`, `undoSuggestedTags`, context notes, `rememberPayeeDefault` |
 | [`src/app/connections/actions.ts`](src/app/connections/actions.ts) | `listMcpTokens`, `createMcpToken`, `revokeMcpToken`, `listLedgerChanges`, `undoLedgerChange` |
-| [`src/app/assistant/proposed-tag-actions.ts`](src/app/assistant/proposed-tag-actions.ts) | `listProposedTagDrafts`, `openProposedTagDraft`, `resolveProposedTagDraft` |
+| [`src/app/assistant/proposed-tag-actions.ts`](src/app/assistant/proposed-tag-actions.ts) | `openProposedTagDraft`, `resolveProposedTagDraft` (draft lists come from the bootstrap library reads) |
+
+All exports above return `ActionResult<T>` (registration adapts it to form state). Successful values keep their previous shape without the old `ok` field; revoke, draft resolution, note deletion and ledger Undo return no data. The old `error`/`reason` text is the failure's `message`. Two results stay **success data** on purpose: `rememberPayeeDefault`'s confirmation `{ confirm: true, existingCategoryId, existingCategoryName, nextCategoryName }` (check `data.confirm` before reporting a save), and `listLedgerChanges`'s missing-migration `{ available: false, nextCursor: null, rows: [] }`. Tag apply/undo keep per-row failures in data. Server components read the scoped libraries directly and never call actions.
 
 Transaction-field, payee-default, split, settlement (bank/cash/writeoff), net-event and owed-expense writes use [`src/lib/ledger/`](src/lib/ledger/) after authentication; ownership and stale guards are enforced in the core.
 
