@@ -75,3 +75,7 @@ export const fromLedger = <A>(
           : Effect.die(err),
     ),
   );
+
+/** Map the typed Effect core directly, retaining ownership failures from legacy helpers. */
+export const ledgerEffectErrors = <A, R>(effect: Effect.Effect<A, LedgerError, R>): Effect.Effect<A, Forbidden | LedgerActionError, R> =>
+  effect.pipe(Effect.mapError(ledgerFailure), Effect.catchDefect(error => error instanceof ForbiddenError ? Effect.fail(new Forbidden()) : Effect.die(error)));

@@ -34,18 +34,18 @@ const shares = [
 ];
 test("oldest-first allocations span bills, partials and multiple inflows", () => {
   const first = allocateOldestFirst(10000, shares);
-  expect(first).toEqual({ allocations: [{ id: "a", amountPaise: 600, leftPaise: 0 }, { id: "b", amountPaise: 3667, leftPaise: 0 }, { id: "c", amountPaise: 5733, leftPaise: 100 }], remaining: 0 });
-  const nextShares = shares.map(s => ({ ...s, leftPaise: first.allocations.find(a => a.id === s.id)?.leftPaise ?? s.leftPaise }));
-  expect(allocateOldestFirst(5500, nextShares)).toEqual({ allocations: [{ id: "c", amountPaise: 100, leftPaise: 0 }, { id: "d", amountPaise: 5400, leftPaise: 1300 }], remaining: 0 });
-  expect(allocateOldestFirst(600, shares).allocations).toEqual([{ id: "a", amountPaise: 600, leftPaise: 0 }]);
-  expect(allocateOldestFirst(20000, shares).remaining).toBe(3200);
-  expect(allocateOldestFirst(100, []).remaining).toBe(100);
+  expect(first).toEqual({ ok: true, allocations: [{ id: "a", amountPaise: 600, leftPaise: 0 }, { id: "b", amountPaise: 3667, leftPaise: 0 }, { id: "c", amountPaise: 5733, leftPaise: 100 }], remaining: 0 });
+  const nextShares = shares.map(s => ({ ...s, leftPaise: (first.ok ? first.allocations : []).find(a => a.id === s.id)?.leftPaise ?? s.leftPaise }));
+  expect(allocateOldestFirst(5500, nextShares)).toEqual({ ok: true, allocations: [{ id: "c", amountPaise: 100, leftPaise: 0 }, { id: "d", amountPaise: 5400, leftPaise: 1300 }], remaining: 0 });
+  expect((allocateOldestFirst(600, shares) as { allocations: unknown }).allocations).toEqual([{ id: "a", amountPaise: 600, leftPaise: 0 }]);
+  expect((allocateOldestFirst(20000, shares) as { remaining: number }).remaining).toBe(3200);
+  expect((allocateOldestFirst(100, []) as { remaining: number }).remaining).toBe(100);
 });
 test("explicit allocations aggregate repeated targets and refuse either cap", () => {
-  expect(validateAllocations(600, shares, [{ id: "a", amountPaise: 200 }, { id: "a", amountPaise: 400 }])).toEqual({ allocations: [{ id: "a", amountPaise: 600, leftPaise: 0 }], remaining: 0 });
-  expect(() => validateAllocations(700, shares, [{ id: "a", amountPaise: 400 }, { id: "a", amountPaise: 300 }])).toThrow("outstanding");
-  expect(() => validateAllocations(500, shares, [{ id: "a", amountPaise: 600 }])).toThrow("unallocated");
-  expect(() => validateAllocations(500, shares, [{ id: "foreign", amountPaise: 10 }])).toThrow("isn't available");
+  expect(validateAllocations(600, shares, [{ id: "a", amountPaise: 200 }, { id: "a", amountPaise: 400 }])).toEqual({ ok: true, allocations: [{ id: "a", amountPaise: 600, leftPaise: 0 }], remaining: 0 });
+  expect(validateAllocations(700, shares, [{ id: "a", amountPaise: 400 }, { id: "a", amountPaise: 300 }])).toMatchObject({ ok: false, message: expect.stringContaining("outstanding") });
+  expect(validateAllocations(500, shares, [{ id: "a", amountPaise: 600 }])).toMatchObject({ ok: false, message: expect.stringContaining("unallocated") });
+  expect(validateAllocations(500, shares, [{ id: "foreign", amountPaise: 10 }])).toMatchObject({ ok: false, message: expect.stringContaining("isn't available") });
 });
 test("write schemas require keys, valid money and revisions, output includes exact allocation results", () => {
   const base = { ref: "txn_x", rev: "rev_x", participants: [{ person: "Kiran" }], equal: true, idempotency_key: "test-key-123" };

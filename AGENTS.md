@@ -282,6 +282,12 @@ Mounted in [`AppShell`](src/components/AppShell.tsx) → [`src/components/assist
 - **Tokens**: `ai_connection` stores AES-GCM–sealed tokens bound to `${userId}:chatgpt`. Refresh tokens are single-use — refresh only inside [`getChatgptAccess`](src/lib/ai/chatgpt/token-store.ts) (row lock). Never log tokens or send them to the browser.
 - **Connect / disconnect**: `bun run connect-chatgpt [--email …] [--disconnect]` on your machine (needs a browser and port 1455). Don't copy `~/.codex/auth.json` — shared refresh tokens log each other out.
 
+## Shared settlement policy
+
+[`src/lib/ledger/rules/settlement-policy.ts`](src/lib/ledger/rules/settlement-policy.ts) owns browser-safe allocation, inflow explanation, append refusal, receipt and cash amount rules. `recordSettlement` and `recordCashSettlement` are Effect cores using `Actor`/`Db`. The app yields them directly; MCP uses `runCore`. `runRelationalChangeEffect` reuses the promise relational helper's single transaction for locking, snapshot rechecks, writes, logging and idempotency; failed or interrupted Effects roll back.
+
+Bank settlement defaults to `replace` (app, explicit rows); MCP uses `append`, preserving existing rows and computing oldest-first under locks when requested. Optional `expected.allocations` compares the exact multiset of locked plain allocations and refuses stale saves. The action accepts optional `expectedAllocations`; the dialog does not send it yet. Both cores return integer-paise receipts in `value`: bank includes applied rows, unallocated money, open money on touched shares and leftover disposition; cash includes `appliedPaise`/`leftPaise`. Cash refuses zero, negative, fractional/unsafe paise, a closed share or an amount above outstanding, without capping or rounding. Undo's log format is unchanged.
+
 ## Domain / ingest (unchanged by auth)
 
 - PDF parsing: [`src/domain/adapters/bob/parser.ts`](src/domain/adapters/bob/parser.ts), [`src/domain/pdf/`](src/domain/pdf/)

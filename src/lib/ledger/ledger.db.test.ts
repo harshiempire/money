@@ -610,8 +610,12 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
   );
   type Fixture = Awaited<ReturnType<typeof seed>>;
   async function relationalFixture(f: Fixture) {
-    const splits = await import("./splits");
-    const settlements = await import("./settlements");
+    const splitCores = await import("./splits");
+    const { runLedger } = await import("./run");
+    const splits = { ...splitCores, recordSettlement: (ctx: WriteContext, input: Omit<import("./splits").RecordSettlementInput, "allocations"> & { allocations: import("./rules/settlement-policy").Allocation[] }) =>
+      runLedger(splitCores.recordSettlement(ctx, { ...input, allocations: { kind: "explicit", rows: input.allocations } }), ctx.actor) };
+    const cashCores = await import("./settlements");
+    const settlements = { ...cashCores, recordCashSettlement: (ctx: WriteContext, input: import("./settlements").RecordCashSettlementInput) => runLedger(cashCores.recordCashSettlement(ctx, input), ctx.actor) };
     const net = await import("./net-events");
     const owed = await import("./owed-expenses");
     const { relationalSnapshot } = await import("./relational-store");
@@ -699,6 +703,37 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       moveShare,
     };
   }
+  test("Effect relational transaction rolls back failure/interruption and replays idempotently", () => fixture(async f => {
+    const { Effect, Exit } = await import("effect");
+    const { Db } = await import("./services");
+    const { runRelationalChangeEffect } = await import("./relational-store");
+    const run = <A, E>(effect: import("effect").Effect.Effect<A, E, import("./services").Db>) =>
+      Effect.runPromiseExit(effect.pipe(Effect.provideService(Db, f.db)));
+    const before = await f.db.select().from(f.schema.ledgerChanges).where(eq(f.schema.ledgerChanges.userId, f.actor.userId));
+    for (const interrupt of [false, true]) {
+      const exit = await run(runRelationalChangeEffect(f.app, "proof", (tx) => Effect.gen(function* () {
+        yield* Effect.promise(() => tx.update(f.schema.transactions).set({ residualDisposition: "kept", residualAcknowledgedPaise: 100 }).where(eq(f.schema.transactions.id, f.ids[1])));
+        if (interrupt) return yield* Effect.interrupt;
+        return yield* new LedgerError({ code: "invalid_input", message: "proof" });
+      })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      const [row] = await f.db.select().from(f.schema.transactions).where(eq(f.schema.transactions.id, f.ids[1]));
+      expect(row.residualDisposition).toBeNull();
+      expect(await f.db.select().from(f.schema.ledgerChanges).where(eq(f.schema.ledgerChanges.userId, f.actor.userId))).toEqual(before);
+    }
+    const ctx = f.mcp("effect-proof-replay");
+    const work = (tx: import("./store").LedgerTx) => Effect.gen(function* () {
+      yield* Effect.promise(() => tx.update(f.schema.transactions).set({ residualDisposition: "kept", residualAcknowledgedPaise: 100 }).where(eq(f.schema.transactions.id, f.ids[1])));
+      return { revalidate: true, value: 123 };
+    });
+    const first = await run(runRelationalChangeEffect(ctx, "proof", work));
+    expect(Exit.isSuccess(first)).toBe(true);
+    const replay = await run(runRelationalChangeEffect(ctx, "proof", () => Effect.die("must not run")));
+    expect(Exit.isSuccess(replay) && replay.value.replayed).toBe(true);
+    const conflict = await run(runRelationalChangeEffect({ ...ctx, idempotency: { ...ctx.idempotency!, requestHash: "different" } }, "proof", work));
+    expect(Exit.isFailure(conflict)).toBe(true);
+    if (Exit.isFailure(conflict)) expect(String(conflict.cause)).toContain("different request");
+  }));
   const relationalCases = [
     "create_split",
     "delete_split",
@@ -780,7 +815,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
           run: (ctx: WriteContext) =>
             r.settlements.recordCashSettlement(ctx, {
               splitParticipantId: r.share.id,
-              amountPaise: 1234.5,
+              amountPaise: 1234,
               note: " cash ",
             }),
           move: moveShare,
@@ -1053,7 +1088,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     60000,
   );
   test(
-    "net duplicate guard, no-op cash, writeoff methods, owed validation and failed keys",
+    "net duplicate guard, cash refusal, writeoff methods, owed validation and failed keys",
     () =>
       fixture(async (f) => {
         const r = await relationalFixture(f);
@@ -1062,15 +1097,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
           "already net settled",
         );
         const before = await r.snapshot();
-        expect(
-          (
-            await r.settlements.recordCashSettlement(f.app, {
-              splitParticipantId: r.share.id,
-              amountPaise: 0,
-              note: null,
-            })
-          ).changeId,
-        ).toBeNull();
+        await expect(r.settlements.recordCashSettlement(f.app, { splitParticipantId: r.share.id, amountPaise: 0, note: null })).rejects.toMatchObject({ code: "invalid_amount" });
         await expect(
           r.settlements.undoWriteOff(f.app, {
             settlementId: crypto.randomUUID(),
@@ -1130,7 +1157,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
             eq(f.schema.splitParticipants.splitId, f.schema.splits.id),
           )
           .where(eq(f.schema.splits.transactionId, f.ids[0]));
-        await Promise.all(
+        await Promise.allSettled(
           [1, 2].map(() =>
             r.settlements.recordCashSettlement(f.app, {
               splitParticipantId: sp.split_participant.id,
@@ -1150,7 +1177,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
           );
         expect(
           rows.reduce((sum, row) => sum + Number(row.amountPaise), 0),
-        ).toBe(6000);
+        ).toBe(5000);
       }),
     60000,
   );
@@ -1202,14 +1229,15 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     await f.undoChange(f.app, deleted.changeId!);
     expect(await r.snapshot()).toEqual(before);
   }), 60000);
-  test("MCP no-op cash stores a receipt and cash/writeoff preserve caps, methods and server dates", () => fixture(async f => {
+  test("MCP exact cash stores a receipt and cash/writeoff preserve refusals, methods and server dates", () => fixture(async f => {
     const r = await relationalFixture(f);
     const ctx = f.mcp("noop_cash_receipt");
     const input = { splitParticipantId: r.share.id, amountPaise: 0, note: null };
-    const first = await r.settlements.recordCashSettlement(ctx, input);
-    expect(first.changeId).toBeNull();
-    expect((await r.settlements.recordCashSettlement(ctx, input)).replayed).toBe(true);
-    await r.settlements.recordCashSettlement(f.app, { ...input, amountPaise: 7000, note: " cash " });
+    await expect(r.settlements.recordCashSettlement(ctx, input)).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(r.settlements.recordCashSettlement(f.app, { ...input, amountPaise: 7000 })).rejects.toMatchObject({ code: "over_allocation" });
+    const first = await r.settlements.recordCashSettlement(ctx, { ...input, amountPaise: 6000, note: " cash " });
+    expect(first.value).toEqual({ appliedPaise: 6000, leftPaise: 0 });
+    expect((await r.settlements.recordCashSettlement(ctx, { ...input, amountPaise: 6000, note: " cash " })).replayed).toBe(true);
     const [cash] = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, r.share.id));
     expect(cash.amountPaise).toBe(6000);
     expect(cash.method).toBe("cash");

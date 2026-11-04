@@ -2,6 +2,8 @@ import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
 import { CurrentUser, type Db } from "@/lib/action/services";
+import { Actor } from "@/lib/ledger/services";
+import { ledgerEffectErrors } from "@/lib/action/ledger";
 import { fromLedger } from "@/lib/action/ledger";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import {
@@ -20,29 +22,27 @@ const recordCashSettlementInput = Schema.Struct({
 export const recordCashSettlementSpec: ActionSpec<
   typeof recordCashSettlementInput.Type,
   typeof recordCashSettlementInput.Encoded,
-  Awaited<ReturnType<typeof recordCashSettlementForActor>>,
+  Effect.Success<ReturnType<typeof recordCashSettlementForActor>>,
   CurrentUser | Db,
-  void
+  Effect.Success<ReturnType<typeof recordCashSettlementForActor>>["value"]
 > = {
   input: recordCashSettlementInput,
   revalidate: ["/reimbursements", "/transactions", "/"],
   revalidateWhen: (r) => r.revalidate,
-  toData: () => undefined,
+  toData: (r) => r.value,
   handler: Effect.fn("recordCashSettlement")(function* (input) {
     const user = yield* CurrentUser;
     const account = yield* Effect.promise(() =>
       getOrCreateAccountForBank(user.id, "bob"),
     );
-    const result = yield* fromLedger(() =>
-      recordCashSettlementForActor(
+    const result = yield* recordCashSettlementForActor(
         { actor: { userId: user.id, accountId: account.id }, source: "app" },
         {
           splitParticipantId: input.splitParticipantId,
           amountPaise: input.amountPaise,
           note: input.note as string | null,
         },
-      ),
-    );
+      ).pipe(Effect.provideService(Actor, { userId: user.id, accountId: account.id }), ledgerEffectErrors);
 
     return result;
   }),

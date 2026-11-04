@@ -1,4 +1,6 @@
 import "server-only";
+import { runCore, CoreFailure, ledgerToolError } from "./run-core";
+import type { SettlementReceipt } from "@/lib/ledger/rules/settlement-policy";
 import { and, eq } from "drizzle-orm";
 import { Result, Schema } from "effect";
 import { revalidatePath } from "next/cache";
@@ -19,9 +21,9 @@ import type { McpPrincipal } from "./auth";
 import { RelationalInputs, RelationalOutput, type RelationalTool } from "./relational-schemas";
 import { deriveMcpRefKey, deriveMcpRevKey, transactionRef, transactionRev, shareRef, owedRef, settlementRef, noteRef, splitRev } from "./refs";
 import { mcpReadOps } from "./read-ops";
-import { allocateOldestFirst, validateAllocations, splitAmounts, moneyPaise, exactRupees, existingPerson, personKey } from "./write-rules";
+import { splitAmounts, moneyPaise, exactRupees, existingPerson, personKey } from "./write-rules";
 
-type CoreResult = { summary?: string; changeId: string | null; ops: readonly Operation[]; response?: Record<string, unknown>; replayed?: boolean };
+type CoreResult = { value?: unknown; summary?: string; changeId: string | null; ops: readonly Operation[]; response?: Record<string, unknown>; replayed?: boolean };
 function decode<K extends RelationalTool>(tool: K, raw: unknown): (typeof RelationalInputs)[K]["Type"] {
   const parsed = Schema.decodeUnknownResult(RelationalInputs[tool])(raw);
   if (Result.isFailure(parsed)) throw new LedgerError({ code: "invalid_input", message: "Use the tool's documented fields, exact decimal rupees and idempotency key." });
@@ -72,14 +74,14 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     const expense = (ref: string) => before.owed.find(row => owRef(row.id) === ref) ?? unavailable();
     const settlement = (ref: string) => before.settlements.find(row => stRef(row.id) === ref) ?? unavailable();
     const settled = (id: string) => before.settlements.filter(row => row.splitParticipantId === id).reduce((n, row) => n + row.amountPaise, 0);
-    const openShares = (name: string) => before.participants.filter(row => personKey(row.personName) === personKey(name)).map(row => {
-      const split = before.splits.find(s => s.id === row.splitId)!;
-      const bill = txns.find(t => t.id === split.transactionId)!;
-      return { id: row.id, date: bill.txnDate, order: split.createdAt, leftPaise: Math.max(0, row.expectedAmountPaise - settled(row.id)) };
-    });
     const baseRefs: string[] = [];
     let summary = "", details: Partial<typeof RelationalOutput.Type> = {};
     const render = (value: CoreResult): Record<string, unknown> => {
+      if (tool === "record_settlement" && value.value) {
+        const receipt = value.value as SettlementReceipt;
+        details = { allocations: receipt.applied.map(row => ({ share_ref: shRef(row.splitParticipantId), person: row.personName, amount: exactRupees(row.amountPaise), left: exactRupees(row.leftPaise) })), unallocated: exactRupees(receipt.unallocatedPaise), left_open: exactRupees(receipt.stillOpenPaise) };
+        summary = `Recorded ₹${exactRupees(receipt.appliedPaise)} from ${decode("record_settlement", raw).person}; ₹${exactRupees(receipt.stillOpenPaise)} still open and ₹${exactRupees(receipt.unallocatedPaise)} unallocated.`;
+      }
       const refs = new Set(baseRefs);
       for (const op of value.ops) {
         if (op.target === "participant") refs.add(shRef(op.id));
@@ -136,33 +138,17 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "record_settlement": {
         const input = decode(tool, raw), inflow = txn(input.inflow_ref), name = person(input.person);
-        if (inflow.drCr !== "credit") refuse("invalid_source", "Only an incoming credit can settle shares.");
-        const used = before.settlements.filter(row => row.inflowTransactionId === inflow.id);
-        const net = [...snapshot.values()].some(op => op.target === "net_event" && (op.after?.row.inflowTransactionId === inflow.id || op.after?.row.outflowTransactionId === inflow.id));
-        if (net || used.some(row => row.netEventId)) refuse("net_event", "This inflow is part of a net event; undo that event first.");
-        if (before.owed.some(row => row.sourceInflowTransactionId === inflow.id)) refuse("explained_inflow", "This inflow already has an owed-expense explanation. Clear it first.");
-        const residual = snapshot.get(`transaction_residual:${inflow.id}`);
-        if (residual?.target === "transaction_residual" && residual.after?.row.residualDisposition) refuse("explained_inflow", "This inflow's leftover is already acknowledged. Clear its settlement first.");
-        const available = inflow.amountPaise - used.reduce((n, row) => n + row.amountPaise, 0);
-        if (available <= 0) refuse("fully_allocated", "This inflow is already fully allocated.");
-        const open = openShares(name);
-        const allocated = input.allocations ? validateAllocations(available, open, input.allocations.map(row => {
+        const allocations: splits.RecordSettlementInput["allocations"] = input.allocations ? { kind: "explicit", rows: input.allocations.map(row => {
           if ("owed_ref" in row) { expense(row.owed_ref); return refuse("invalid_target", "An owed expense is money you owe; an incoming credit cannot repay it. Use net_settle for offsets."); }
           const target = share(row.share_ref);
-          return { id: target.id, amountPaise: moneyPaise(row.amount) };
-        })) : allocateOldestFirst(available, open);
-        if (!allocated.allocations.length) refuse("no_open_shares", `No open shares for ${name}.`);
-        const left = open.reduce((n, row) => n + BigInt(row.leftPaise), 0n) - allocated.allocations.reduce((n, row) => n + BigInt(row.amountPaise), 0n);
-        details = { allocations: allocated.allocations.map(row => ({ share_ref: shRef(row.id), person: name, amount: exactRupees(row.amountPaise), left: exactRupees(row.leftPaise) })),
-          unallocated: exactRupees(allocated.remaining), left_open: exactRupees(left) };
-        summary = `Recorded ₹${exactRupees(available - allocated.remaining)} from ${name}; ₹${exactRupees(left)} still open and ₹${exactRupees(allocated.remaining)} unallocated.`;
-        baseRefs.push(input.inflow_ref, ...allocated.allocations.map(row => shRef(row.id)));
-        // The app core replaces allocations: preserve this inflow's previous plain rows.
-        result = await splits.recordSettlement(ctx, { inflowTransactionId: inflow.id, allocations: [
-          ...used.map(row => ({ splitParticipantId: row.splitParticipantId!, amountPaise: row.amountPaise })),
-          ...allocated.allocations.map(row => ({ splitParticipantId: row.id, amountPaise: row.amountPaise })),
-        ] }); break;
+          if (personKey(target.personName) !== personKey(name)) refuse("not_found", "That share isn't available for this person.");
+          return { splitParticipantId: target.id, amountPaise: moneyPaise(row.amount) };
+        }) } : { kind: "oldest_first", personName: name };
+        baseRefs.push(input.inflow_ref);
+        result = await runCore(splits.recordSettlement(ctx, { inflowTransactionId: inflow.id, mode: "append", allocations }), p);
+        break;
       }
+
       case "clear_settlement": {
         const input = decode(tool, raw), inflow = txn(input.inflow_ref);
         baseRefs.push(input.inflow_ref); summary = "Cleared ordinary bank allocations and the leftover explanation; net-event legs remain.";
@@ -170,10 +156,8 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "record_cash_settlement": {
         const input = decode(tool, raw), target = share(input.share_ref), amountPaise = moneyPaise(input.amount);
-        const left = Math.max(0, target.expectedAmountPaise - settled(target.id));
-        if (amountPaise > left) refuse("over_allocation", `Cash exceeds the outstanding ₹${exactRupees(left)}.`);
         baseRefs.push(input.share_ref); summary = `Recorded ₹${exactRupees(amountPaise)} cash from ${target.personName}.`;
-        result = await settlements.recordCashSettlement(ctx, { splitParticipantId: target.id, amountPaise, note: input.note ?? null }); break;
+        result = await runCore(settlements.recordCashSettlement(ctx, { splitParticipantId: target.id, amountPaise, note: input.note ?? null }), p); break;
       }
       case "write_off_share": {
         const input = decode(tool, raw), target = share(input.share_ref);
@@ -243,7 +227,8 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     // A concurrent identical request may have committed after the first replay check.
     const replay = ctx ? await replayChange<CoreResult>(ctx) : null;
     if (replay?.response) return { ...replay.response, replayed: true };
-    if (e instanceof LedgerError) return { applied: false, errors: [{ code: e.code, message: e.message, ...(e.current_rev ? { current_rev: e.current_rev } : {}), ...(e.current_split_rev ? { current_split_rev: e.current_split_rev } : {}) }] };
+    if (e instanceof CoreFailure) return { applied: false, errors: [e.error] };
+    if (e instanceof LedgerError) return { applied: false, errors: [ledgerToolError(e)] };
     if (e instanceof ForbiddenError) return { applied: false, errors: [{ code: "not_found", message: "That ref isn't available in this account." }] };
     // Anything else is a defect: rethrow so the server returns its generic message instead of internal text.
     throw e;

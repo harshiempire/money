@@ -1,7 +1,8 @@
 import { readOutstanding } from "./read/money";
 import "server-only";
 import { and, eq, getTableColumns, sql } from "drizzle-orm";
-import { Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
+import { Db } from "./services";
 import { schema } from "@/db";
 import { getOrCreatePerson } from "@/db/person";
 import { throwForbidden } from "@/lib/auth/forbidden";
@@ -230,6 +231,7 @@ export async function runRelationalChange<R extends { revalidate: boolean }>(
   ctx: WriteContext,
   kind: string,
   work: (tx: LedgerTx, helpers: RelationalHelpers) => Promise<R>,
+  database?: Parameters<typeof runChange>[3],
 ) {
   if (ctx.source === "mcp" && (!ctx.idempotency || !/^[A-Za-z0-9_-]{8,80}$/.test(ctx.idempotency.key)))
     throw new LedgerError({
@@ -262,8 +264,42 @@ export async function runRelationalChange<R extends { revalidate: boolean }>(
     const value = await work(tx, relationalHelpers(tx, ctx, before));
     const ops = snapshotDiff(before, await relationalSnapshot(tx, ctx));
     return { ops, result: { ...value, changeId: null, ops } };
-  });
+  }, database);
 }
+
+/** Preserve expected ledger failures; unexpected database failures remain defects. */
+export const ledgerQuery = <A>(call: () => PromiseLike<A>): Effect.Effect<A, LedgerError> =>
+  Effect.tryPromise({ try: () => Promise.resolve(call()), catch: error => error }).pipe(
+    Effect.catch(error => error instanceof LedgerError ? Effect.fail(error) : Effect.die(error)),
+  );
+
+class RelationalRollback {
+  constructor(readonly exit: Exit.Exit<unknown, unknown>) {}
+}
+
+/** Runs the Effect body inside the existing lock/snapshot/log/idempotency transaction.
+ * Any failed Exit (including interruption) is thrown through Drizzle to roll back.
+ */
+export const runRelationalChangeEffect = Effect.fn("runRelationalChangeEffect")(function* <R extends { revalidate: boolean }>(
+  ctx: WriteContext,
+  kind: string,
+  work: (tx: LedgerTx, helpers: RelationalHelpers) => Effect.Effect<R, LedgerError>,
+) {
+  const database = yield* Db;
+  const result = yield* Effect.tryPromise({
+    try: signal => runRelationalChange(ctx, kind, async (tx, helpers) => {
+      const exit = await Effect.runPromiseExit(work(tx, helpers), { signal });
+      if (Exit.isFailure(exit)) throw new RelationalRollback(exit);
+      return exit.value;
+    }, database),
+    catch: error => error,
+  }).pipe(Effect.catch(error => {
+    if (error instanceof RelationalRollback) return error.exit as Exit.Exit<never, LedgerError>;
+    if (error instanceof LedgerError) return Effect.fail(error);
+    return Effect.die(error);
+  }));
+  return result;
+});
 
 /** All stale checks happen before this function. Deletes precede parents;
  * inserts precede children. Updates retain ids and never invoke cascades. */

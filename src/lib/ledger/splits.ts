@@ -1,12 +1,15 @@
 import "server-only";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { Effect } from "effect";
+import { Actor } from "./services";
+import { ledgerQuery, runRelationalChangeEffect } from "./relational-store";
+import { outstandingPaise, personBalanceKey } from "./rules/balances";
+import { allocateOldestFirst, validateAllocations, inflowExplanation, appendAllowed, sameAllocations, settlementReceipt, type Allocation } from "./rules/settlement-policy";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import {
   cleanAllocations,
-  validateInflowCapacity,
   validateParticipantIdsBelongToSplit,
   validatePayableReplaceable,
   validateSettledParticipantEdit,
-  validateSettlementSource,
   validateSplitInput,
   validateSplitTotalMatchesTransaction,
 } from "@/lib/splits/validate";
@@ -17,7 +20,6 @@ import type { ParticipantInput } from "@/lib/splits/types";
 export type { ParticipantInput } from "@/lib/splits/types";
 
 const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
-const rupees = (paise: number): string => `₹${(paise / 100).toFixed(2)}`;
 async function assertResidualPayableReplaceable(
   helpers: RelationalHelpers,
   inflowTransactionId: string,
@@ -241,178 +243,119 @@ export async function deleteSplit(
   });
 }
 
-export async function recordSettlement(
-  ctx: WriteContext,
-  input: {
-    inflowTransactionId: string;
-    allocations: Array<{ splitParticipantId: string; amountPaise: number }>;
-    residual?: {
-      kind: "owed_back" | "kept" | "written_off";
-      personName?: string;
-      note?: string | null;
-    } | null;
-  },
+export interface RecordSettlementInput {
+  inflowTransactionId: string;
+  mode?: "replace" | "append";
+  expected?: { allocations: Allocation[] };
+  allocations: { kind: "explicit"; rows: Allocation[] } | { kind: "oldest_first"; personName: string; limitPaise?: number };
+  residual?: { kind: "owed_back" | "kept" | "written_off"; personName?: string; note?: string | null } | null;
+}
+export const recordSettlement = Effect.fn("recordSettlement")(function* (
+  context: WriteContext, input: RecordSettlementInput,
 ) {
-  return runRelationalChange(ctx, "record_settlement", async (tx, helpers) => {
-    const user = { id: ctx.actor.userId };
-    const { assertTransactionOwned, assertSplitParticipantOwned, getOrCreatePerson } = helpers;
-
-    await assertTransactionOwned(user.id, input.inflowTransactionId);
-
-    for (const a of input.allocations) {
-      await assertSplitParticipantOwned(user.id, a.splitParticipantId);
-    }
-
-    const cleaned = cleanAllocations(
-      input.allocations.map((a) => ({
-        splitParticipantId: a.splitParticipantId,
-        amountPaise: a.amountPaise,
-      })),
-    );
-    if (!cleaned.ok) throw new LedgerError({ code: "invalid_input", message: cleaned.message });
-    const allocations = cleaned.allocations;
-
-    const [inflow] = await tx
-      .select({
-        amountPaise: schema.transactions.amountPaise,
-        txnDate: schema.transactions.txnDate,
-        drCr: schema.transactions.drCr,
-      })
-      .from(schema.transactions)
-      .where(eq(schema.transactions.id, input.inflowTransactionId))
-      .limit(1);
-
-    const source = validateSettlementSource(inflow?.drCr);
-    if (!source.ok) throw new LedgerError({ code: "invalid_input", message: source.message });
-
-    await assertResidualPayableReplaceable(helpers, input.inflowTransactionId);
-
-    const inflowAmountPaise = inflow ? Number(inflow.amountPaise) : 0;
-
-    // A Net Settle can spend part of this same credit through a bank leg. Those
-    // rows carry a net_event_id and belong to the net event, not to this
-    // dialog: this action never deletes them, and can only allocate what they
-    // left over.
-    const netRowsOnInflow = helpers.before.settlements.filter(row => row.inflowTransactionId === input.inflowTransactionId && row.netEventId !== null);
-    const reservedByNetSettlePaise = netRowsOnInflow.reduce((s, r) => s + Number(r.amountPaise), 0);
-
-    const allocationsSum = allocations.reduce((s, a) => s + a.amountPaise, 0);
-    const capacity = validateInflowCapacity({
-      inflowAmountPaise,
-      reservedByNetSettlePaise,
-      allocationsSumPaise: allocationsSum,
+  const actor = yield* Actor;
+  const ctx = { ...context, actor };
+  return yield* runRelationalChangeEffect(ctx, "record_settlement", (tx, helpers) => Effect.gen(function* () {
+    const user = { id: actor.userId };
+    const mode = input.mode ?? "replace";
+    yield* ledgerQuery(() => helpers.assertTransactionOwned(user.id, input.inflowTransactionId));
+    const [inflow] = yield* ledgerQuery(() => tx.select().from(schema.transactions).where(eq(schema.transactions.id, input.inflowTransactionId)));
+    if (inflow.drCr !== "credit") return yield* new LedgerError({ code: "invalid_source", message: "Only an incoming credit can settle shares." });
+    const plain = helpers.before.settlements.filter(r => r.inflowTransactionId === input.inflowTransactionId && r.netEventId === null);
+    if (input.expected && !sameAllocations(input.expected.allocations, plain.map(r => ({ splitParticipantId: r.splitParticipantId!, amountPaise: r.amountPaise }))))
+      return yield* new LedgerError({ code: "stale", message: "This payment's allocations changed since you opened it. Reload and review." });
+    const reservedByNetSettlePaise = helpers.before.settlements.filter(r => r.inflowTransactionId === inflow.id && r.netEventId !== null).reduce((n,r) => n + r.amountPaise, 0);
+    const netEvents = yield* ledgerQuery(() => tx.select().from(schema.netEvents).where(or(eq(schema.netEvents.inflowTransactionId, inflow.id), eq(schema.netEvents.outflowTransactionId, inflow.id))));
+    const explanation = inflowExplanation({ inflowAmountPaise: Number(inflow.amountPaise), allocations: plain, netReservedPaise: reservedByNetSettlePaise,
+      owedSourced: helpers.before.owed.some(r => r.sourceInflowTransactionId === inflow.id), residualDisposition: inflow.residualDisposition,
+      residualAcknowledgedPaise: inflow.residualAcknowledgedPaise, hasNetEvent: reservedByNetSettlePaise > 0 || netEvents.length > 0 });
+    if (mode === "append") {
+      if (input.residual !== undefined) return yield* new LedgerError({ code: "invalid_input", message: "Append mode cannot set a leftover disposition." });
+      const allowed = appendAllowed(explanation);
+      if (!allowed.ok) return yield* new LedgerError(allowed);
+    } else yield* ledgerQuery(() => assertResidualPayableReplaceable(helpers, inflow.id));
+    const available = mode === "append" ? explanation.availablePaise : Number(inflow.amountPaise) - reservedByNetSettlePaise;
+    const selection = input.allocations;
+    const nameKey = selection.kind === "oldest_first" ? personBalanceKey(null, selection.personName, helpers.before.people) : null;
+    const bills = yield* ledgerQuery(() => tx.select({ id: schema.transactions.id, date: schema.transactions.txnDate }).from(schema.transactions).where(inArray(schema.transactions.id, helpers.before.splits.map(s => s.transactionId))));
+    const open = helpers.before.participants.filter(p => nameKey === null || personBalanceKey(p.personId, p.personName, helpers.before.people) === nameKey).map(p => {
+      const split = helpers.before.splits.find(s => s.id === p.splitId)!;
+      const paid = helpers.before.settlements.filter(r => r.splitParticipantId === p.id && !(mode === "replace" && r.inflowTransactionId === inflow.id && r.netEventId === null));
+      return { id: p.id, date: bills.find(b => b.id === split.transactionId)!.date, order: split.createdAt,
+        leftPaise: outstandingPaise(p.expectedAmountPaise, paid) ?? -1 };
     });
-    if (!capacity.ok) throw new LedgerError({ code: "invalid_input", message: capacity.message });
-
-    if (allocations.length > 0) {
-      const participantIds = [...new Set(allocations.map((a) => a.splitParticipantId))];
-      const selected = new Set(participantIds);
-      const participants = helpers.before.participants.filter(row => selected.has(row.id));
-      const participantById = new Map(participants.map((p) => [p.id, p]));
-
-      // Settled totals against these participants, excluding the rows this
-      // action is about to replace: this inflow's own plain settlements. Net
-      // Settle rows on this inflow stay put, so they still count.
-      const settledExcludingThisInflow = new Map<string, number>();
-      const priorSettlements = helpers.before.settlements.filter(row => row.splitParticipantId !== null && selected.has(row.splitParticipantId));
-      for (const row of priorSettlements) {
-        if (!row.splitParticipantId) continue;
-        if (row.inflowTransactionId === input.inflowTransactionId && row.netEventId === null) {
-          continue;
-        }
-        settledExcludingThisInflow.set(
-          row.splitParticipantId,
-          (settledExcludingThisInflow.get(row.splitParticipantId) ?? 0) + Number(row.amountPaise),
-        );
-      }
-
-      const allocationByParticipant = new Map<string, number>();
-      for (const a of allocations) {
-        allocationByParticipant.set(
-          a.splitParticipantId,
-          (allocationByParticipant.get(a.splitParticipantId) ?? 0) + a.amountPaise,
-        );
-      }
-
-      for (const [participantId, allocated] of allocationByParticipant) {
-        const participant = participantById.get(participantId);
-        if (!participant) continue;
-        const expected = Number(participant.expectedAmountPaise);
-        const settled = settledExcludingThisInflow.get(participantId) ?? 0;
-        const outstanding = Math.max(0, expected - settled);
-        if (allocated > outstanding) {
-          throw new LedgerError({ code: "invalid_input", message: `Allocation of ${rupees(allocated)} to ${participant.personName} exceeds their outstanding balance of ${rupees(outstanding)}.` });
-        }
-      }
+    let checked;
+    if (selection.kind === "oldest_first") {
+      const limit = selection.limitPaise ?? available;
+      if (!Number.isSafeInteger(limit) || limit < 0) return yield* new LedgerError({ code: "invalid_amount", message: "Allocations must be positive exact paise." });
+      checked = allocateOldestFirst(Math.min(available, limit), open);
+    } else {
+      for (const row of selection.rows) yield* ledgerQuery(() => helpers.assertSplitParticipantOwned(user.id, row.splitParticipantId));
+      const cleaned = cleanAllocations(selection.rows);
+      if (!cleaned.ok) return yield* new LedgerError({ code: "invalid_input", message: cleaned.message });
+      checked = validateAllocations(available, open, cleaned.allocations.map(r => ({ id: r.splitParticipantId, amountPaise: r.amountPaise })));
     }
-
-    {
-      // Only this dialog's own rows. A row with a net_event_id was written by
-      // Net Settle and is deleted only through that event.
-      await tx
-        .delete(schema.settlements)
-        .where(
-          and(
-            eq(schema.settlements.inflowTransactionId, input.inflowTransactionId),
-            isNull(schema.settlements.netEventId),
-          ),
-        );
-
-      if (allocations.length > 0) {
-        await tx.insert(schema.settlements).values(
-          allocations.map((a) => ({
-            inflowTransactionId: input.inflowTransactionId,
-            splitParticipantId: a.splitParticipantId,
-            amountPaise: a.amountPaise,
-            method: "bank" as const,
-          })),
-        );
-      }
-
+    if (!checked.ok) return yield* new LedgerError(checked);
+    if (mode === "append" && !checked.allocations.length) return yield* new LedgerError({ code: "no_open_shares", message: `No open shares for ${selection.kind === "oldest_first" ? selection.personName : "this person"}.` });
+    // Replace retains the app's row shape (including repeated rows); append
+    // inserts only the new, validated allocations and leaves prior row ids intact.
+    const allocations = mode === "replace" && selection.kind === "explicit"
+      ? selection.rows.filter(r => r.amountPaise > 0)
+      : checked.allocations.map(r => ({ splitParticipantId: r.id, amountPaise: r.amountPaise }));
+    const allocationsSum = allocations.reduce((n,r) => n + r.amountPaise, 0);
+    const inflowAmountPaise = Number(inflow.amountPaise);
+    if (mode === "replace") yield* ledgerQuery(() => tx.delete(schema.settlements).where(and(eq(schema.settlements.inflowTransactionId, inflow.id), isNull(schema.settlements.netEventId))));
+    if (allocations.length) yield* ledgerQuery(() => tx.insert(schema.settlements).values(allocations.map(a => ({ ...a, inflowTransactionId: inflow.id, method: "bank" as const }))));
+    if (mode === "replace") {
       // Clear any previous disposition first so re-saving is idempotent and
       // switching your answer (e.g. "kept" -> "owed back") doesn't leave a
       // stale owed_expense or acknowledgement behind.
-      await tx
+      yield* ledgerQuery(() => tx
         .delete(schema.owedExpenses)
-        .where(eq(schema.owedExpenses.sourceInflowTransactionId, input.inflowTransactionId));
-      await tx
+        .where(eq(schema.owedExpenses.sourceInflowTransactionId, input.inflowTransactionId)));
+      yield* ledgerQuery(() => tx
         .update(schema.transactions)
         .set({ residualDisposition: null, residualAcknowledgedPaise: null })
-        .where(eq(schema.transactions.id, input.inflowTransactionId));
+        .where(eq(schema.transactions.id, input.inflowTransactionId)));
 
+      const residual = input.residual;
       const residualPaise = inflowAmountPaise - reservedByNetSettlePaise - allocationsSum;
-      if (input.residual && residualPaise > 0) {
-        if (input.residual.kind === "owed_back") {
-          const personName = input.residual.personName?.trim();
+      if (residual && residualPaise > 0) {
+        if (residual.kind === "owed_back") {
+          const personName = residual.personName?.trim();
           if (!personName) {
-            throw new LedgerError({ code: "invalid_input", message: "A person name is required to record an overpayment as owed back." });
+            return yield* new LedgerError({ code: "invalid_input", message: "A person name is required to record an overpayment as owed back." });
           }
-          const personId = await getOrCreatePerson(user.id, personName, tx);
-          await tx.insert(schema.owedExpenses).values({
+          const personId = yield* ledgerQuery(() => helpers.getOrCreatePerson(user.id, personName, tx));
+          yield* ledgerQuery(() => tx.insert(schema.owedExpenses).values({
             userId: user.id,
             personId,
             personName,
-            incurredDate: inflow?.txnDate ?? new Date().toISOString().slice(0, 10),
+            incurredDate: inflow.txnDate,
             amountPaise: residualPaise,
             description: `Overpayment from ${personName}`,
-            note: input.residual.note ?? null,
+            note: residual.note ?? null,
             sourceInflowTransactionId: input.inflowTransactionId,
-          });
+          }));
         } else {
-          await tx
+          const disposition = residual.kind;
+          yield* ledgerQuery(() => tx
             .update(schema.transactions)
             .set({
-              residualDisposition: input.residual.kind,
+              residualDisposition: disposition,
               residualAcknowledgedPaise: residualPaise,
             })
-            .where(eq(schema.transactions.id, input.inflowTransactionId));
+            .where(eq(schema.transactions.id, input.inflowTransactionId)));
         }
       }
     }
-
-    return { revalidate: true, value: undefined };
-  });
-}
+    const unallocated = available - allocationsSum;
+    const value = settlementReceipt({ inflowTransactionId: inflow.id, mode, availablePaise: available,
+      applied: checked.allocations.map(r => ({ splitParticipantId: r.id, amountPaise: r.amountPaise, leftPaise: r.leftPaise, personName: helpers.before.participants.find(p => p.id === r.id)!.personName })),
+      leftover: input.residual && unallocated > 0 ? { kind: input.residual.kind, paise: unallocated } : null });
+    return { revalidate: true, value };
+  }));
+});
 
 export async function clearSettlement(ctx: WriteContext, input: { inflowTransactionId: string }) {
   return runRelationalChange(ctx, "clear_settlement", async (tx, helpers) => {
