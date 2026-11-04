@@ -221,7 +221,7 @@ dbTest(
       );
       const share = await f.makeShare();
       expect(share.expectedAmountPaise).toBe(6000);
-      expect(f.paths).toEqual(["/transactions", "/reimbursements", "/"]);
+      expect(f.paths).toEqual(["/transactions", "/review", "/", "/timeline", "/connections", "/reimbursements", "/people", "/spend"]);
       failure(
         await f.call(f.split.createSplitSpec, {
           ...f.splitInput,
@@ -697,8 +697,8 @@ dbTest(
         ok: true,
         data: { pairs: 0 },
       });
-      // Same as main: nothing found → only /transactions.
-      expect(f.paths).toEqual(["/transactions"]);
+      // The shared field-edit capability refreshes both doors' path union.
+      expect(f.paths).toEqual(["/transactions", "/review", "/", "/timeline", "/connections"]);
       await f.db
         .update(f.schema.transactions)
         .set({ amountPaise: 10000 })
@@ -823,7 +823,7 @@ dbTest(
         accountId: f.account,
         amountPaise: 10000,
       });
-      expect(f.paths).toEqual(["/import", "/transactions"]);
+      expect(f.paths).toEqual(["/import", "/transactions", "/review"]);
     }),
   30000,
 );
@@ -867,7 +867,7 @@ dbTest("ledger history: list/undo, foreign id, custom stale message and success-
   expect(f.paths).toEqual([]);
   expect(unwrap(await f.call(a.undoLedgerChangeSpec, { changeId }))).toBeUndefined();
   expect((await f.read()).note).toBeNull();
-  expect(f.paths).toEqual(["/transactions", "/reimbursements", "/people", "/spend", "/", "/connections"]);
+  expect(f.paths).toEqual(["/transactions", "/review", "/", "/timeline", "/connections", "/reimbursements", "/people", "/spend"]);
   failure(await f.call(a.undoLedgerChangeSpec, { changeId }), "CONFLICT", "That change was already undone.");
   unwrap(await f.call(f.txns.setTransactionNoteSpec, { transactionId: f.debit, note: "Two" }));
   const latest = unwrap(await f.call(a.listLedgerChangesSpec, undefined)).rows[0].id;
@@ -948,7 +948,7 @@ dbTest("tag apply/undo: stale and foreign rows, sanitizers, overflow and conditi
   const applied = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [row, { ...row, transactionId: f.foreign }] }));
   expect(applied.applied).toHaveLength(1);
   expect(applied.failed).toHaveLength(1);
-  expect(f.paths).toEqual(["/transactions", "/"]);
+  expect(f.paths).toEqual(["/transactions", "/review", "/", "/timeline", "/connections"]);
   f.paths.length = 0;
   const stale = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: [row] }));
   expect(stale.failed[0].reason).toBe("The category changed since this card was made. Ask again to get a fresh card.");
@@ -960,7 +960,7 @@ dbTest("tag apply/undo: stale and foreign rows, sanitizers, overflow and conditi
   expect(f.paths).toEqual([]);
   expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: applied.applied }))).toEqual({ restored: 1, failed: 0 });
   expect((await f.read()).categoryId).toBeNull();
-  expect(f.paths).toEqual(["/transactions", "/"]);
+  expect(f.paths).toEqual(["/transactions", "/review", "/", "/timeline", "/connections"]);
   f.paths.length = 0;
   expect(unwrap(await f.call(a.undoSuggestedTagsSpec, { rows: applied.applied }))).toEqual({ restored: 0, failed: 1 });
   const overflow = unwrap(await f.call(a.applySuggestedTagsSpec, { rows: Array.from({ length: 402 }, () => row) }));

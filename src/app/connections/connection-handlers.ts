@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -91,7 +92,7 @@ export const undoLedgerChangeSpec: ActionSpec<
   typeof undoLedgerChangeInput.Type, typeof undoLedgerChangeInput.Encoded, void, CurrentUser | Db
 > = {
   input: undoLedgerChangeInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/spend", "/", "/connections"],
+  revalidate: refreshPaths("change.undo"),
   handler: Effect.fn("undoLedgerChange")(function* (input) {
     const user = yield* CurrentUser;
     const account = yield* Effect.promise(() => getOrCreateAccountForBank(user.id, "bob"));

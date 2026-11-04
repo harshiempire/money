@@ -377,3 +377,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Shared people balances
 
 Pure money and grouping rules live in `src/lib/ledger/rules/balances.ts`: every settlement method reduces outstanding, clamped per target. Unsafe integer inputs/aggregates return null. Group by person id when present, otherwise trimmed lowercase name; distinct ids never merge by spelling. Saved person names win; historical-only groups use the latest date/order spelling (lexical spelling breaks ties). `src/lib/ledger/read/balances.ts` loads actor-scoped balances and confirmed payee links. `src/lib/ledger/services.ts` owns the shared Db tag, query/transaction helpers and Actor; action/services re-exports the same Db identity and retains CurrentUser. Promise adapters use `src/lib/ledger/run.ts` (`runLedger`); action effects can provide Actor and yield the read directly.
+
+## Capability register
+
+`src/lib/ledger/capabilities.ts` records financial capabilities, their cores, app actions, MCP tools, guards and refresh areas. A class B/C/D change (capability, business logic or door change) updates the register in the same PR. New cores must use Effect; `LEGACY_PROMISE_CORES` freezes today's promise implementations.
+
+`refreshPaths(id)` unions `AREA_PATHS` for the capability. Both doors use it; preserve every existing refreshed page when changing areas. Handler imports support the shared refresh values; business handlers stay unchanged.
+
+Run `node scripts/check-capabilities.mjs` (Node 24+) or `bun --no-env-file run check:capabilities`, and `bun test --no-env-file src/lib/ledger/capabilities.test.ts`. CI installs nothing.

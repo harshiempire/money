@@ -8,6 +8,7 @@
   },
   "type": "module",
   "scripts": {
+    "check:capabilities": "node scripts/check-capabilities.mjs",
     "dev": "node scripts/security/preflight.mjs && next dev",
     "build": "node scripts/security/preflight.mjs && next build",
     "start": "next start",

@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
@@ -30,7 +31,7 @@ export const uploadStatementSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: Upload,
-  revalidate: ["/import", "/transactions"],
+  revalidate: refreshPaths("statement.import"),
   handler: Effect.fn("uploadStatement")(function* (formData) {
     const user = yield* CurrentUser;
 
