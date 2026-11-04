@@ -17,8 +17,11 @@ export function validateNetEventInvariant(
   inflowAmountPaise: number,
   outflowAmountPaise: number,
 ): { ok: true } | { ok: false; message: string } {
-  const receivableTotal = sumReceivableLegs(legs);
-  const payableTotal = sumPayableLegs(legs);
+  // Cash is already exchanged outside the bank. Only bank/offset legs must
+  // reconcile to the linked bank transactions; offsets still balance exactly.
+  const bankLegs = legs.filter((leg) => leg.method !== "cash");
+  const receivableTotal = sumReceivableLegs(bankLegs);
+  const payableTotal = sumPayableLegs(bankLegs);
   const netTotal = receivableTotal - payableTotal;
   const expectedNet = inflowAmountPaise - outflowAmountPaise;
 

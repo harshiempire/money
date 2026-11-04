@@ -37,6 +37,7 @@ export async function loadOpenReceivablesForAccount(
 
 export async function loadOpenPayablesForUser(
   userId: string,
+  includeSettled = false,
 ): Promise<PayableOption[]> {
   const expenses = await db
     .select()
@@ -65,7 +66,7 @@ export async function loadOpenPayablesForUser(
         categoryId: e.categoryId,
       };
     })
-    .filter((p) => p.outstandingPaise > 0);
+    .filter((p) => includeSettled || p.outstandingPaise > 0);
 }
 
 export interface NetEventByTransaction {

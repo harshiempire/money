@@ -17,6 +17,8 @@ import * as owed from "@/lib/ledger/owed-expenses";
 import { saveNetEvent } from "@/lib/ledger/net-events";
 import { linkPayeesToPerson } from "@/lib/ledger/person-links";
 import { renamePayee, addStandingNote } from "@/lib/ledger/metadata";
+import type { NetSettlementReceipt } from "@/lib/ledger/rules/net-settlement";
+import type { NetEventLeg } from "@/lib/net-events/legs";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
 import type { McpPrincipal } from "./auth";
 import { RelationalInputs, RelationalOutput, type RelationalTool } from "./relational-schemas";
@@ -82,6 +84,11 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
         const receipt = value.value as SettlementReceipt;
         details = { allocations: receipt.applied.map(row => ({ share_ref: shRef(row.splitParticipantId), person: row.personName, amount: exactRupees(row.amountPaise), left: exactRupees(row.leftPaise) })), unallocated: exactRupees(receipt.unallocatedPaise), left_open: exactRupees(receipt.stillOpenPaise) };
         summary = `Recorded ₹${exactRupees(receipt.appliedPaise)} from ${decode("record_settlement", raw).person}; ₹${exactRupees(receipt.stillOpenPaise)} still open and ₹${exactRupees(receipt.unallocatedPaise)} unallocated.`;
+      }
+      if (tool === "net_settle" && value.value) {
+        const { receipt } = value.value as { receipt: NetSettlementReceipt };
+        details = { receipt: { date: receipt.eventDate, bank_inflow: exactRupees(receipt.bankInflowPaise), bank_outflow: exactRupees(receipt.bankOutflowPaise),
+          legs: receipt.legs.map(l => ({ kind: l.kind, ref: 'splitParticipantId' in l.target ? shRef(l.target.splitParticipantId) : owRef(l.target.owedExpenseId), method: l.method, amount: exactRupees(l.amountPaise), left: exactRupees(l.leftPaise) })) } };
       }
       const refs = new Set(baseRefs);
       for (const op of value.ops) {
@@ -173,23 +180,30 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       case "net_settle": {
         const input = decode(tool, raw);
         const inflow = input.inflow_ref ? txn(input.inflow_ref) : undefined, outflow = input.outflow_ref ? txn(input.outflow_ref) : undefined;
-        if (inflow && inflow.drCr !== "credit" || outflow && outflow.drCr !== "debit") refuse("invalid_source", "Net inflow must be a credit and outflow a debit.");
-        for (const bank of [inflow, outflow]) {
-          if (!bank) continue;
-          if (before.settlements.some(row => row.inflowTransactionId === bank.id) || before.owed.some(row => row.sourceInflowTransactionId === bank.id)) refuse("explained_inflow", "A bank row already has allocations or a sourced owed expense. Clear that explanation first.");
-          const residual = snapshot.get(`transaction_residual:${bank.id}`);
-          if (residual?.target === "transaction_residual" && residual.after?.row.residualDisposition) refuse("explained_inflow", "A bank row already has an acknowledged leftover. Clear it first.");
-          baseRefs.push(txRef(bank.id));
-        }
+        for (const bank of [inflow, outflow]) if (bank) baseRefs.push(txRef(bank.id));
         const receivables = input.receivables.map(row => { const target = share(row.share_ref); baseRefs.push(row.share_ref); return { id: target.id, paise: moneyPaise(row.amount) }; });
         const payables = input.payables.map(row => { const target = expense(row.owed_ref); baseRefs.push(row.owed_ref); return { id: target.id, paise: moneyPaise(row.amount) }; });
         for (const lines of [receivables, payables]) {
           if (lines.reduce((sum, line) => sum + BigInt(line.paise), 0n) > BigInt(Number.MAX_SAFE_INTEGER))
             refuse("invalid_amount", "Combined net allocations exceed the exact paise range.");
         }
-        summary = "Recorded net settlement using bank and offset legs.";
-        result = await saveNetEvent(ctx, { eventDate: input.date, inflowTransactionId: inflow?.id, outflowTransactionId: outflow?.id, note: input.note,
-          legs: buildNetLegs({ receivables, payables, inflowTransactionId: inflow?.id, inflowAmountPaise: inflow?.amountPaise ?? 0 }) }); break;
+        summary = "Recorded net settlement.";
+        for (const [rows, ids] of [[input.receivables, receivables], [input.payables, payables]] as const) {
+          const guards = new Map<string, number>();
+          rows.forEach((row, i) => {
+            const expected = moneyPaise(row.expected_outstanding), id = ids[i].id;
+            if (guards.has(id) && guards.get(id) !== expected) refuse("invalid_input", "Conflicting balance previews for the same bill.");
+            guards.set(id, expected);
+          });
+        }
+        const built = buildNetLegs({ receivables, payables, inflowTransactionId: inflow?.id, inflowAmountPaise: inflow?.amountPaise ?? 0 });
+        const explicit = input.receivables.some(r => r.method) || input.payables.some(r => r.method);
+        if (explicit && [...input.receivables, ...input.payables].some(r => !r.method)) refuse("invalid_input", "Supply method on every leg when using explicit methods.");
+        const legs: NetEventLeg[] = explicit ? [
+          ...input.receivables.map((r, i): NetEventLeg => ({ kind: "receivable", splitParticipantId: receivables[i].id, amountPaise: receivables[i].paise, method: r.method!, expectedOutstandingPaise: moneyPaise(r.expected_outstanding) })),
+          ...input.payables.map((r, i): NetEventLeg => ({ kind: "payable", owedExpenseId: payables[i].id, amountPaise: payables[i].paise, method: r.method!, expectedOutstandingPaise: moneyPaise(r.expected_outstanding) })),
+        ] : built.map(l => ({ ...l, expectedOutstandingPaise: moneyPaise(l.kind === "receivable" ? input.receivables.find(r => share(r.share_ref).id === l.splitParticipantId)!.expected_outstanding : input.payables.find(r => expense(r.owed_ref).id === l.owedExpenseId)!.expected_outstanding) }));
+        result = await runCore(saveNetEvent(ctx, { eventDate: input.date, inflowTransactionId: inflow?.id, outflowTransactionId: outflow?.id, note: input.note, legs }), p); break;
       }
       case "add_owed_expense": {
         const input = decode(tool, raw), name = person(input.person, input.create_person, input.distinct_from), amountPaise = moneyPaise(input.amount);
