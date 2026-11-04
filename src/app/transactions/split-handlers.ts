@@ -2,6 +2,8 @@ import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
 import { CurrentUser, type Db } from "@/lib/action/services";
+import { Actor } from "@/lib/ledger/services";
+import { ledgerEffectErrors } from "@/lib/action/ledger";
 import { fromLedger } from "@/lib/action/ledger";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import {
@@ -107,6 +109,7 @@ const recordSettlementInput = Schema.Struct({
       amountPaise: Schema.Number,
     }),
   ),
+  expectedAllocations: Schema.optional(Schema.Array(Schema.Struct({ splitParticipantId: Schema.String, amountPaise: Schema.Number }))),
   residual: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -120,28 +123,29 @@ const recordSettlementInput = Schema.Struct({
 export const recordSettlementSpec: ActionSpec<
   typeof recordSettlementInput.Type,
   typeof recordSettlementInput.Encoded,
-  Awaited<ReturnType<typeof recordSettlementForActor>>,
+  Effect.Success<ReturnType<typeof recordSettlementForActor>>,
   CurrentUser | Db,
-  void
+  Effect.Success<ReturnType<typeof recordSettlementForActor>>["value"]
 > = {
   input: recordSettlementInput,
   revalidate: ["/transactions", "/reimbursements", "/people", "/"],
   revalidateWhen: (r) => r.revalidate,
-  toData: () => undefined,
+  toData: (r) => r.value,
   handler: Effect.fn("recordSettlement")(function* (input) {
     const user = yield* CurrentUser;
     const account = yield* Effect.promise(() =>
       getOrCreateAccountForBank(user.id, "bob"),
     );
-    const result = yield* fromLedger(() =>
-      recordSettlementForActor(
+    const result = yield* recordSettlementForActor(
         { actor: { userId: user.id, accountId: account.id }, source: "app" },
         {
           inflowTransactionId: input.inflowTransactionId,
-          allocations: input.allocations.map((row) => ({
+          mode: "replace",
+          ...(input.expectedAllocations ? { expected: { allocations: [...input.expectedAllocations] } } : {}),
+          allocations: { kind: "explicit", rows: input.allocations.map((row) => ({
             splitParticipantId: row.splitParticipantId,
             amountPaise: row.amountPaise,
-          })),
+          })) },
           ...(input.residual !== undefined
             ? {
                 residual:
@@ -159,8 +163,7 @@ export const recordSettlementSpec: ActionSpec<
               }
             : {}),
         },
-      ),
-    );
+      ).pipe(Effect.provideService(Actor, { userId: user.id, accountId: account.id }), ledgerEffectErrors);
 
     return result;
   }),

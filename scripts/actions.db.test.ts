@@ -252,7 +252,7 @@ dbTest(
           inflowTransactionId: f.credit,
           allocations: [{ splitParticipantId: share.id, amountPaise: 1000 }],
         }),
-      ).toEqual({ ok: true, data: undefined });
+      ).toMatchObject({ ok: true, data: { appliedPaise: 1000, unallocatedPaise: 3000 } });
       const [settled] = await f.db
         .select()
         .from(f.schema.settlements)
@@ -294,7 +294,7 @@ dbTest(
           amountPaise: NaN,
           note: null,
         }),
-      ).toEqual({ ok: true, data: undefined });
+      ).toMatchObject({ ok: false, code: "INVALID", message: "Enter an amount above ₹0.00." });
       expect(f.paths).toEqual([]);
       failure(
         await f.call(
@@ -318,7 +318,7 @@ dbTest(
           amountPaise: 2000,
           note: " lunch ",
         }),
-      ).toEqual({ ok: true, data: undefined });
+      ).toEqual({ ok: true, data: { appliedPaise: 2000, leftPaise: 4000 } });
       const [cash] = await f.db
         .select()
         .from(f.schema.settlements)
@@ -1200,5 +1200,64 @@ dbTest("assistant sanitization and validation/rate ordering retain main's limits
     mock.module("@/lib/assistant/agent", () => realAgent);
     mock.module("@/lib/rate-limit", () => realRate);
     mock.restore();
+  }
+}), 30000);
+
+dbTest('shared settlement policy: guarded replace, append, receipts, cash refusals and Effect undo', () => fixture(async f => {
+  const share = await f.makeShare();
+  const actor = { userId: f.user, accountId: f.account };
+  const tokenId = crypto.randomUUID();
+  await f.db.insert(f.schema.mcpTokens).values({ id: tokenId, userId: f.user, accountId: f.account, name: 'Policy agent', tokenHash: crypto.randomUUID(), tokenHint: 'mny_test', scope: 'write', userTokenVersion: 0 });
+  const principal = { actor, tokenId, scope: 'write' as const, label: 'Policy agent' };
+  const { mcpRelationalWrite } = await import('@/lib/mcp/relational-write-ops');
+  const refs = await import('@/lib/mcp/refs');
+  const { undoChange } = await import('@/lib/ledger/undo');
+  const oldSecret = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = 'settlement-policy-test-secret';
+  try {
+    const key = refs.deriveMcpRefKey(process.env.AUTH_SECRET);
+    const inflow_ref = refs.transactionRef(key, f.user, f.credit);
+    const share_ref = refs.shareRef(key, f.user, f.account, share.id);
+    const rows = [{ splitParticipantId: share.id, amountPaise: 1000 }];
+    const initial = unwrap(await f.call(f.split.recordSettlementSpec, { inflowTransactionId: f.credit, allocations: rows, expectedAllocations: [] }));
+    expect(initial).toMatchObject({ appliedPaise: 1000, stillOpenPaise: 5000, unallocatedPaise: 3000 });
+    const fresh = await f.call(f.split.recordSettlementSpec, { inflowTransactionId: f.credit, allocations: rows, expectedAllocations: rows });
+    expect(fresh.ok).toBe(true);
+    const [prior] = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.credit));
+    const appended = await mcpRelationalWrite(principal, 'record_settlement', { inflow_ref, person: 'Kiran', allocations: [{ share_ref, amount: '10' }], idempotency_key: 'policy-append-1' });
+    expect(appended).toMatchObject({ applied: true, unallocated: '20.00', left_open: '40.00' });
+    const before = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.credit));
+    expect(before.find(r => r.id === prior.id)).toEqual(prior);
+    failure(await f.call(f.split.recordSettlementSpec, { inflowTransactionId: f.credit, allocations: rows, expectedAllocations: rows }), 'CONFLICT', "This payment's allocations changed since you opened it. Reload and review.");
+    expect(await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.credit))).toEqual(before);
+    // Reset through the app, then compare the same allocation's receipt at each door.
+    unwrap(await f.call(f.split.clearSettlementSpec, { inflowTransactionId: f.credit }));
+    const mcp = await mcpRelationalWrite(principal, 'record_settlement', { inflow_ref, person: 'Kiran', allocations: [{ share_ref, amount: '10' }], idempotency_key: 'policy-same-receipt' });
+    expect(mcp).toMatchObject({ applied: true, allocations: [{ share_ref, person: initial.applied[0].personName, amount: '10.00', left: '50.00' }], unallocated: '30.00', left_open: '50.00' });
+    const undo = await undoChange({ actor, source: 'app' }, String(mcp.change_id));
+    expect(undo.changeId).toBeTruthy();
+    const redo = await undoChange({ actor, source: 'app' }, undo.changeId!);
+    expect(redo.changeId).toBeTruthy();
+    unwrap(await f.call(f.split.clearSettlementSpec, { inflowTransactionId: f.credit }));
+    // With no allocations specified the MCP core computes oldest-first under locks.
+    const oldest = await mcpRelationalWrite(principal, 'record_settlement', { inflow_ref, person: ' kiran ', idempotency_key: 'policy-oldest-first' });
+    expect(oldest).toMatchObject({ applied: true, allocations: [{ amount: '40.00', left: '20.00' }], unallocated: '0.00' });
+    for (const [index, amountPaise] of [2001, 0, -1, 1.5].entries()) {
+      const app = await f.call(f.cash.recordCashSettlementSpec, { splitParticipantId: share.id, amountPaise, note: null });
+      expect(app.ok).toBe(false);
+      const agent = await mcpRelationalWrite(principal, 'record_cash_settlement', { share_ref, amount: String(amountPaise / 100), idempotency_key: `policy-bad-cash-${index}` });
+      expect(agent.applied).toBe(false);
+    }
+    const exact = unwrap(await f.call(f.cash.recordCashSettlementSpec, { splitParticipantId: share.id, amountPaise: 2000, note: null }));
+    expect(exact).toEqual({ appliedPaise: 2000, leftPaise: 0 });
+    failure(await f.call(f.cash.recordCashSettlementSpec, { splitParticipantId: share.id, amountPaise: 1, note: null }), 'INVALID', 'Nothing is open on this share.');
+    expect(await mcpRelationalWrite(principal, 'record_cash_settlement', { share_ref, amount: '0.01', idempotency_key: 'policy-zero-open' })).toMatchObject({ applied: false, errors: [{ code: 'over_allocation', message: 'Nothing is open on this share.' }] });
+    // Reset cash via its log and prove the MCP exact-fit path too.
+    const [cashLog] = (await f.db.select().from(f.schema.ledgerChanges).where(eq(f.schema.ledgerChanges.userId, f.user))).filter(r => r.kind === 'record_cash_settlement');
+    await undoChange({ actor, source: 'app' }, cashLog.id);
+    expect(await mcpRelationalWrite(principal, 'record_cash_settlement', { share_ref, amount: '20', idempotency_key: 'policy-exact-cash' })).toMatchObject({ applied: true });
+  } finally {
+    if (oldSecret === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = oldSecret;
   }
 }), 30000);

@@ -56,33 +56,4 @@ export function splitAmounts(total: number, amounts: readonly (string | number |
   return { yours: owner, participants };
 }
 
-export interface OpenAllocation { id: string; date: string; order: string; leftPaise: number }
-/** Stable oldest bill first, then split creation order, then participant id. */
-export function allocateOldestFirst(available: number, shares: readonly OpenAllocation[]) {
-  let remaining = available;
-  const allocations: Array<{ id: string; amountPaise: number; leftPaise: number }> = [];
-  for (const share of [...shares].sort((a, b) => a.date.localeCompare(b.date) || a.order.localeCompare(b.order) || a.id.localeCompare(b.id))) {
-    const amountPaise = Math.min(remaining, share.leftPaise);
-    if (amountPaise <= 0) continue;
-    allocations.push({ id: share.id, amountPaise, leftPaise: share.leftPaise - amountPaise });
-    remaining -= amountPaise;
-  }
-  return { allocations, remaining };
-}
-export function validateAllocations(available: number, open: readonly OpenAllocation[], requested: readonly { id: string; amountPaise: number }[]) {
-  const totals = new Map<string, bigint>();
-  for (const row of requested) {
-    if (!Number.isSafeInteger(row.amountPaise) || row.amountPaise <= 0) throw new LedgerError({ code: "invalid_amount", message: "Allocations must be positive exact paise." });
-    totals.set(row.id, (totals.get(row.id) ?? 0n) + BigInt(row.amountPaise));
-  }
-  const allocations = [...totals].map(([id, amount]) => {
-    const share = open.find(s => s.id === id);
-    if (!share) throw new LedgerError({ code: "not_found", message: "That share isn't available for this person." });
-    if (amount > BigInt(share.leftPaise)) throw new LedgerError({ code: "over_allocation", message: `Allocation ₹${exactRupees(amount)} exceeds a share's outstanding ₹${exactRupees(share.leftPaise)}.` });
-    const amountPaise = Number(amount);
-    return { id, amountPaise, leftPaise: share.leftPaise - amountPaise };
-  });
-  const used = allocations.reduce((sum, a) => sum + BigInt(a.amountPaise), 0n);
-  if (used > BigInt(available)) throw new LedgerError({ code: "over_allocation", message: `Allocations exceed the inflow's unallocated ₹${exactRupees(available)}.` });
-  return { allocations, remaining: available - Number(used) };
-}
+export { allocateOldestFirst, validateAllocations, type OpenAllocation } from "@/lib/ledger/rules/settlement-policy";

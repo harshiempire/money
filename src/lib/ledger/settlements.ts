@@ -1,45 +1,30 @@
 import "server-only";
+import { Effect } from "effect";
+import { Actor } from "./services";
+import { ledgerQuery, runRelationalChangeEffect } from "./relational-store";
+import { outstandingPaise } from "./rules/balances";
+import { cashAmountCheck } from "./rules/settlement-policy";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
 import { runRelationalChange } from "./relational-store";
 
-const safePaise = (n: number, fallback = 0): number => (Number.isFinite(n) ? Math.round(n) : fallback);
-
-export async function recordCashSettlement(
-  ctx: WriteContext,
-  input: {
-    splitParticipantId: string;
-    amountPaise: number;
-    note: string | null;
-  },
-) {
-  return runRelationalChange(ctx, "record_cash_settlement", async (tx, helpers) => {
-    const user = { id: ctx.actor.userId };
-    const { assertSplitParticipantOwned } = helpers;
-
-    await assertSplitParticipantOwned(user.id, input.splitParticipantId);
-
-    const participant = helpers.before.participants.find(row => row.id === input.splitParticipantId);
-    if (!participant) return { revalidate: false, value: undefined };
-
-    const existing = helpers.before.settlements.filter(row => row.splitParticipantId === input.splitParticipantId);
-
-    const alreadySettled = existing.reduce((sum, row) => sum + Number(row.amountPaise), 0);
-    const outstanding = Math.max(0, Number(participant.expectedAmountPaise) - alreadySettled);
-    const amountPaise = Math.min(safePaise(input.amountPaise), outstanding);
-    if (amountPaise <= 0) return { revalidate: false, value: undefined };
-
-    await tx.insert(schema.settlements).values({
-      splitParticipantId: input.splitParticipantId,
-      amountPaise,
-      method: "cash",
-      note: input.note?.trim() ? input.note.trim().slice(0, 200) : null,
-    });
-
-    return { revalidate: true, value: undefined };
-  });
-}
+export interface RecordCashSettlementInput { splitParticipantId: string; amountPaise: number; note: string | null }
+export interface CashSettlementReceipt { appliedPaise: number; leftPaise: number }
+export const recordCashSettlement = Effect.fn("recordCashSettlement")(function* (context: WriteContext, input: RecordCashSettlementInput) {
+  const actor = yield* Actor;
+  return yield* runRelationalChangeEffect({ ...context, actor }, "record_cash_settlement", (tx, helpers) => Effect.gen(function* () {
+    yield* ledgerQuery(() => helpers.assertSplitParticipantOwned(actor.userId, input.splitParticipantId));
+    const participant = helpers.before.participants.find(r => r.id === input.splitParticipantId)!;
+    const outstanding = outstandingPaise(participant.expectedAmountPaise, helpers.before.settlements.filter(r => r.splitParticipantId === participant.id));
+    if (outstanding === null) return yield* new LedgerError({ code: "invalid_amount", message: "Balance exceeds the exact integer paise range." });
+    const check = cashAmountCheck(input.amountPaise, outstanding);
+    if (!check.ok) return yield* new LedgerError(check);
+    yield* ledgerQuery(() => tx.insert(schema.settlements).values({ splitParticipantId: participant.id, amountPaise: input.amountPaise, method: "cash", note: input.note?.trim().slice(0,200) || null }));
+    const value: CashSettlementReceipt = { appliedPaise: input.amountPaise, leftPaise: outstanding - input.amountPaise };
+    return { revalidate: true, value };
+  }));
+});
 
 export async function deleteCashSettlement(ctx: WriteContext, input: { settlementId: string }) {
   return runRelationalChange(ctx, "delete_cash_settlement", async (tx, helpers) => {
