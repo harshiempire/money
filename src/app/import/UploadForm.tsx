@@ -1,5 +1,6 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { uploadStatement } from "./actions";
@@ -13,6 +14,7 @@ type ImportResult = ({ ok: true } & ImportSuccess) | { ok: false; error: string 
 const UPLOAD_FAILED = "We couldn't complete that upload. Please try again.";
 
 export function UploadForm() {
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<ImportResult | null>(null);
 
@@ -26,6 +28,7 @@ export function UploadForm() {
           setResult(null);
           try {
             const r = await uploadStatement(fd);
+            if (r.ok) invalidateReads();
             if (r.ok) setResult({ ok: true, ...r.data });
             else setResult({ ok: false, error: r.code === "INTERNAL" ? UPLOAD_FAILED : r.message });
           } catch {

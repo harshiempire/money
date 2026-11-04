@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import {
   formatDate,
   formatPaise,
@@ -8,7 +8,10 @@ import {
 } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
 import { getLinkedTransactionPreview, type LinkedTransactionPreview } from "./actions";
-import { callAction } from "@/lib/action/result";
+import { ActionError, callAction, unwrap } from "@/lib/action/result";
+import { useQuery } from "@tanstack/react-query";
+import { moneyKeys } from "@/lib/query/keys";
+import { useMoneyQueryUser } from "@/lib/query/use-money-query";
 import type { SplitSettlementStatus } from "@/lib/splits/settlement-status";
 
 function scrollToTransaction(id: string) {
@@ -48,19 +51,23 @@ export function LinkedTransactionLink({
 }) {
   const onPage = visibleTxnIds.includes(transactionId);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [preview, setPreview] = useState<LinkedTransactionPreview | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [open, setOpen] = useState(false);
+  const userId = useMoneyQueryUser();
+  const query = useQuery({
+    queryKey: moneyKeys.preview(userId, transactionId),
+    queryFn: async () => unwrap(await callAction(() => getLinkedTransactionPreview({ transactionId }))),
+    enabled: open && !onPage && !!userId,
+  });
+  const preview = query.isError ? null : query.data ?? null;
+  const error = query.error
+    ? query.error instanceof ActionError && query.error.code !== "INTERNAL"
+      ? query.error.message : "Could not load this transaction."
+    : null;
+  const pending = query.isPending && open;
 
   const openPreview = () => {
-    setError(null);
-    setPreview(null);
+    setOpen(true);
     dialogRef.current?.showModal();
-    startTransition(async () => {
-      const result = await callAction(() => getLinkedTransactionPreview({ transactionId }));
-      if (result.ok) setPreview(result.data);
-      else setError(result.code === "INTERNAL" ? "Could not load this transaction." : result.message);
-    });
   };
 
   if (onPage) {
@@ -91,6 +98,7 @@ export function LinkedTransactionLink({
       </button>
       <dialog
         ref={dialogRef}
+        onClose={() => setOpen(false)}
         className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
       >
         <PreviewPanel

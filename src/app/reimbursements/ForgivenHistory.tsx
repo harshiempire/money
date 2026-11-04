@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useTransition } from "react";
 import { formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
@@ -24,6 +26,7 @@ export function ForgivenHistory({
 }: {
   items: ForgivenHistoryItem[];
 }) {
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
   const grouped = new Map<
     string,
@@ -50,6 +53,7 @@ export function ForgivenHistory({
       const result = await callAction(() =>
         undoWriteOff({ settlementId: item.settlementId }),
       );
+      if (result.ok) invalidateReads();
       if (!result.ok) window.alert(result.message);
     });
   };

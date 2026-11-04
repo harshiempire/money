@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useMemo, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
 import { parseAllocationInputs } from "@/lib/splits/allocation-input";
@@ -267,6 +269,7 @@ function SettleForm({
   );
   const [personFilter, setPersonFilter] = useState("");
   const [amountFilter, setAmountFilter] = useState("");
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
 
   // Net Settle's rows on this credit are fixed: they come off the top and are
@@ -339,6 +342,7 @@ function SettleForm({
             : null,
         }),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     });
@@ -349,6 +353,7 @@ function SettleForm({
       const result = await callAction(() =>
         clearSettlement({ inflowTransactionId }),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     });

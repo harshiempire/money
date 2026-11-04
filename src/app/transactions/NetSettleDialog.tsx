@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   deleteNetEvent,
@@ -217,6 +219,7 @@ function NetSettleForm({
   const [personFilter, setPersonFilter] = useState(defaultPersonFilter);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
 
   const [showNewPayable, setShowNewPayable] = useState(false);
@@ -392,6 +395,7 @@ function NetSettleForm({
           legs,
         }),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else setError(result.message);
     });
@@ -404,6 +408,7 @@ function NetSettleForm({
       const result = await callAction(() =>
         deleteNetEvent({ netEventId: existingNetEventId }),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else setError(result.message);
     });

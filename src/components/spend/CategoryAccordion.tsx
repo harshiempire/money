@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
-import type { CategoryTransactionRow } from "@/domain/spend/net";
-import { callAction } from "@/lib/action/result";
+import { ActionError, callAction, unwrap } from "@/lib/action/result";
 import { getCategoryTransactions } from "@/app/spend/actions";
+
+import { useQuery } from "@tanstack/react-query";
+import { moneyKeys } from "@/lib/query/keys";
+import { useMoneyQueryUser } from "@/lib/query/use-money-query";
 
 export function CategoryAccordion({
   categoryId,
@@ -22,25 +25,25 @@ export function CategoryAccordion({
   from: string | null;
   to: string | null;
 }) {
-  const [rows, setRows] = useState<CategoryTransactionRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  const loadOnce = () => {
-    if (rows !== null || pending) return;
-    setError(null);
-    startTransition(async () => {
-      const result = await callAction(() => getCategoryTransactions({ categoryId, from, to }));
-      if (result.ok) setRows(result.data);
-      else setError(result.code === "INTERNAL" ? "Could not load transactions for this category." : result.message);
-    });
-  };
+  const [open, setOpen] = useState(false);
+  const userId = useMoneyQueryUser();
+  const query = useQuery({
+    queryKey: moneyKeys.category(userId, categoryId, from, to),
+    queryFn: async () => unwrap(await callAction(() => getCategoryTransactions({ categoryId, from, to }))),
+    enabled: open && !!userId,
+  });
+  const rows = query.isError ? null : query.data ?? null;
+  const error = query.error
+    ? query.error instanceof ActionError && query.error.code !== "INTERNAL"
+      ? query.error.message : "Could not load transactions for this category."
+    : null;
+  const pending = query.isPending && open;
 
   return (
     <details
       className="group rounded border border-neutral-200 dark:border-neutral-800"
       onToggle={(e) => {
-        if ((e.target as HTMLDetailsElement).open) loadOnce();
+        setOpen((e.target as HTMLDetailsElement).open);
       }}
     >
       <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2 px-2 py-1.5 text-sm [&::-webkit-details-marker]:hidden">

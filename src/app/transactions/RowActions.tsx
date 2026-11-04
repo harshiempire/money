@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useTransition } from "react";
 import { callAction } from "@/lib/action/result";
 import {
@@ -79,6 +81,7 @@ export function RowActions({
   netEventLegs?: NetSettleExistingLeg[];
   txnDate: string;
 }) {
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
 
   const defaultPersonFilter = resolveDefaultPersonFilter({
@@ -103,6 +106,7 @@ export function RowActions({
                 categoryId: next,
               }),
             );
+            if (result.ok) invalidateReads();
             if (!result.ok) window.alert(result.message);
           });
         }}
@@ -126,6 +130,7 @@ export function RowActions({
               const result = await callAction(() =>
                 applyCategoryToCounterparty({ transactionId }),
               );
+              if (result.ok) invalidateReads();
               if (!result.ok) window.alert(result.message);
             });
           }}
@@ -149,6 +154,7 @@ export function RowActions({
                   isTransfer: next,
                 }),
               );
+              if (result.ok) invalidateReads();
               if (!result.ok) window.alert(result.message);
             });
           }}
