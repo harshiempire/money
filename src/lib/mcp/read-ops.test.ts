@@ -14,8 +14,10 @@ test("read adapter renders full rows and scopes overview/open-share SQL to the a
         unsafe(query, params) {
           queries.push({ query, params });
           return { values: async () => {
-            if (query.includes('from "split_participant"')) return [["2026-10-31", "Ravi", "101"]];
-            if (query.includes('from "owed_expense"')) return [["Ravi", "55"]];
+            if (query.includes('from "person"')) return [["person", "Ravi"]];
+            if (query.includes('from "split_participant"')) return [["share", "person", "Ravi", "2026-10-31", "Meal", 101, "bill", "2026-01-01T00:00:00Z", "Meal", null, null, null]];
+            if (query.includes('from "owed_expense"')) return [["owed", "person", "Ravi", "2026-10-31", "Meal", 55, null]];
+            if (query.includes('from "settlement"') || query.includes('from "counterparty"')) return [];
             if (query.includes('exists (select 1')) return [["2026-10-31", 56700, "debit", null, true]];
             return [["private-id", "2026-10-31", 56700, "debit", "upi", "ravi@bank", "upi_handle", "ravi@bank", "Petr", "UPI 12345678 ravi@bank", "phone 9876543210", null, "Food@home", false, false, null]];
           } };
@@ -31,22 +33,23 @@ test("read adapter renders full rows and scopes overview/open-share SQL to the a
       const overview = await mcpReadOps.overview(actor);
       assert.deepEqual(overview.totals, { rows: 1, paid: "567.00", received: "0.00", uncategorized: 1, split_count: 1, open_shares: "1.01" });
       assert.deepEqual(overview.people, [{ name: "Ravi", owed_to_you: "1.01", you_owe: "0.55" }]);
-      assert.equal(queries.length, 3);
+      assert.equal(queries.length, 7);
       for (const { query, params } of queries) {
-        assert.ok(query.includes('inner join "money_account"'));
-        assert.ok(query.includes('"money_account"."user_id" ='));
-        assert.ok(query.includes('"money_account"."id" ='));
         assert.ok(params.includes("owner"));
-        assert.ok(params.includes("owned-account"));
+        if (query.includes('inner join "money_account"')) {
+          assert.ok(query.includes('"money_account"."user_id" ='));
+          assert.ok(params.includes("owned-account"));
+        }
       }
       const share = queries.find(q => q.query.includes('from "split_participant"')).query;
-      assert.ok(share.includes('"settlement"."split_participant_id" = "split_participant"."id"'));
-      assert.ok(share.includes('greatest(0,'));
       assert.ok(share.includes('inner join "split"'));
       assert.ok(share.includes('inner join "transaction"'));
       const owed = queries.find(q => q.query.includes('from "owed_expense"')).query;
       assert.ok(owed.includes('"owed_expense"."user_id" ='));
-      assert.ok(owed.includes('"settlement"."owed_expense_id" = "owed_expense"."id"'));
+      const settlements = queries.filter(q => q.query.includes('from "settlement"'));
+      assert.equal(settlements.length,2);
+      assert.ok(settlements.some(q => q.query.includes('"settlement"."split_participant_id" = "split_participant"."id"')));
+      assert.ok(settlements.some(q => q.query.includes('"settlement"."owed_expense_id" = "owed_expense"."id"')));
       queries.length = 0;
       const rows = await mcpReadOps.listTransactions(actor, { from: "2026-10-01", to: "2026-10-31", direction: "paid", uncategorized: true });
       assert.equal(rows[0].displayName, "ravi@bank");

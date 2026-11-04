@@ -1,3 +1,4 @@
+import { readOutstanding } from "@/lib/ledger/read/money";
 import "server-only";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
@@ -96,7 +97,7 @@ export async function participantOutstanding(
   );
   const expected = Number(participant.expectedAmountPaise);
   const paid = settled.get(participantId) ?? 0;
-  return Math.max(0, expected - paid);
+  return readOutstanding(expected, paid);
 }
 
 export async function owedExpenseOutstanding(
@@ -116,5 +117,5 @@ export async function owedExpenseOutstanding(
   );
   const expected = Number(expense.amountPaise);
   const paid = settled.get(owedExpenseId) ?? 0;
-  return Math.max(0, expected - paid);
+  return readOutstanding(expected, paid);
 }

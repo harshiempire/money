@@ -23,7 +23,7 @@ test("full-model loader scopes every SQL branch and finds inflow links without q
       const actor = { userId: "owner-scope", accountId: "account-scope" };
       let loaded = 0;
       const model = await loadMcpReadModel(actor, async () => { loaded++; return []; });
-      assert.equal(loaded, 1); assert.equal(queries.length, 9);
+      assert.equal(loaded, 1); assert.equal(queries.length, 15);
       assert.deepEqual(model.settlements, []); assert.deepEqual(model.linkedInflows, []);
       for (const { query, params } of queries) {
         assert.ok(params.includes("owner-scope"), query);
@@ -35,14 +35,14 @@ test("full-model loader scopes every SQL branch and finds inflow links without q
           assert.ok(query.includes('"person"."user_id" =') || query.includes('"owed_expense"."user_id" =') || query.includes('"net_event"."user_id" ='), query);
         }
       }
-      const shareSettlement = queries.find(q => q.query.includes('from "settlement" inner join "split_participant"')).query;
+      const shareSettlement = queries.find(q => q.query.includes('from "settlement" inner join "split_participant"') && q.query.includes("at time zone 'UTC'")).query;
       assert.ok(shareSettlement.includes('inner join "split"'));
       assert.ok(shareSettlement.includes('inner join "transaction"'));
       assert.ok(shareSettlement.includes('inner join "money_account"'));
       assert.ok(shareSettlement.includes("at time zone 'UTC'"));
       const owedSettlement = queries.find(q => q.query.includes('from "settlement" inner join "owed_expense"')).query;
       assert.ok(owedSettlement.includes('"owed_expense"."user_id" ='));
-      const payees = queries.find(q => q.query.includes('from "counterparty"')).query;
+      const payees = queries.find(q => q.query.includes('from "counterparty"') && q.query.includes('mcp_default_category')).query;
       assert.ok(payees.includes('"counterparty"."user_id" ='));
       assert.ok(payees.includes('"mcp_default_category"."user_id" ='));
       assert.ok(payees.includes('"transaction"."account_id" = "money_account"."id"'));

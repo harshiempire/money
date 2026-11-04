@@ -1,3 +1,6 @@
+import { loadBalances } from "@/lib/ledger/read/balances";
+import { runLedger } from "@/lib/ledger/run";
+import { readOutstanding } from "@/lib/ledger/read/money";
 import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
@@ -6,8 +9,6 @@ import { transactionHref } from "@/lib/transactions/href";
 import { settledAmountByOwedExpenseIds, settledAmountByParticipantIds } from "@/lib/splits/outstanding";
 import {
   loadNetEventsByTransactionIds,
-  loadOpenPayablesForUser,
-  loadOpenReceivablesForAccount,
 } from "@/lib/net-events/load-net-settle-data";
 import { modelSafePayee, userChosenDisplayName } from "./model-view";
 import type { QueryData } from "./query-tables";
@@ -71,7 +72,7 @@ export async function loadTxnCards(
     let settledCount = 0;
     let pendingPaise = 0;
     for (const p of ps) {
-      const outstanding = Math.max(0, Number(p.expectedAmountPaise) - (settled.get(p.id) ?? 0));
+      const outstanding = readOutstanding(Number(p.expectedAmountPaise), settled.get(p.id) ?? 0);
       if (outstanding === 0) settledCount++;
       pendingPaise += outstanding;
     }
@@ -133,32 +134,11 @@ export async function loadOpenLinesForPerson(
   userId: string,
   person: string,
 ): Promise<{ recv: NetLine[]; pay: NetLine[] }> {
-  const [receivables, payables] = await Promise.all([
-    loadOpenReceivablesForAccount(accountId),
-    loadOpenPayablesForUser(userId),
-  ]);
-  const same = (name: string) => name.trim().toLowerCase() === person.trim().toLowerCase();
+  const balances = await runLedger(loadBalances(), { accountId, userId });
+  const matches = balances.filter(p => p.personId === person || p.key === person || p.name.trim().toLowerCase() === person.trim().toLowerCase());
   return {
-    recv: receivables
-      .filter((r) => same(r.personName))
-      .map((r) => ({
-        id: r.id,
-        person: r.personName,
-        date: r.splitTransactionDate,
-        desc: counterpartyLabel(r.splitTransactionDescription),
-        outstandingPaise: r.outstandingPaise,
-        val: "",
-      })),
-    pay: payables
-      .filter((p) => same(p.personName))
-      .map((p) => ({
-        id: p.id,
-        person: p.personName,
-        date: p.incurredDate,
-        desc: p.description,
-        outstandingPaise: p.outstandingPaise,
-        val: "",
-      })),
+    recv: matches.flatMap(p => p.shares.map(r => ({ id:r.id, person:p.name, date:r.date, desc:counterpartyLabel(r.what), outstandingPaise:r.leftPaise, val:"" }))),
+    pay: matches.flatMap(p => p.owed.map(r => ({ id:r.id, person:p.name, date:r.date, desc:r.what, outstandingPaise:r.leftPaise, val:"" }))),
   };
 }
 

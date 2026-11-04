@@ -1,3 +1,6 @@
+import { loadBalances } from "@/lib/ledger/read/balances";
+import { runLedger } from "@/lib/ledger/run";
+import { rupees } from "./view";
 import "server-only";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -29,19 +32,9 @@ const txnRange = (period: { from: string | null; to: string | null }) => [
 ];
 
 async function loadOpenShares(actor: MoneyActor, input: PeriodInput) {
-  const participant = schema.splitParticipants;
-  const rows = await db.select({
-    txnDate: t.txnDate,
-    personName: participant.personName,
-    outstandingPaise: sql<number>`greatest(0, ${participant.expectedAmountPaise} - coalesce(
-      (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
-       where ${schema.settlements.splitParticipantId} = ${participant.id}), 0))::bigint`,
-  }).from(participant)
-    .innerJoin(schema.splits, eq(participant.splitId, schema.splits.id))
-    .innerJoin(t, eq(schema.splits.transactionId, t.id))
-    .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))
-    .where(and(eq(t.accountId, actor.accountId), ...txnRange(resolveMcpPeriod(input))));
-  return rows.map((row) => ({ ...row, outstandingPaise: Number(row.outstandingPaise) }));
+  const bounds = resolveMcpPeriod(input);
+  return (await runLedger(loadBalances(),actor)).flatMap(p => p.shares.filter(s => (!bounds.from || s.date >= bounds.from) && (!bounds.to || s.date <= bounds.to)).map(s => ({ txnDate:s.date,personName:p.name,outstandingPaise:s.leftPaise })));
+
 }
 
 export const mcpReadOps: McpOps = {
@@ -95,7 +88,7 @@ export const mcpReadOps: McpOps = {
     return rows.map((row) => ({ ...row, label: counterpartyLabel(row.rawDescription) }));
   },
   async overview(actor) {
-    const [transactions, shares, payables] = await Promise.all([
+    const [transactions, balances] = await Promise.all([
       db.select({
         txnDate: t.txnDate,
         amountPaise: t.amountPaise,
@@ -105,19 +98,13 @@ export const mcpReadOps: McpOps = {
       }).from(t)
         .innerJoin(account, and(eq(t.accountId, account.id), ownsAccount(actor)))
         .where(eq(t.accountId, actor.accountId)),
-      loadOpenShares(actor, {}),
-      db.select({
-        personName: schema.owedExpenses.personName,
-        outstandingPaise: sql<number>`greatest(0, ${schema.owedExpenses.amountPaise} - coalesce(
-          (select sum(${schema.settlements.amountPaise}) from ${schema.settlements}
-           where ${schema.settlements.owedExpenseId} = ${schema.owedExpenses.id}), 0))::bigint`,
-      }).from(schema.owedExpenses)
-        .innerJoin(account, ownsAccount(actor))
-        .where(eq(schema.owedExpenses.userId, actor.userId)),
+      runLedger(loadBalances(),actor),
     ]);
-    return buildOverview(transactions, shares, payables.map((row) => ({
-      ...row, outstandingPaise: Number(row.outstandingPaise),
-    })));
+    const result = buildOverview(transactions, balances.flatMap(p => p.shares.map(s => ({txnDate:s.date,personName:p.name,outstandingPaise:s.leftPaise}))), []);
+    const people = balances.filter(p => p.openShareCount || p.openOwedCount)
+      .sort((a,b) => (b.owedToYouPaise+b.youOwePaise)-(a.owedToYouPaise+a.youOwePaise) || a.name.localeCompare(b.name))
+      .map(p => ({name:p.name,owed_to_you:rupees(p.owedToYouPaise),you_owe:rupees(p.youOwePaise)}));
+    return { ...result, people };
   },
   async periodSummary(actor, input) {
     // Domain spend loaders take trusted ids; verify the account/user pair before calling them.

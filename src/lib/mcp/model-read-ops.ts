@@ -1,3 +1,5 @@
+import { loadBalances } from "@/lib/ledger/read/balances";
+import { runLedger } from "@/lib/ledger/run";
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -18,19 +20,19 @@ export async function loadMcpReadModel(actor: MoneyActor, loadTransactions: () =
     amountPaise: st.amountPaise, method: st.method,
     createdDate: sql<string>`to_char(${st.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`,
   };
-  const [transactions, people, payees, splits, shares, owed, shareSettlements, owedSettlements, netEvents, linkedInflows] = await Promise.all([
+  const [transactions, people, payees, splits, shares, owed, shareSettlements, owedSettlements, netEvents, linkedInflows, balances] = await Promise.all([
     loadTransactions(),
-    db.select({ name: schema.persons.name }).from(schema.persons).where(eq(schema.persons.userId, actor.userId)).orderBy(schema.persons.name),
-    db.select({ person: schema.persons.name, key: cp.key, kind: cp.kind, displayName: cp.displayName, defaultCategory: category.name, isSelf: cp.isSelf, isFamily: cp.isFamily })
+    db.select({ id: schema.persons.id, name: schema.persons.name }).from(schema.persons).where(eq(schema.persons.userId, actor.userId)).orderBy(schema.persons.name),
+    db.select({ personId: cp.personId, person: schema.persons.name, key: cp.key, kind: cp.kind, displayName: cp.displayName, defaultCategory: category.name, isSelf: cp.isSelf, isFamily: cp.isFamily })
       .from(cp).innerJoin(a, owns)
       .leftJoin(schema.persons, and(eq(cp.personId, schema.persons.id), eq(schema.persons.userId, actor.userId)))
       .leftJoin(category, and(eq(cp.defaultCategoryId, category.id), eq(category.userId, actor.userId)))
       .where(and(eq(cp.userId, actor.userId), sql`exists (select 1 from ${t} where ${t.accountId} = ${a.id} and ${t.counterpartyId} = ${cp.id})`)),
-    db.select({ id: s.id, transactionId: s.transactionId, totalPaise: s.totalPaise, yourSharePaise: s.yourSharePaise })
+    db.select({ id: s.id, transactionId: s.transactionId, createdAt: sql<string>`${s.createdAt}::text`, totalPaise: s.totalPaise, yourSharePaise: s.yourSharePaise })
       .from(s).innerJoin(t, eq(s.transactionId, t.id)).innerJoin(a, and(eq(t.accountId, a.id), owns)),
-    db.select({ id: p.id, splitId: p.splitId, personName: p.personName, expectedAmountPaise: p.expectedAmountPaise })
+    db.select({ id: p.id, splitId: p.splitId, personId:p.personId, personName: p.personName, expectedAmountPaise: p.expectedAmountPaise })
       .from(p).innerJoin(s, eq(p.splitId, s.id)).innerJoin(t, eq(s.transactionId, t.id)).innerJoin(a, and(eq(t.accountId, a.id), owns)),
-    db.select({ id: o.id, personName: o.personName, incurredDate: o.incurredDate, description: o.description, amountPaise: o.amountPaise, sourceInflowTransactionId: o.sourceInflowTransactionId })
+    db.select({ id: o.id, personId:o.personId, personName: o.personName, incurredDate: o.incurredDate, description: o.description, amountPaise: o.amountPaise, sourceInflowTransactionId: o.sourceInflowTransactionId })
       .from(o).where(eq(o.userId, actor.userId)),
     // Target ownership is the settlement's tenant seam. Do not join only via its nullable inflow.
     db.select(settlementFields).from(st).innerJoin(p, eq(st.splitParticipantId, p.id))
@@ -46,6 +48,7 @@ export async function loadMcpReadModel(actor: MoneyActor, loadTransactions: () =
         or (${t.residualDisposition} in ('kept', 'written_off') and ${t.residualAcknowledgedPaise} >= ${t.amountPaise})
         or exists (select 1 from ${o} where ${o.userId} = ${actor.userId} and ${o.sourceInflowTransactionId} = ${t.id})
       )`)),
+    runLedger(loadBalances(),actor),
   ]);
-  return { transactions, linkedInflows: linkedInflows.map((t) => t.id), people, payees, splits, shares, owed, settlements: [...shareSettlements, ...owedSettlements], netEvents };
+  return { balances, transactions, linkedInflows: linkedInflows.map((t) => t.id), people, payees, splits, shares, owed, settlements: [...shareSettlements, ...owedSettlements], netEvents };
 }

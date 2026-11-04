@@ -1,3 +1,4 @@
+import { readOutstanding } from "./read/money";
 import "server-only";
 import { and, eq, getTableColumns, sql } from "drizzle-orm";
 import { Schema } from "effect";
@@ -215,18 +216,12 @@ export function relationalHelpers(tx: LedgerTx, ctx: WriteContext, snapshot: Sna
     participantOutstanding: async (id: string, exclude?: string) => {
       owned("participant", id);
       const r = before.participants.find(row => row.id === id)!;
-      return Math.max(
-        0,
-        Number(r.expectedAmountPaise) - ((await settled("splitParticipantId", [id], exclude)).get(id) ?? 0),
-      );
+      return readOutstanding(Number(r.expectedAmountPaise), (await settled("splitParticipantId", [id], exclude)).get(id) ?? 0);
     },
     owedExpenseOutstanding: async (id: string, exclude?: string) => {
       owned("owed_expense", id);
       const r = before.owed.find(row => row.id === id)!;
-      return Math.max(
-        0,
-        Number(r.amountPaise) - ((await settled("owedExpenseId", [id], exclude)).get(id) ?? 0),
-      );
+      return readOutstanding(Number(r.amountPaise), (await settled("owedExpenseId", [id], exclude)).get(id) ?? 0);
     },
   };
 }
