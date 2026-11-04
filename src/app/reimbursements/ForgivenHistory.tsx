@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
 import { useTransition } from "react";
@@ -119,19 +120,19 @@ export function ForgivenHistory({
                       </div>
                       <div className="flex shrink-0 items-center gap-2 text-xs">
                         {group.personId && (
-                          <a
+                          <Link
                             href={`/people/${encodeURIComponent(group.personId)}`}
                             className="underline-offset-2 hover:underline"
                           >
                             View person
-                          </a>
+                          </Link>
                         )}
-                        <a
+                        <Link
                           href={transactionHref(item.txnId)}
                           className="underline-offset-2 hover:underline"
                         >
                           View transaction
-                        </a>
+                        </Link>
                         <button
                           type="button"
                           onClick={() => undo(item)}

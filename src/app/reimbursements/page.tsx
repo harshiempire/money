@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { and, asc, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getBobAccount, getCurrentUser } from "@/lib/auth/request-tenant";
@@ -370,17 +371,17 @@ export default async function ReimbursementsPage({
     <AppShell title="Reimbursements">
       <p className="mt-1 text-xs text-neutral-500">
         Reimbursements for splits in the selected period. Settle inflows from{" "}
-        <a className="underline" href="/transactions">
+        <Link className="underline" href="/transactions">
           Transactions
-        </a>
+        </Link>
         , record cash directly here, or use net settle for GPay-style offsets.{" "}
-        <a className="underline" href="/people">
+        <Link className="underline" href="/people">
           People
-        </a>{" "}
+        </Link>{" "}
         shows all-time balances.{" "}
-        <a className="underline" href={spendPeriodHref(sp)}>
+        <Link className="underline" href={spendPeriodHref(sp)}>
           Spend report
-        </a>
+        </Link>
       </p>
 
       <div className="mt-3">
@@ -476,12 +477,12 @@ export default async function ReimbursementsPage({
                     <> · {formatPaise(s.writeoffReimbursePaise)} forgiven</>
                   )}
                 </span>
-                <a
+                <Link
                   href={transactionHref(s.txnId)}
                   className="underline-offset-2 hover:underline"
                 >
                   View
-                </a>
+                </Link>
               </li>
             ))}
           </ul>
@@ -524,12 +525,12 @@ export default async function ReimbursementsPage({
                 >
                   <td className="py-2 pr-3 font-medium">
                     {p.groupKey.startsWith("person:") ? (
-                      <a
+                      <Link
                         href={`/people/${encodeURIComponent(p.groupKey.replace("person:", ""))}`}
                         className="hover:underline"
                       >
                         {p.displayName}
-                      </a>
+                      </Link>
                     ) : (
                       p.displayName
                     )}

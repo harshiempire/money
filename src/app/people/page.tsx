@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
 import { formatPaise } from "@/lib/format";
@@ -38,12 +39,12 @@ export default async function PeoplePage() {
                 className="border-t border-neutral-200 dark:border-neutral-800"
               >
                 <td className="py-2 pr-3">
-                  <a
+                  <Link
                     href={`/people/${encodeURIComponent(p.personId)}`}
                     className="font-medium hover:underline"
                   >
                     {p.personName}
-                  </a>
+                  </Link>
                   <div className="text-[10px] text-neutral-500">
                     {p.openReceivableCount} receivable
                     {p.openReceivableCount === 1 ? "" : "s"} ·{" "}
@@ -77,12 +78,12 @@ export default async function PeoplePage() {
               key={p.personId}
               className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
             >
-              <a
+              <Link
                 href={`/people/${encodeURIComponent(p.personId)}`}
                 className="font-medium hover:underline"
               >
                 {p.personName}
-              </a>
+              </Link>
               <div className="text-[10px] text-neutral-500">
                 {p.openReceivableCount} receivable
                 {p.openReceivableCount === 1 ? "" : "s"} ·{" "}

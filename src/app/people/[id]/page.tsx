@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/request-tenant";
 import { AppShell } from "@/components/AppShell";
@@ -26,9 +27,9 @@ export default async function PersonDetailPage({
   return (
     <AppShell title={detail.personName}>
       <p className="mt-1 text-xs text-neutral-500">
-        <a href="/people" className="underline">
+        <Link href="/people" className="underline">
           ← All people
-        </a>
+        </Link>
       </p>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-3">
@@ -62,12 +63,12 @@ export default async function PersonDetailPage({
                     {formatDate(r.txnDate)} ·{" "}
                     {r.counterpartyDisplayName ??
                       counterpartyLabel(r.txnDescription)}{" "}
-                    <a
+                    <Link
                       href={transactionHref(r.txnId)}
                       className="text-xs text-neutral-500 underline-offset-2 hover:underline"
                     >
                       View transaction →
-                    </a>
+                    </Link>
                   </span>
                   {(r.parsedPurpose || r.txnNote) && (
                     <span className="mt-0.5 block text-xs italic text-neutral-500">

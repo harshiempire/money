@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
 import { useRef, useState, useTransition } from "react";
@@ -175,12 +176,12 @@ export function SplitAwaitingItem({
       <div className="border-t border-neutral-200 px-3 py-2 dark:border-neutral-800">
         <div className="mb-2 flex items-center justify-between gap-2 text-xs">
           <span className="text-neutral-500">Who owes what</span>
-          <a
+          <Link
             href={transactionHref(txnId)}
             className="underline-offset-2 hover:underline"
           >
             View transaction →
-          </a>
+          </Link>
         </div>
         <ul className="space-y-2">
           {sorted.map((p) => {
