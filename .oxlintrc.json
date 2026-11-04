@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "react",
+    "typescript",
+    "nextjs",
+    "import"
+  ],
+  "jsPlugins": [
+    {
+      "name": "hooks-js",
+      "specifier": "eslint-plugin-react-hooks"
+    }
+  ],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "hooks-js/hooks": "warn",
+    "hooks-js/capitalized-calls": "warn",
+    "hooks-js/static-components": "warn",
+    "hooks-js/use-memo": "warn",
+    "hooks-js/void-use-memo": "warn",
+    "hooks-js/preserve-manual-memoization": "warn",
+    "hooks-js/memo-dependencies": "warn",
+    "hooks-js/incompatible-library": "warn",
+    "hooks-js/immutability": "warn",
+    "hooks-js/globals": "warn",
+    "hooks-js/refs": "warn",
+    "hooks-js/memoized-effect-dependencies": "warn",
+    "hooks-js/exhaustive-effect-dependencies": "warn",
+    "hooks-js/set-state-in-effect": "warn",
+    "hooks-js/no-deriving-state-in-effects": "warn",
+    "hooks-js/error-boundaries": "warn",
+    "hooks-js/purity": "warn",
+    "hooks-js/set-state-in-render": "warn",
+    "hooks-js/invariant": "off",
+    "hooks-js/todo": "off",
+    "hooks-js/syntax": "warn",
+    "hooks-js/unsupported-syntax": "warn",
+    "hooks-js/config": "warn",
+    "hooks-js/gating": "warn",
+    "hooks-js/rule-suppression": "warn",
+    "hooks-js/fbt": "warn",
+    "hooks-js/component-hook-factories": "warn",
+    "react/set-state-in-effect": "off"
+  },
+  "ignorePatterns": [
+    ".next",
+    "out",
+    "build",
+    "drizzle",
+    "scripts/security",
+    "next-env.d.ts",
+    "node_modules"
+  ]
+}
