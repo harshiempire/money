@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { addCivilMonths, indiaCivilDate, indiaMonthKey } from "@/lib/dates/india";
 import { calendarMonthPeriod, type Period } from "@/lib/period";
 import {
   loadBulkMonthlyOwedSelf,
@@ -26,11 +27,12 @@ export async function monthlySpendHistory(
   userId?: string | null,
 ): Promise<MonthlySpendRow[]> {
   const now = new Date();
+  const today = indiaCivilDate(now);
   const periods: (Period & { monthKey: string; isPartial: boolean })[] = [];
 
   for (let i = 0; i < monthCount; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    periods.push(calendarMonthPeriod(d.getFullYear(), d.getMonth() + 1));
+    const month = addCivilMonths(today, -i);
+    periods.push(calendarMonthPeriod(month.year, month.month, now));
   }
 
   const oldestFrom = periods[periods.length - 1].from!;
@@ -72,8 +74,7 @@ export async function transactionMonthBounds(
     .from(schema.transactions)
     .where(sql`${schema.transactions.accountId} = ${accountId}`);
 
-  const today = new Date();
-  const latestMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const latestMonth = indiaMonthKey();
   return {
     earliest: r.earliest?.slice(0, 7) ?? null,
     latest: r.latest?.slice(0, 7) ?? latestMonth,

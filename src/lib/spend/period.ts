@@ -1,12 +1,20 @@
 import { desc, eq, and, lte, gte } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { indiaCivilDate, indiaTodayIso, parseMonthKey } from "@/lib/dates/india";
 import {
   calendarMonthPeriod,
   type Period,
   PRESET_PERIODS,
   resolvePeriod,
-  shiftCalendarMonth,
 } from "@/lib/period";
+import type { SpendSearchParams } from "@/lib/spend/period-href";
+
+export {
+  adjacentMonthHref,
+  reimbursementsPeriodHref,
+  spendPeriodHref,
+} from "@/lib/spend/period-href";
+export type { SpendSearchParams } from "@/lib/spend/period-href";
 
 export type SpendPeriodMode = "month" | "statement" | "preset" | "custom";
 
@@ -18,58 +26,32 @@ export interface ResolvedSpendPeriod {
   isPartial: boolean;
 }
 
-export interface SpendSearchParams {
-  month?: string;
-  from?: string;
-  to?: string;
-  preset?: string;
-  statement?: string;
-}
-
-const MONTH_RE = /^\d{4}-\d{2}$/;
-
-export function spendPeriodHref(
-  sp: SpendSearchParams,
-  base = "/spend",
-): string {
-  const q = new URLSearchParams();
-  if (sp.month) q.set("month", sp.month);
-  if (sp.preset) q.set("preset", sp.preset);
-  if (sp.statement) q.set("statement", sp.statement);
-  if (sp.from) q.set("from", sp.from);
-  if (sp.to) q.set("to", sp.to);
-  const s = q.toString();
-  return s ? `${base}?${s}` : base;
-}
-
-export function reimbursementsPeriodHref(sp: SpendSearchParams): string {
-  return spendPeriodHref(sp, "/reimbursements");
-}
-
 export async function resolveSpendPeriod(
   accountId: string,
   sp: SpendSearchParams,
+  now: Date = new Date(),
 ): Promise<ResolvedSpendPeriod> {
+  const today = indiaTodayIso(now);
   if (sp.statement === "1" || sp.statement === "true") {
-    return resolveStatementPeriod(accountId);
+    return resolveStatementPeriod(accountId, now);
   }
 
   if (sp.preset && PRESET_PERIODS[sp.preset]) {
-    const p = PRESET_PERIODS[sp.preset]();
+    const p = PRESET_PERIODS[sp.preset](now);
     return {
       period: p,
       mode: "preset",
-      isPartial: p.to < todayIso(),
+      isPartial: p.to < today,
     };
   }
 
-  if (sp.month && MONTH_RE.test(sp.month)) {
-    const [y, m] = sp.month.split("-").map(Number);
-    const p = calendarMonthPeriod(y, m);
+  const month = sp.month ? parseMonthKey(sp.month) : null;
+  if (month) {
+    const p = calendarMonthPeriod(month.year, month.month, now);
     return {
       period: p,
       mode: "month",
-      monthKey: sp.month,
+      monthKey: p.monthKey,
       isPartial: p.isPartial,
     };
   }
@@ -79,12 +61,12 @@ export async function resolveSpendPeriod(
     return {
       period: p,
       mode: "custom",
-      isPartial: Boolean(p.to && p.to < todayIso()),
+      isPartial: Boolean(p.to && p.to < today),
     };
   }
 
-  const now = new Date();
-  const p = calendarMonthPeriod(now.getFullYear(), now.getMonth() + 1);
+  const civil = indiaCivilDate(now);
+  const p = calendarMonthPeriod(civil.year, civil.month, now);
   return {
     period: p,
     mode: "month",
@@ -96,6 +78,7 @@ export async function resolveSpendPeriod(
 export async function resolveTimelinePeriod(
   accountId: string,
   sp: SpendSearchParams,
+  now: Date = new Date(),
 ): Promise<ResolvedSpendPeriod> {
   const hasExplicit =
     sp.month ||
@@ -106,26 +89,27 @@ export async function resolveTimelinePeriod(
     sp.statement === "true";
 
   if (!hasExplicit) {
-    return resolveStatementPeriod(accountId);
+    return resolveStatementPeriod(accountId, now);
   }
 
-  return resolveSpendPeriod(accountId, sp);
+  return resolveSpendPeriod(accountId, sp, now);
 }
 
 async function resolveStatementPeriod(
   accountId: string,
+  now: Date,
 ): Promise<ResolvedSpendPeriod> {
   const period = await getLatestStatementPeriod(accountId);
   if (period) {
     return {
       period,
       mode: "statement",
-      isPartial: period.to! < todayIso(),
+      isPartial: period.to! < indiaTodayIso(now),
     };
   }
 
-  const now = new Date();
-  const p = calendarMonthPeriod(now.getFullYear(), now.getMonth() + 1);
+  const civil = indiaCivilDate(now);
+  const p = calendarMonthPeriod(civil.year, civil.month, now);
   return {
     period: p,
     mode: "month",
@@ -204,18 +188,3 @@ export async function listStatementPeriods(accountId: string) {
     },
   );
 }
-
-export function adjacentMonthHref(
-  monthKey: string,
-  delta: -1 | 1,
-  basePath = "/spend",
-): string | null {
-  if (!MONTH_RE.test(monthKey)) return null;
-  const next = shiftCalendarMonth(monthKey, delta);
-  return spendPeriodHref({ month: next }, basePath);
-}
-
-const todayIso = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};

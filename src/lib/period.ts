@@ -1,13 +1,35 @@
+import {
+  addCivilDays,
+  daysInMonth,
+  formatIsoDate,
+  formatMonthKey,
+  indiaCivilDate,
+  parseMonthKey,
+} from "@/lib/dates/india";
+
 export interface Period {
   from: string | null;
   to: string | null;
   label: string;
 }
 
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
+
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-const today = () => iso(new Date());
 
 export interface CalendarMonthPeriod extends Period {
   monthKey: string;
@@ -17,55 +39,67 @@ export interface CalendarMonthPeriod extends Period {
 export function calendarMonthPeriod(
   year: number,
   month: number,
+  now: Date = new Date(),
 ): CalendarMonthPeriod {
-  const fromDate = new Date(year, month - 1, 1);
-  const lastDay = new Date(year, month, 0);
-  const now = new Date();
-  const isCurrentMonth =
-    now.getFullYear() === year && now.getMonth() === month - 1;
-  const toDate = isCurrentMonth ? now : lastDay;
-  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
-  const monthLabel = fromDate.toLocaleString("en-IN", {
-    month: "long",
-    year: "numeric",
-  });
+  const today = indiaCivilDate(now);
+  const isCurrentMonth = today.year === year && today.month === month;
+  const monthKey =
+    formatMonthKey(year, month) ??
+    `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+  const from = `${monthKey}-01`;
+  const to = isCurrentMonth
+    ? formatIsoDate(today)
+    : `${monthKey}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
+  const monthLabel = `${MONTH_NAMES[month - 1] ?? "Month"} ${year}`;
   return {
-    from: iso(fromDate),
-    to: iso(toDate),
+    from,
+    to,
     label: isCurrentMonth ? `${monthLabel} (in progress)` : monthLabel,
     monthKey,
     isPartial: isCurrentMonth,
   };
 }
 
-export function shiftCalendarMonth(monthKey: string, delta: number): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+export function shiftCalendarMonth(monthKey: string, delta: number): string | null {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return null;
+  const utc = new Date(Date.UTC(parsed.year, parsed.month - 1 + delta, 1));
+  return formatMonthKey(utc.getUTCFullYear(), utc.getUTCMonth() + 1);
 }
 
-const daysAgo = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return iso(d);
-};
-const monthStart = () => {
-  const d = new Date();
-  d.setDate(1);
-  return iso(d);
-};
+export function thisMonthPeriod(now: Date = new Date()): {
+  from: string;
+  to: string;
+  label: string;
+} {
+  const today = indiaCivilDate(now);
+  return {
+    from: formatIsoDate({ ...today, day: 1 }),
+    to: formatIsoDate(today),
+    label: "This month",
+  };
+}
+
+export function trailingDaysPeriod(
+  days: number,
+  label: string,
+  now: Date = new Date(),
+): { from: string; to: string; label: string } {
+  const today = indiaCivilDate(now);
+  return {
+    from: formatIsoDate(addCivilDays(today, -days)),
+    to: formatIsoDate(today),
+    label,
+  };
+}
 
 export const PRESET_PERIODS: Record<
   string,
-  () => { from: string; to: string; label: string }
+  (now?: Date) => { from: string; to: string; label: string }
 > = {
-  this_month: () => ({
-    from: monthStart(),
-    to: today(),
-    label: "This month",
-  }),
-  last_30: () => ({ from: daysAgo(30), to: today(), label: "Last 30 days" }),
-  last_90: () => ({ from: daysAgo(90), to: today(), label: "Last 90 days" }),
+  this_month: (now) => thisMonthPeriod(now),
+  last_30: (now) => trailingDaysPeriod(30, "Last 30 days", now),
+  last_90: (now) => trailingDaysPeriod(90, "Last 90 days", now),
 };
 
 export function resolvePeriod(sp: {
