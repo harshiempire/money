@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { appendPreselectedRows } from "./tag-selection";
 import { formatPaisePlain } from "@/lib/format";
 import { MONTH_ABBR } from "@/lib/assistant/model-view";
 import {
@@ -320,15 +321,14 @@ export function TagReview({
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(rows.filter(rowPreselected).map((r) => r.txnId)));
-  const seen = useRef(new Set(rows.map((row) => row.txnId)));
-  useEffect(() => {
-    const fresh = rows.filter((row) => !seen.current.has(row.txnId));
-    if (fresh.length === 0) return;
-    for (const row of fresh) seen.current.add(row.txnId);
-    const add = fresh.filter(rowPreselected).map((row) => row.txnId);
-    if (add.length === 0) return;
-    setSelected((prev) => new Set([...prev, ...add]));
-  }, [rows]);
+  const [previousRows, setPreviousRows] = useState(rows);
+  const [seen, setSeen] = useState(() => new Set(rows.map((row) => row.txnId)));
+  if (rows !== previousRows) {
+    setPreviousRows(rows);
+    const next = appendPreselectedRows(rows, seen, selected, rowPreselected);
+    if (next.seen !== seen) setSeen(next.seen);
+    if (next.selected !== selected) setSelected(next.selected);
+  }
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<string | null>(null);
@@ -337,12 +337,10 @@ export function TagReview({
   const [confirmPrompt, setConfirmPrompt] = useState<Record<string, RememberPrompt>>({});
   const [rememberingId, setRememberingId] = useState<string | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
-  useEffect(() => {
-    if ((applying || result) && editing) setEditing(null);
-  }, [applying, result, editing]);
+  const activeEditing = applying || result ? null : editing;
 
   useEffect(() => {
-    if (!editing) {
+    if (!activeEditing) {
       const opener = openerRef.current;
       openerRef.current = null;
       opener?.focus();
@@ -385,7 +383,7 @@ export function TagReview({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [editing]);
+  }, [activeEditing]);
 
   const nameOf = (id: string | null) => categories.find((c) => c.id === id)?.name ?? null;
   const categoryFor = (row: TagDraftRow) => chosen[row.txnId] ?? row.suggestedCategoryId;
@@ -517,7 +515,7 @@ export function TagReview({
     }
   };
 
-  const editingRow = rows.find((row) => row.txnId === editing) ?? null;
+  const editingRow = rows.find((row) => row.txnId === activeEditing) ?? null;
 
   return (
     <div className="fixed inset-0 z-[60] flex max-sm:flex-col max-sm:overflow-hidden bg-neutral-100 sm:items-start sm:justify-center sm:overflow-y-auto sm:bg-neutral-100/90 sm:px-4 sm:py-8">
@@ -666,10 +664,10 @@ export function TagReview({
                           <button
                             type="button"
                             disabled={locked}
-                            aria-expanded={editing === row.txnId}
+                            aria-expanded={activeEditing === row.txnId}
                             aria-haspopup="dialog"
                             onClick={(event) => {
-                              if (editing === row.txnId) {
+                              if (activeEditing === row.txnId) {
                                 setEditing(null);
                                 return;
                               }
@@ -677,7 +675,7 @@ export function TagReview({
                               setEditing(row.txnId);
                             }}
                             className={`inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs ${
-                              editing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
+                              activeEditing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
                             Change
@@ -772,7 +770,7 @@ export function TagReview({
                         {txn ? formatPaisePlain(txn.amountPaise) : ""}
                       </td>
                       <td className="px-2 py-3">
-                        {editing === row.txnId ? (
+                        {activeEditing === row.txnId ? (
                           <select
                             aria-label="Category"
                             className="rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
@@ -823,9 +821,9 @@ export function TagReview({
                           <button
                             type="button"
                             disabled={locked}
-                            onClick={() => setEditing(editing === row.txnId ? null : row.txnId)}
+                            onClick={() => setEditing(activeEditing === row.txnId ? null : row.txnId)}
                             className={`rounded-md px-2 py-1 text-[11px] ${
-                              editing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
+                              activeEditing === row.txnId ? "bg-amber-100 text-amber-900" : "border border-neutral-200 text-neutral-600"
                             }`}
                           >
                             Change

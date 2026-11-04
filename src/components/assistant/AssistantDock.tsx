@@ -1,8 +1,10 @@
 "use client";
 
-import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { moneyKeys } from "@/lib/query/keys";
+import { useMoneyQueryUser, useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ActionError, callAction, unwrap, type ActionFailure } from "@/lib/action/result";
 import {
   assistantTurn,
@@ -127,7 +129,21 @@ export function AssistantDock() {
   const [txns, setTxns] = useState<Record<string, TxnCardData>>({});
   const [focus, setFocus] = useState<string | null>(null);
   const [used, setUsed] = useState<string[]>([]);
-  const [boot, setBoot] = useState<AssistantBootstrap | null>(null);
+  const userId = useMoneyQueryUser();
+  const queryClient = useQueryClient();
+  const bootKey = moneyKeys.assistantBootstrap(userId);
+  const { data: boot, refetch: refetchBoot } = useQuery({
+    queryKey: bootKey,
+    queryFn: () => callAction(() => getAssistantBootstrap()).then(unwrap),
+    enabled: open && hydrated,
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const setBoot = (update: (value: AssistantBootstrap | null) => AssistantBootstrap | null) => {
+    queryClient.setQueryData<AssistantBootstrap>(bootKey, (value) => update(value ?? null) ?? undefined);
+  };
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
@@ -168,25 +184,50 @@ export function AssistantDock() {
   const batchGen = useRef(0);
   const draftInFlight = useRef(false);
 
+  // ─── Loading ───────────────────────────────────────────────────────────
+  const refreshTxns = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return [];
+    const fresh = unwrap(await callAction(() => loadAssistantTxns({ ids })));
+    setTxns((t) => ({ ...t, ...Object.fromEntries(fresh.map((x) => [x.id, x])) }));
+    return fresh;
+  }, []);
+
+  const openRef = useRef(open);
+  const setPanelOpen = useCallback((next: boolean, ids?: string[]) => {
+    if (next && !openRef.current) {
+      // Cards may be stale after navigating or editing in the table.
+      void refreshTxns(ids ?? Object.keys(txns)).catch(() => {});
+    }
+    openRef.current = next;
+    setOpen(next);
+  }, [refreshTxns, txns]);
+  const toggleFromKeyboard = useEffectEvent(() => setPanelOpen(!openRef.current));
+
   // ─── Persistence ───────────────────────────────────────────────────────
   useEffect(() => {
+    let restoredOpen = false;
+    let restoredIds: string[] = [];
+    let restoredMessages: ChatMessage[] | undefined;
     try {
       const ui = JSON.parse(localStorage.getItem(UI_KEY) ?? "null");
       if (ui) {
-        setOpen(Boolean(ui.open));
+        restoredOpen = Boolean(ui.open);
         if (ui.mode === "docked" || ui.mode === "floating") setMode(ui.mode);
         if (typeof ui.pos?.r === "number" && typeof ui.pos?.b === "number") setPos(ui.pos);
       }
       const chat = JSON.parse(sessionStorage.getItem(CHAT_KEY) ?? "null");
       if (chat) {
-        setMessages((chat.messages ?? []).map(restoreMessage));
+        restoredMessages = (chat.messages ?? []).map(restoreMessage);
         setTxns(chat.txns ?? {});
+        restoredIds = Object.keys(chat.txns ?? {});
         setFocus(chat.focus ?? null);
         setUsed(chat.used ?? []);
       }
     } catch {
       /* corrupt storage — start fresh */
     }
+    setPanelOpen(restoredOpen, restoredIds);
+    if (restoredMessages) setMessages(startTagRuns(restoredMessages));
     setHydrated(true);
   }, []);
 
@@ -200,28 +241,12 @@ export function AssistantDock() {
     if (hydrated) localStorage.setItem(UI_KEY, JSON.stringify({ open, mode, pos }));
   }, [hydrated, open, mode, pos]);
 
-  // ─── Loading ───────────────────────────────────────────────────────────
-  const refreshTxns = useCallback(async (ids: string[]) => {
-    if (ids.length === 0) return [];
-    const fresh = unwrap(await callAction(() => loadAssistantTxns({ ids })));
-    setTxns((t) => ({ ...t, ...Object.fromEntries(fresh.map((x) => [x.id, x])) }));
-    return fresh;
-  }, []);
-
-  useEffect(() => {
-    if (!open || !hydrated) return;
-    callAction(() => getAssistantBootstrap()).then(unwrap).then(setBoot).catch(() => {});
-    // Cards may be stale after navigating or editing in the table.
-    refreshTxns(Object.keys(txns)).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, hydrated]);
-
   // ─── Keyboard, drag, scroll ────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setOpen((o) => !o);
+        toggleFromKeyboard();
       }
     };
     const onMove = (e: MouseEvent) => {
@@ -262,7 +287,17 @@ export function AssistantDock() {
   }, [open]);
 
   // ─── Messages ──────────────────────────────────────────────────────────
-  const push = (...ms: ChatMessage[]) => setMessages((all) => [...all, ...ms]);
+  function startTagRuns(ms: ChatMessage[]): ChatMessage[] {
+    return ms.map((m) => {
+      if (m.kind !== "tag_run" || m.started) return m;
+      void startBatch(m.year, m.month);
+      return { ...m, started: true };
+    });
+  }
+  const push = (...ms: ChatMessage[]) => {
+    const added = startTagRuns(ms);
+    setMessages((all) => [...all, ...added]);
+  };
   const update = (id: string, patch: (m: ChatMessage) => ChatMessage) =>
     setMessages((all) => all.map((m) => (m.id === id ? patch(m) : m)));
   const updateOp = (id: string, patch: Partial<OpMessage>) =>
@@ -293,18 +328,18 @@ export function AssistantDock() {
       res = null;
     }
 
-    setMessages((all) => {
-      const rest = all.filter((m) => m.id !== thinkingId);
-      if (!res || (!res.ok && res.code === "INTERNAL")) {
-        return [...rest, { kind: "ai", id: uid(), text: "That didn't go through. Nothing was changed.", retry: true }];
-      }
-      if (!res.ok) return [...rest, { kind: "ai", id: uid(), text: res.message }];
-      const reader = res.data.reader;
-      const added = res.data.messages.map((m) => toChat(m, reader));
+    let added: ChatMessage[];
+    if (!res || (!res.ok && res.code === "INTERNAL")) {
+      added = [{ kind: "ai", id: uid(), text: "That didn't go through. Nothing was changed.", retry: true }];
+    } else if (!res.ok) {
+      added = [{ kind: "ai", id: uid(), text: res.message }];
+    } else {
+      added = res.data.messages.map((m) => toChat(m, res.data.reader));
       const meta = limitMeta(res.data.limits);
       if (meta && added[0]?.kind === "ai") added[0] = { ...added[0], meta };
-      return [...rest, ...added];
-    });
+    }
+    added = startTagRuns(added);
+    setMessages((all) => [...all.filter((m) => m.id !== thinkingId), ...added]);
     if (res?.ok) {
       const fresh = res.data.txns;
       setTxns((t) => ({ ...t, ...Object.fromEntries(fresh.map((x) => [x.id, x])) }));
@@ -473,7 +508,7 @@ export function AssistantDock() {
 
   const startBatch = async (year: number, month: number) => {
     const gen = ++batchGen.current;
-    setOpen(true);
+    setPanelOpen(true);
     setBatch({
       year,
       month,
@@ -533,16 +568,8 @@ export function AssistantDock() {
     }
   };
 
-  useEffect(() => {
-    const pending = messages.find((m) => m.kind === "tag_run" && !m.started);
-    if (!pending || pending.kind !== "tag_run") return;
-    setMessages((ms) => ms.map((m) => (m.kind === "tag_run" && m.id === pending.id ? { ...m, started: true } : m)));
-    void startBatch(pending.year, pending.month);
-  }, [messages]);
-
   const refreshBoot = async () => {
-    const next = await callAction(() => getAssistantBootstrap()).then(unwrap).catch(() => null);
-    if (next) setBoot(next);
+    await refetchBoot().catch(() => {});
   };
 
   const openProposedBatch = async (draftId: string) => {
@@ -834,7 +861,7 @@ export function AssistantDock() {
                   {docked ? "Float" : "Dock"}
                 </button>
               )}
-              <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="px-1 text-sm text-neutral-500">
+              <button type="button" aria-label="Close" onClick={() => setPanelOpen(false)} className="px-1 text-sm text-neutral-500">
                 ✕
               </button>
             </div>
@@ -1157,7 +1184,7 @@ export function AssistantDock() {
       {!(docked && open) && (
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => setPanelOpen(!openRef.current)}
           aria-expanded={open}
           className="fixed bottom-20 right-4 z-40 flex h-10 items-center gap-2 rounded-[20px] border border-neutral-700 bg-neutral-900 px-3.5 text-[13px] font-medium text-white shadow-[0_6px_20px_rgba(0,0,0,.45)] md:bottom-6 md:right-6 dark:bg-neutral-100 dark:text-neutral-900"
         >

@@ -2,7 +2,7 @@
 
 import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { flushSync } from "react-dom";
 import { useForm, useSelector } from "@tanstack/react-form";
 import { formatPaise } from "@/lib/format";
@@ -222,13 +222,15 @@ function SplitForm({
     (existing?.participants ?? []).map((p) => [p.id, p.settledAmountPaise]),
   );
 
-  // Auto-suggest your_share = total / (1 + participants) when both empty.
-  const participantCount = values.participants.length;
-  useEffect(() => {
+  const suggestYourShare = () => {
     const suggested = autoSuggestYourShare(form.state.values, total, !!existing);
     if (suggested !== null) form.setFieldValue("yourShare", suggested);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantCount]);
+  };
+
+  const addParticipant = () => {
+    form.pushFieldValue("participants", newParticipantRow());
+    suggestYourShare();
+  };
 
   const removeParticipant = (i: number) => {
     const draft = form.state.values.participants[i];
@@ -241,6 +243,7 @@ function SplitForm({
       if (!ok) return;
     }
     void form.removeFieldValue("participants", i);
+    suggestYourShare();
   };
 
   const equalSplit = () => {
@@ -359,7 +362,7 @@ function SplitForm({
           ))}
         </datalist>
         <form.Field name="participants" mode="array">
-          {(participantsField) => (
+          {() => (
             <div className="mt-2 space-y-2">
               {values.participants.map((p, i) => {
                 const settled = p.id ? (settledById.get(p.id) ?? 0) : 0;
@@ -406,7 +409,7 @@ function SplitForm({
               })}
               <button
                 type="button"
-                onClick={() => participantsField.pushValue(newParticipantRow())}
+                onClick={addParticipant}
                 className="text-xs text-neutral-500 underline-offset-4 hover:underline"
               >
                 + Add participant

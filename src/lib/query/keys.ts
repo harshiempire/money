@@ -2,6 +2,7 @@
 
 export const moneyKeys = {
   all: (userId: string | null) => ["money", userId] as const,
+  assistantBootstrap: (userId: string | null) => [...moneyKeys.all(userId), "assistant-bootstrap"] as const,
   previews: (userId: string | null) => [...moneyKeys.all(userId), "preview"] as const,
   preview: (userId: string | null, transactionId: string) => [...moneyKeys.previews(userId), transactionId] as const,
   candidates: (userId: string | null) => [...moneyKeys.all(userId), "note-candidates"] as const,
