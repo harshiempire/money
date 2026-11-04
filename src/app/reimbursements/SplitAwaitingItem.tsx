@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useRef, useState, useTransition } from "react";
 import { formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
@@ -85,6 +87,7 @@ export function SplitAwaitingItem({
   totalParticipantCount,
   participants,
 }: SplitAwaitingItemProps) {
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
   const forgiveDialogRef = useRef<HTMLDialogElement>(null);
   const [participantToForgive, setParticipantToForgive] =
@@ -119,6 +122,7 @@ export function SplitAwaitingItem({
           note: forgiveReason,
         }),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) closeForgiveDialog();
       else window.alert(result.message);
     });
@@ -127,6 +131,7 @@ export function SplitAwaitingItem({
   const undo = (settlementId: string) => {
     startTransition(async () => {
       const result = await callAction(() => undoWriteOff({ settlementId }));
+      if (result.ok) invalidateReads();
       if (!result.ok) window.alert(result.message);
     });
   };

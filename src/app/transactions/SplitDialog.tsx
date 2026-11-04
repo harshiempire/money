@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useEffect, useRef, useState, useTransition } from "react";
 import { flushSync } from "react-dom";
 import { useForm, useSelector } from "@tanstack/react-form";
@@ -192,6 +194,7 @@ function SplitForm({
   // Captured once, like the useState initialisers this replaced: a later
   // `existing` from a revalidated page must not reset what is on screen.
   const [defaultValues] = useState(() => initialSplitFormValues(existing));
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
 
   const form = useForm({
@@ -206,6 +209,7 @@ function SplitForm({
         totalRupees: total,
       });
       const result = await callAction(() => createSplit(input));
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     },
@@ -275,6 +279,7 @@ function SplitForm({
     }
     startTransition(async () => {
       const result = await callAction(() => deleteSplit({ transactionId }));
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     });

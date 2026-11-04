@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useForm, useSelector } from "@tanstack/react-form";
 import {
   applyNoteToTransactions,
   getNoteCandidates,
   setTransactionNote,
 } from "./actions";
-import { callAction } from "@/lib/action/result";
-import type { NoteCandidate } from "./actions";
+import { callAction, unwrap } from "@/lib/action/result";
+import { useQuery } from "@tanstack/react-query";
+import { moneyKeys } from "@/lib/query/keys";
+import { useInvalidateMoneyReads, useMoneyQueryUser } from "@/lib/query/use-money-query";
 import { formatDate, formatPaiseSigned } from "@/lib/format";
 import {
   buildNotePayloads,
@@ -28,7 +30,15 @@ export function NoteButton({
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [defaultValues] = useState(() => initialNoteFormValues(note));
-  const [candidates, setCandidates] = useState<NoteCandidate[] | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const userId = useMoneyQueryUser();
+  const invalidateReads = useInvalidateMoneyReads();
+  const query = useQuery({
+    queryKey: moneyKeys.candidate(userId, transactionId),
+    queryFn: async () => unwrap(await callAction(() => getNoteCandidates({ transactionId }))),
+    enabled: isOpen && hasCounterparty && !!userId,
+  });
+  const candidates = query.isError ? null : query.data ?? null;
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -37,27 +47,10 @@ export function NoteButton({
     form.reset(initialNoteFormValues(note), { keepDefaultValues: true });
     setFeedback(null);
     setError(null);
-    setCandidates(null);
+    setIsOpen(true);
     dialogRef.current?.showModal();
   };
   const close = () => dialogRef.current?.close();
-
-  // Lazy-load siblings the first time the dialog opens.
-  useEffect(() => {
-    if (!hasCounterparty) return;
-    const dlg = dialogRef.current;
-    if (!dlg) return;
-    const onOpen = async () => {
-      if (candidates !== null) return;
-      const list = await callAction(() => getNoteCandidates({ transactionId }));
-      if (list.ok) setCandidates(list.data);
-      else setError(list.message);
-    };
-    // The native <dialog> doesn't fire an "open" event we can rely on; do it
-    // imperatively from `open()` above instead. Kept as effect to react to
-    // late mounts.
-    if (dlg.open) onOpen();
-  });
 
   const togglePick = (id: string) => {
     form.setFieldValue("picked", (prev) => toggleNotePick(prev, id));
@@ -75,6 +68,7 @@ export function NoteButton({
         setError(saved.message);
         return;
       }
+      invalidateReads();
       if (payloads.apply) {
         const input = payloads.apply;
         const applied = await callAction(() =>
@@ -84,6 +78,7 @@ export function NoteButton({
           setError(`Saved here, but not on the other rows: ${applied.message}`);
           return;
         }
+        invalidateReads();
         const r = applied.data;
         setFeedback(
           `Saved here and on ${r.updated} other row${r.updated === 1 ? "" : "s"}`,
@@ -115,14 +110,7 @@ export function NoteButton({
     <>
       <button
         type="button"
-        onClick={async () => {
-          open();
-          if (hasCounterparty && candidates === null) {
-            const list = await callAction(() => getNoteCandidates({ transactionId }));
-            if (list.ok) setCandidates(list.data);
-            else setError(list.message);
-          }
-        }}
+        onClick={open}
         title={hasNote ? note ?? "" : "Add a note"}
         className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
           hasNote
@@ -134,6 +122,7 @@ export function NoteButton({
       </button>
       <dialog
         ref={dialogRef}
+        onClose={() => setIsOpen(false)}
         className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
       >
         <div className="w-[36rem] max-w-[90vw] p-5">
@@ -269,7 +258,7 @@ export function NoteButton({
               {feedback}
             </p>
           )}
-          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+          {(error || query.error) && <p className="mt-2 text-xs text-red-600">{error ?? query.error?.message}</p>}
 
           <footer className="mt-5 flex items-center justify-between gap-2">
             <button

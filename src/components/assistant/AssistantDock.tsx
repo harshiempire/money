@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ActionError, callAction, unwrap, type ActionFailure } from "@/lib/action/result";
 import {
@@ -116,6 +118,7 @@ function useIsDesktop() {
 }
 
 export function AssistantDock() {
+  const invalidateReads = useInvalidateMoneyReads();
   const [hydrated, setHydrated] = useState(false);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("floating");
@@ -324,6 +327,7 @@ export function AssistantDock() {
     try {
       const txnId = draftTxnId(msg.draft);
       const out = await applyDraft(msg.draft, txnId ? txns[txnId] : undefined, boot?.categories ?? []);
+      invalidateReads();
       updateOp(msg.id, { status: "applied", undo: out.undo });
       push({
         kind: "ai",
@@ -358,6 +362,7 @@ export function AssistantDock() {
       const txnId = draftTxnId(msg.draft);
       const [fresh] = txnId ? unwrap(await callAction(() => loadAssistantTxns({ ids: [txnId] }))) : [];
       const text = await undoDraft(msg.draft, msg.undo, fresh);
+      invalidateReads();
       updateOp(msg.id, { status: "undone" });
       push({ kind: "ai", id: uid(), text, link: txnId });
       if (msg.undo.kind === "context_note") {
@@ -639,6 +644,7 @@ export function AssistantDock() {
       setBatch((b) => (b ? { ...b, phase: "applying", applyDone: cursor, applyTotal: total } : b));
       try {
         const res = unwrap(await callAction(() => applySuggestedTags({ rows: slice })));
+        invalidateReads();
         applied.push(...res.applied);
         failed.push(...res.failed);
       } catch (e) {
@@ -739,6 +745,7 @@ export function AssistantDock() {
     for (const slice of chunkApplyRows(batch.undoRows)) {
       try {
         const res = unwrap(await callAction(() => undoSuggestedTags({ rows: slice })));
+        invalidateReads();
         restored += res.restored;
         failed += res.failed;
       } catch {

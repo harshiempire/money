@@ -1,5 +1,7 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useRef, useState, useTransition } from "react";
 import { useForm, useSelector } from "@tanstack/react-form";
 import { deleteCashSettlement, recordCashSettlement } from "./actions";
@@ -74,6 +76,7 @@ function CashSettlementForm({
   const [defaultValues] = useState(() =>
     initialCashSettlementFormValues(outstandingPaise),
   );
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
   const form = useForm({
     defaultValues,
@@ -85,6 +88,7 @@ function CashSettlementForm({
       const result = await callAction(() =>
         recordCashSettlement(buildCashSettlementPayload(value, splitParticipantId)),
       );
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     },
@@ -101,6 +105,7 @@ function CashSettlementForm({
   const remove = (settlementId: string) => {
     startTransition(async () => {
       const result = await callAction(() => deleteCashSettlement({ settlementId }));
+      if (result.ok) invalidateReads();
       if (result.ok) onClose();
       else window.alert(result.message);
     });

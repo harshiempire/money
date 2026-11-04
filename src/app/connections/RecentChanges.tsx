@@ -1,4 +1,5 @@
 "use client";
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 import { useRef, useState } from "react";
 import { callAction, unwrap } from "@/lib/action/result";
 import { listLedgerChanges, undoLedgerChange } from "./actions";
@@ -15,6 +16,7 @@ function append(current: Changes, page: Changes): Changes {
   return { ...page, rows: [...current.rows, ...page.rows.filter((row) => !shown.has(row.id))] };
 }
 export function RecentChanges({ initial }: { initial: Changes }) {
+  const invalidateReads = useInvalidateMoneyReads();
   const [changes, setChanges] = useState(initial);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,6 +34,7 @@ export function RecentChanges({ initial }: { initial: Changes }) {
         setError(result.code === "INTERNAL" ? "Couldn't confirm whether Undo finished. Reload this page before trying again." : result.message);
         return;
       }
+      invalidateReads();
       setConfirm(null);
       const first = unwrap(await callAction(() => listLedgerChanges(undefined)));
       // Keep older pages the user already opened; their cursor still points past the last row shown.

@@ -1,10 +1,13 @@
 "use client";
 
+import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
+
 import { useState, useTransition } from "react";
 import { autoDetectTransfers } from "./actions";
 import { callAction } from "@/lib/action/result";
 
 export function AutoDetectButton() {
+  const invalidateReads = useInvalidateMoneyReads();
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<string | null>(null);
 
@@ -17,6 +20,7 @@ export function AutoDetectButton() {
           setResult(null);
           startTransition(async () => {
             const outcome = await callAction(() => autoDetectTransfers());
+            if (outcome.ok) invalidateReads();
             if (!outcome.ok) {
               setResult(outcome.message);
               return;
