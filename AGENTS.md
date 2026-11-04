@@ -367,3 +367,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## Shared people balances
+
+Pure money and grouping rules live in `src/lib/ledger/rules/balances.ts`: every settlement method reduces outstanding, clamped per target. Unsafe integer inputs/aggregates return null. Group by person id when present, otherwise trimmed lowercase name; distinct ids never merge by spelling. Saved person names win; historical-only groups use the latest date/order spelling (lexical spelling breaks ties). `src/lib/ledger/read/balances.ts` loads actor-scoped balances and confirmed payee links. `src/lib/ledger/services.ts` owns the shared Db tag, query/transaction helpers and Actor; action/services re-exports the same Db identity and retains CurrentUser. Promise adapters use `src/lib/ledger/run.ts` (`runLedger`); action effects can provide Actor and yield the read directly.

@@ -1,10 +1,9 @@
 import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
-import {
-  settledAmountByOwedExpenseIds,
-  settledAmountByParticipantIds,
-} from "@/lib/splits/outstanding";
+import { loadBalances } from '@/lib/ledger/read/balances';
+import { runLedger } from '@/lib/ledger/run';
+import { personBalanceKey } from '@/lib/ledger/rules/balances';
 
 export interface PersonBalanceRow {
   personId: string;
@@ -48,197 +47,15 @@ export interface PersonNetEventRow {
   bankDeltaPaise: number;
 }
 
-async function loadAllReceivablesForUser(userId: string) {
-  const accounts = await db
-    .select({ id: schema.moneyAccounts.id })
-    .from(schema.moneyAccounts)
-    .where(eq(schema.moneyAccounts.userId, userId));
-  const accountIds = accounts.map((a) => a.id);
-  if (accountIds.length === 0) return [];
-
-  const splitsRaw = await db
-    .select({
-      splitId: schema.splits.id,
-      transactionId: schema.transactions.id,
-      txnDate: schema.transactions.txnDate,
-      rawDescription: schema.transactions.rawDescription,
-      parsedPurpose: schema.transactions.parsedPurpose,
-      txnNote: schema.transactions.note,
-      counterpartyDisplayName: schema.counterparties.displayName,
-    })
-    .from(schema.splits)
-    .innerJoin(
-      schema.transactions,
-      eq(schema.splits.transactionId, schema.transactions.id),
-    )
-    .leftJoin(
-      schema.counterparties,
-      eq(schema.transactions.counterpartyId, schema.counterparties.id),
-    )
-    .where(inArray(schema.transactions.accountId, accountIds));
-
-  if (splitsRaw.length === 0) return [];
-
-  const participants = await db
-    .select()
-    .from(schema.splitParticipants)
-    .where(
-      inArray(
-        schema.splitParticipants.splitId,
-        splitsRaw.map((s) => s.splitId),
-      ),
-    );
-
-  const settled = await settledAmountByParticipantIds(
-    participants.map((p) => p.id),
-  );
-  const splitMeta = new Map(splitsRaw.map((s) => [s.splitId, s]));
-
-  return participants.map((p) => {
-    const meta = splitMeta.get(p.splitId)!;
-    const expected = Number(p.expectedAmountPaise);
-    const paid = settled.get(p.id) ?? 0;
-    return {
-      personId: p.personId,
-      personName: p.personName,
-      participantId: p.id,
-      txnId: meta.transactionId,
-      txnDate: meta.txnDate,
-      txnDescription: meta.rawDescription,
-      counterpartyDisplayName: meta.counterpartyDisplayName,
-      parsedPurpose: meta.parsedPurpose,
-      txnNote: meta.txnNote,
-      expectedPaise: expected,
-      settledPaise: paid,
-      outstandingPaise: Math.max(0, expected - paid),
-    };
-  });
+async function balancesForUser(userId: string) {
+  const [account] = await db.select({ id: schema.moneyAccounts.id }).from(schema.moneyAccounts).where(and(eq(schema.moneyAccounts.userId, userId),eq(schema.moneyAccounts.bank,"bob"))).limit(1);
+  return runLedger(loadBalances(), { userId, accountId: account?.id ?? "00000000-0000-0000-0000-000000000000" });
 }
-
-async function loadAllPayablesForUser(userId: string) {
-  const expenses = await db
-    .select({
-      id: schema.owedExpenses.id,
-      personId: schema.owedExpenses.personId,
-      personName: schema.owedExpenses.personName,
-      incurredDate: schema.owedExpenses.incurredDate,
-      description: schema.owedExpenses.description,
-      amountPaise: schema.owedExpenses.amountPaise,
-      categoryName: schema.categories.name,
-    })
-    .from(schema.owedExpenses)
-    .leftJoin(
-      schema.categories,
-      eq(schema.owedExpenses.categoryId, schema.categories.id),
-    )
-    .where(eq(schema.owedExpenses.userId, userId));
-
-  if (expenses.length === 0) return [];
-
-  const settled = await settledAmountByOwedExpenseIds(
-    expenses.map((e) => e.id),
-  );
-
-  return expenses.map((e) => {
-    const amount = Number(e.amountPaise);
-    const paid = settled.get(e.id) ?? 0;
-    return {
-      personId: e.personId,
-      personName: e.personName,
-      owedExpenseId: e.id,
-      incurredDate: e.incurredDate,
-      description: e.description,
-      amountPaise: amount,
-      settledPaise: paid,
-      outstandingPaise: Math.max(0, amount - paid),
-      categoryName: e.categoryName,
-    };
-  });
-}
-
-export async function listPersonBalances(
-  userId: string,
-): Promise<PersonBalanceRow[]> {
-  const [receivables, payables, persons] = await Promise.all([
-    loadAllReceivablesForUser(userId),
-    loadAllPayablesForUser(userId),
-    db
-      .select({ id: schema.persons.id, name: schema.persons.name })
-      .from(schema.persons)
-      .where(eq(schema.persons.userId, userId)),
-  ]);
-
-  const personIdByLowerName = new Map(
-    persons.map((p) => [p.name.toLowerCase(), p.id]),
-  );
-
-  const resolvePersonId = (
-    personId: string | null,
-    personName: string,
-  ): string | null =>
-    personId ?? personIdByLowerName.get(personName.toLowerCase()) ?? null;
-
-  const byPerson = new Map<
-    string,
-    {
-      personId: string;
-      personName: string;
-      receivableOutstandingPaise: number;
-      payableOutstandingPaise: number;
-      openReceivableCount: number;
-      openPayableCount: number;
-    }
-  >();
-
-  const personKey = (personId: string | null, personName: string) => {
-    const resolved = resolvePersonId(personId, personName);
-    return resolved ? `id:${resolved}` : `name:${personName.toLowerCase()}`;
-  };
-
-  for (const r of receivables) {
-    if (r.outstandingPaise <= 0) continue;
-    const key = personKey(r.personId, r.personName);
-    const resolvedId = resolvePersonId(r.personId, r.personName);
-    const entry = byPerson.get(key) ?? {
-      personId: resolvedId ?? key,
-      personName: r.personName,
-      receivableOutstandingPaise: 0,
-      payableOutstandingPaise: 0,
-      openReceivableCount: 0,
-      openPayableCount: 0,
-    };
-    entry.receivableOutstandingPaise += r.outstandingPaise;
-    entry.openReceivableCount += 1;
-    byPerson.set(key, entry);
-  }
-
-  for (const p of payables) {
-    if (p.outstandingPaise <= 0) continue;
-    const key = personKey(p.personId, p.personName);
-    const resolvedId = resolvePersonId(p.personId, p.personName);
-    const entry = byPerson.get(key) ?? {
-      personId: resolvedId ?? key,
-      personName: p.personName,
-      receivableOutstandingPaise: 0,
-      payableOutstandingPaise: 0,
-      openReceivableCount: 0,
-      openPayableCount: 0,
-    };
-    entry.payableOutstandingPaise += p.outstandingPaise;
-    entry.openPayableCount += 1;
-    byPerson.set(key, entry);
-  }
-
-  return [...byPerson.values()]
-    .map((p) => ({
-      ...p,
-      netPaise: p.receivableOutstandingPaise - p.payableOutstandingPaise,
-    }))
-    .filter(
-      (p) =>
-        p.receivableOutstandingPaise > 0 || p.payableOutstandingPaise > 0,
-    )
-    .sort((a, b) => Math.abs(b.netPaise) - Math.abs(a.netPaise));
+export async function listPersonBalances(userId: string): Promise<PersonBalanceRow[]> {
+  return (await balancesForUser(userId)).filter(p => p.openShareCount || p.openOwedCount).map(p => ({
+    personId:p.personId ?? p.key, personName:p.name, receivableOutstandingPaise:p.owedToYouPaise,
+    payableOutstandingPaise:p.youOwePaise, netPaise:p.netPaise, openReceivableCount:p.openShareCount, openPayableCount:p.openOwedCount,
+  })).sort((a,b) => Math.abs(b.netPaise)-Math.abs(a.netPaise));
 }
 
 export async function getPersonDetail(
@@ -263,47 +80,16 @@ export async function getPersonDetail(
 
   if (!person) return null;
 
-  const [allReceivables, allPayables] = await Promise.all([
-    loadAllReceivablesForUser(userId),
-    loadAllPayablesForUser(userId),
-  ]);
-
-  const receivables = allReceivables
-    .filter(
-      (r) =>
-        r.personId === person.id ||
-        r.personName.toLowerCase() === person.name.toLowerCase(),
-    )
-    .filter((r) => r.outstandingPaise > 0)
-    .map((r) => ({
-      participantId: r.participantId,
-      txnId: r.txnId,
-      txnDate: r.txnDate,
-      txnDescription: r.txnDescription,
-      counterpartyDisplayName: r.counterpartyDisplayName,
-      parsedPurpose: r.parsedPurpose,
-      txnNote: r.txnNote,
-      expectedPaise: r.expectedPaise,
-      settledPaise: r.settledPaise,
-      outstandingPaise: r.outstandingPaise,
-    }));
-
-  const payables = allPayables
-    .filter(
-      (p) =>
-        p.personId === person.id ||
-        p.personName.toLowerCase() === person.name.toLowerCase(),
-    )
-    .filter((p) => p.outstandingPaise > 0)
-    .map((p) => ({
-      owedExpenseId: p.owedExpenseId,
-      incurredDate: p.incurredDate,
-      description: p.description,
-      amountPaise: p.amountPaise,
-      settledPaise: p.settledPaise,
-      outstandingPaise: p.outstandingPaise,
-      categoryName: p.categoryName,
-    }));
+  const balance = (await balancesForUser(userId)).find(p => p.personId === personId);
+  const receivables: PersonReceivableRow[] = (balance?.shares ?? []).map(r => {
+    const meta = balance!.shareRows.find(s => s.id === r.id)!;
+    return { participantId:r.id,txnId:r.txnId!,txnDate:r.date,txnDescription:meta.txnDescription,
+      counterpartyDisplayName:meta.counterpartyDisplayName,parsedPurpose:meta.parsedPurpose,txnNote:meta.txnNote,
+      expectedPaise:r.amountPaise,settledPaise:r.settledPaise,outstandingPaise:r.leftPaise };
+  });
+  const payables: PersonPayableRow[] = (balance?.owed ?? []).map(r => ({ owedExpenseId:r.id,incurredDate:r.date,
+    description:r.what,amountPaise:r.amountPaise,settledPaise:r.settledPaise,outstandingPaise:r.leftPaise,
+    categoryName:balance!.owedRows.find(o => o.id === r.id)!.categoryName }));
 
   const netEventsRaw = await db
     .select()
@@ -346,8 +132,7 @@ export async function getPersonDetail(
     participantRows
       .filter(
         (p) =>
-          p.personId === person.id ||
-          p.personName.toLowerCase() === person.name.toLowerCase(),
+          personBalanceKey(p.personId, p.personName) === personBalanceKey(person.id, person.name),
       )
       .map((p) => p.id),
   );
@@ -355,8 +140,7 @@ export async function getPersonDetail(
     owedRows
       .filter(
         (o) =>
-          o.personId === person.id ||
-          o.personName.toLowerCase() === person.name.toLowerCase(),
+          personBalanceKey(o.personId, o.personName) === personBalanceKey(person.id, person.name),
       )
       .map((o) => o.id),
   );

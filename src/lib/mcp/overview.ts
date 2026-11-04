@@ -1,3 +1,5 @@
+import { buildPersonBalances } from "@/lib/ledger/rules/balances";
+import { McpToolError } from "./pagination";
 import { isUncategorized } from "@/domain/spend/uncategorized";
 import type { Overview } from "./schemas";
 import { rupees } from "./view";
@@ -12,10 +14,12 @@ export interface OverviewTransaction {
 export interface OpenShare {
   txnDate: string;
   personName: string;
+  personId?: string | null;
   outstandingPaise: number;
 }
 export interface OpenPayable {
   personName: string;
+  personId?: string | null;
   outstandingPaise: number;
 }
 
@@ -40,22 +44,17 @@ export function buildOverview(
     }
     months.set(month, stats);
   }
-  const people = new Map<string, { name: string; owed_to_you: number; you_owe: number }>();
-  const person = (name: string) => {
-    const key = name.trim().toLowerCase();
-    const found = people.get(key) ?? { name, owed_to_you: 0, you_owe: 0 };
-    people.set(key, found);
-    return found;
-  };
+  const people = buildPersonBalances({ people:[],
+    shares:shares.map((s,i) => ({id:String(i),personId:s.personId,personName:s.personName,date:s.txnDate,what:"",amountPaise:Math.max(0,s.outstandingPaise),settledRows:[]})),
+    owed:payables.map((p,i) => ({id:String(i),personId:p.personId,personName:p.personName,date:"",what:"",amountPaise:Math.max(0,p.outstandingPaise),settledRows:[]})),
+  });
+  if (!people) throw new McpToolError("Balance exceeds the exact integer paise range.");
   for (const share of shares) {
     const outstanding = Math.max(0, share.outstandingPaise);
     const stats = months.get(share.txnDate.slice(0, 7));
     if (stats) stats.open_shares += outstanding;
     totals.open_shares += outstanding;
-    if (outstanding) person(share.personName).owed_to_you += outstanding;
-  }
-  for (const payable of payables) {
-    if (payable.outstandingPaise > 0) person(payable.personName).you_owe += payable.outstandingPaise;
+
   }
   const render = (stats: ReturnType<typeof empty>) => ({
     ...stats,
@@ -68,8 +67,8 @@ export function buildOverview(
     last_transaction_date: dates.at(-1) ?? null,
     months: [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, stats]) => ({ month, ...render(stats) })),
     totals: render(totals),
-    people: [...people.values()]
-      .sort((a, b) => (b.owed_to_you + b.you_owe) - (a.owed_to_you + a.you_owe) || a.name.localeCompare(b.name))
-      .map((p) => ({ name: p.name, owed_to_you: rupees(p.owed_to_you), you_owe: rupees(p.you_owe) })),
+    people: people.filter(p => p.openShareCount || p.openOwedCount)
+      .sort((a,b) => (b.owedToYouPaise+b.youOwePaise)-(a.owedToYouPaise+a.youOwePaise) || a.name.localeCompare(b.name))
+      .map(p => ({name:p.name,owed_to_you:rupees(p.owedToYouPaise),you_owe:rupees(p.youOwePaise)})),
   };
 }

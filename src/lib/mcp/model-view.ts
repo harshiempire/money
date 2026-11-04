@@ -1,3 +1,5 @@
+import { buildPersonBalances, personBalanceKey } from "@/lib/ledger/rules/balances";
+import { readOutstanding } from "@/lib/ledger/read/money";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
 import { Result, Schema } from "effect";
 import { shareRef, owedRef, settlementRef, transactionRef, transactionRev, splitRev } from "./refs";
@@ -9,7 +11,7 @@ import { isUncategorized } from "@/domain/spend/uncategorized";
 import { suggestPersonPayees } from "./person-links";
 export { personKey } from "./person-names";
 
-export const leftPaise = (amount: number, settled: number) => Math.max(0, amount - settled);
+
 export function settlementVia(row: McpReadModel["settlements"][number]): "bank" | "cash" | "writeoff" | "net" {
   return row.netEventId || row.method === "offset" ? "net" : row.method;
 }
@@ -25,11 +27,14 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
   const settled = (kind: "share" | "owed", id: string) => model.settlements
     .filter((s) => (kind === "share" ? s.splitParticipantId : s.owedExpenseId) === id)
     .reduce((sum, s) => sum + s.amountPaise, 0);
-  const canonical = new Map<string, string>();
-  for (const name of [...model.people.map((p) => p.name), ...model.shares.map((s) => s.personName), ...model.owed.map((o) => o.personName)]) {
-    if (!canonical.has(personKey(name))) canonical.set(personKey(name), name.trim());
-  }
-  const nameFor = (name: string) => canonical.get(personKey(name)) ?? name.trim();
+  const balances = model.balances ?? buildPersonBalances({ people:model.people,
+    shares:model.shares.map(s => { const split=splitById.get(s.splitId)!; const t=txnById.get(split.transactionId)!;
+      return { id:s.id,personId:s.personId,personName:s.personName,date:t.txnDate,what:t.note ?? t.label,txnId:t.id,order:split.createdAt,amountPaise:s.expectedAmountPaise,settledRows:model.settlements.filter(st => st.splitParticipantId === s.id) }; }),
+    owed:model.owed.map(o => ({ id:o.id,personId:o.personId,personName:o.personName,date:o.incurredDate,what:o.description,amountPaise:o.amountPaise,settledRows:model.settlements.filter(st => st.owedExpenseId === o.id) })),
+  });
+  if (!balances) throw new McpToolError("Balance exceeds the exact integer paise range.");
+  const keyFor = (id: string | null | undefined, name: string) => personBalanceKey(id, name, model.people);
+  const nameFor = (name: string, id?: string | null) => balances.find(p => p.key === keyFor(id,name))?.name ?? name.trim();
   const settlements = model.settlements.map((s) => {
     const share = s.splitParticipantId ? sharesById.get(s.splitParticipantId) : undefined;
     const owed = s.owedExpenseId ? owedById.get(s.owedExpenseId) : undefined;
@@ -39,7 +44,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
       inflow_ref: txRef(s.inflowTransactionId),
       share_ref: share ? shareRef(key, actor.userId, actor.accountId, share.id) : null,
       owed_ref: owed ? owedRef(key, actor.userId, actor.accountId, owed.id) : null,
-      person: nameFor(share?.personName ?? owed?.personName ?? ""),
+      person: nameFor(share?.personName ?? owed?.personName ?? "", share?.personId ?? owed?.personId),
       amount: rupees(s.amountPaise),
       date: inflow?.txnDate ?? (s.netEventId ? eventById.get(s.netEventId)?.eventDate : undefined) ?? s.createdDate,
       via: settlementVia(s),
@@ -53,18 +58,20 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     const view = transactionView(txn, txRef(txn.id)!, transactionRev(revKey, actor.userId, txn.id, txn));
     return {
       ref: shareRef(key, actor.userId, actor.accountId, s.id), txn_ref: view.ref,
-      person: nameFor(s.personName), date: txn.txnDate, what: txn.note ?? view.payee,
-      expected: rupees(s.expectedAmountPaise), settled: rupees(paid), left: rupees(leftPaise(s.expectedAmountPaise, paid)),
+      person: nameFor(s.personName,s.personId), date: txn.txnDate, what: txn.note ?? view.payee,
+      expected: rupees(s.expectedAmountPaise), settled: rupees(paid), left: rupees(readOutstanding(s.expectedAmountPaise, paid)),
     };
   });
   const owed = model.owed.map((o) => {
     const paid = settled("owed", o.id);
-    return { ref: owedRef(key, actor.userId, actor.accountId, o.id), person: nameFor(o.personName), date: o.incurredDate,
-      what: o.description, amount: rupees(o.amountPaise), settled: rupees(paid), left: rupees(leftPaise(o.amountPaise, paid)) };
+    return { ref: owedRef(key, actor.userId, actor.accountId, o.id), person: nameFor(o.personName,o.personId), date: o.incurredDate,
+      what: o.description, amount: rupees(o.amountPaise), settled: rupees(paid), left: rupees(readOutstanding(o.amountPaise, paid)) };
   });
   const splits = model.splits.map((s) => ({ txn_ref: txRef(s.transactionId)!, split_rev: splitRev(revKey, actor.userId, s.transactionId, s, model.shares.filter(p => p.splitId === s.id)), total: rupees(s.totalPaise), your_share: rupees(s.yourSharePaise) }));
-  const eventPeople = (eventId: string) => [...new Set(model.settlements.filter((s) => s.netEventId === eventId)
-    .map((s) => nameFor((s.splitParticipantId ? sharesById.get(s.splitParticipantId)?.personName : owedById.get(s.owedExpenseId ?? "")?.personName) ?? "")))].sort();
+  const eventPeople = (eventId: string) => [...new Set(model.settlements.filter(s => s.netEventId === eventId).map(s => {
+    const target = s.splitParticipantId ? sharesById.get(s.splitParticipantId) : owedById.get(s.owedExpenseId ?? "");
+    return nameFor(target?.personName ?? "",target?.personId);
+  }))].sort();
   const netEvents = model.netEvents.map((e) => {
     const legs = model.settlements.filter((s) => s.netEventId === e.id);
     // Count receivable legs once; opposite payable offset legs represent the same extinguished debt.
@@ -88,11 +95,13 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
       owed_expenses: owed.filter((o) => model.owed.some((raw) => raw.sourceInflowTransactionId === t.id && owedRef(key, actor.userId, actor.accountId, raw.id) === o.ref)),
     };
   });
-  const people = [...canonical.values()].map((name) => {
-    const same = (n: string) => personKey(n) === personKey(name);
-    const personShares = model.shares.filter((s) => same(s.personName));
-    const personOwed = model.owed.filter((o) => same(o.personName));
-    const personSettlements = settlements.filter((s) => same(s.person));
+  const people = balances.map((balance) => {
+    const name = balance.name;
+    const personShares = model.shares.filter((s) => keyFor(s.personId,s.personName) === balance.key);
+    const personOwed = model.owed.filter((o) => keyFor(o.personId,o.personName) === balance.key);
+    const shareRefs = new Set(personShares.map(s => shareRef(key,actor.userId,actor.accountId,s.id)));
+    const owedRefs = new Set(personOwed.map(o => owedRef(key,actor.userId,actor.accountId,o.id)));
+    const personSettlements = settlements.filter(s => (s.share_ref && shareRefs.has(s.share_ref)) || (s.owed_ref && owedRefs.has(s.owed_ref)));
     const seen = new Map<string, { key: string; handle: string | null; display_name: string | null; inflows: Set<string>; dates: string[] }>();
     for (const st of personSettlements) {
       const txn = transactions.find((t) => t.ref === st.inflow_ref && t.direction === "received");
@@ -101,18 +110,24 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
       const found = seen.get(raw.counterpartyKey) ?? { key: raw.counterpartyKey, handle: txn.handle, display_name: raw.displayName, inflows: new Set<string>(), dates: [] };
       found.inflows.add(txn.ref); found.dates.push(txn.date); seen.set(found.key, found);
     }
-    const dates = [...shares.filter((s) => same(s.person)).map((s) => s.date), ...owed.filter((o) => same(o.person)).map((o) => o.date), ...personSettlements.map((s) => s.date)].sort();
+    const dates = [...shares.filter(s => shareRefs.has(s.ref)).map((s) => s.date), ...owed.filter(o => owedRefs.has(o.ref)).map((o) => o.date), ...personSettlements.map((s) => s.date)].sort();
     return { name,
-      owed_to_you: rupees(personShares.reduce((n, s) => n + leftPaise(s.expectedAmountPaise, settled("share", s.id)), 0)),
-      you_owe: rupees(personOwed.reduce((n, o) => n + leftPaise(o.amountPaise, settled("owed", o.id)), 0)),
-      open_share_count: personShares.filter((s) => leftPaise(s.expectedAmountPaise, settled("share", s.id)) > 0).length,
+      owed_to_you: rupees(balance.owedToYouPaise),
+      you_owe: rupees(balance.youOwePaise),
+      open_share_count: balance.openShareCount,
       last_activity_date: dates.at(-1) ?? null,
-      linked_payees: model.payees.filter(p => p.person && same(p.person)).map(p => ({ key: p.key, handle: p.kind === "upi_handle" ? p.key : null, display_name: p.displayName })),
+      linked_payees: (model.balances?.find(p => p.key === balance.key)?.linkedPayees ?? model.payees.filter(p => p.person && keyFor(p.personId,p.person) === balance.key))
+        .map(p => ({ key:p.key,handle:p.kind === "upi_handle" ? p.key : null,display_name:p.displayName })),
       suggested_payees: suggestPersonPayees(name, model.payees, [...seen.values()].map(s => ({ key: s.key, count: s.inflows.size }))),
       seen_handles: [...seen.values()].map((s) => ({ key: s.key, handle: s.handle, display_name: s.display_name, count: s.inflows.size, last_date: s.dates.sort().at(-1)! }))
         .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)),
     };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+  });
+  const personTargets = new Map(people.map((p, index) => {
+    const balance = balances[index];
+    return [p, { shares:new Set(balance.shares.map(s => shareRef(key,actor.userId,actor.accountId,s.id))),
+      owed:new Set(balance.owed.map(o => owedRef(key,actor.userId,actor.accountId,o.id))) }];
+  }));
   const payees = model.payees.map((p) => {
     const rows = model.transactions.filter((t) => t.counterpartyKey === p.key);
     const dates = rows.map((t) => t.txnDate).sort();
@@ -133,7 +148,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     if (allocated + sourced + (t.residualAcknowledgedPaise ?? 0) >= t.amountPaise) linkedInflowRefs.add(txRef(t.id)!);
   }
   const uncategorizedRefs = new Set(model.transactions.filter(isUncategorized).map(t => txRef(t.id)!));
-  return { transactions, transactionKeys, linkedInflowRefs, uncategorizedRefs, shares, owed, settlements, splits, netEvents, people, payees };
+  return { personTargets, transactions, transactionKeys, linkedInflowRefs, uncategorizedRefs, shares, owed, settlements, splits, netEvents, people, payees };
 }
 export type McpReadView = ReturnType<typeof buildReadView>;
 
@@ -149,11 +164,10 @@ export function getOpenBalances(view: McpReadView, person?: string) {
     throw new McpToolError(`Unknown person '${person}'. ${close.length ? `Close names: ${close.join(", ")}.` : "No close names found."}`);
   }
   return { people: people.map((p) => {
-    const same = (name: string) => personKey(name) === personKey(p.name);
     const lines = [
-      ...view.shares.filter((s) => same(s.person) && s.left !== "0.00").map(({ person: _p, ...s }) => ({ kind: "share" as const, ...s })),
-      ...view.owed.filter((o) => same(o.person) && o.left !== "0.00").map(({ person: _p, ...o }) => ({ kind: "owed" as const, ...o })),
-    ].sort((a, b) => a.date.localeCompare(b.date) || a.ref.localeCompare(b.ref));
+      ...view.shares.filter((s) => view.personTargets.get(p)!.shares.has(s.ref) && s.left !== "0.00").sort((a,b) => [...view.personTargets.get(p)!.shares].indexOf(a.ref) - [...view.personTargets.get(p)!.shares].indexOf(b.ref)).map(({ person: _p, ...s }) => ({ kind: "share" as const, ...s })),
+      ...view.owed.filter((o) => view.personTargets.get(p)!.owed.has(o.ref) && o.left !== "0.00").map(({ person: _p, ...o }) => ({ kind: "owed" as const, ...o })),
+    ].sort((a, b) => a.date.localeCompare(b.date));
     const unlinked = unlinkedInflows(view, p.name)
       .sort((a, b) => b.date.localeCompare(a.date) || a.ref.localeCompare(b.ref)).slice(0, 20)
       .map((t) => ({ txn_ref: t.ref, date: t.date, amount: t.amount, handle: t.handle, via: t.via }));
