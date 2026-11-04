@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
+  MAX_MONTH_YEAR,
+  MIN_MONTH_YEAR,
   initialPickerYear,
   monthJumpOptions,
   parseMonthKey,
@@ -162,18 +164,24 @@ export function MonthJumpDialog({
       <div className="mt-3 flex items-center justify-center gap-4">
         <button
           type="button"
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-neutral-700"
           aria-label="Previous year"
-          onClick={() => onYear(year - 1)}
+          disabled={year <= MIN_MONTH_YEAR}
+          onClick={() => {
+            if (year > MIN_MONTH_YEAR) onYear(year - 1);
+          }}
         >
           ←
         </button>
         <div className="min-w-16 text-center font-medium">{year}</div>
         <button
           type="button"
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-neutral-700"
           aria-label="Next year"
-          onClick={() => onYear(year + 1)}
+          disabled={year >= MAX_MONTH_YEAR}
+          onClick={() => {
+            if (year < MAX_MONTH_YEAR) onYear(year + 1);
+          }}
         >
           →
         </button>

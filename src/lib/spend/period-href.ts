@@ -8,8 +8,6 @@ export interface SpendSearchParams {
   statement?: string;
 }
 
-const MONTH_RE = /^\d{4}-\d{2}$/;
-
 export function spendPeriodHref(
   sp: SpendSearchParams,
   base = "/spend",
@@ -33,7 +31,7 @@ export function adjacentMonthHref(
   delta: -1 | 1,
   basePath = "/spend",
 ): string | null {
-  if (!MONTH_RE.test(monthKey)) return null;
   const next = shiftCalendarMonth(monthKey, delta);
+  if (!next) return null;
   return spendPeriodHref({ month: next }, basePath);
 }
