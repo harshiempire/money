@@ -47,6 +47,12 @@ export const AREA_PATHS: Record<Area, string[]> = {
 };
 
 export const CAPABILITIES: readonly Capability[] = [
+  { id: "settlement.payments", summary: "Tenant-scoped available settlement payments.", kind: "read", impl: "effect", core: null,
+    read: { module: "src/lib/ledger/read/settlement-payments.ts", export: "loadSettlementPayments" },
+    app: { none: "Available for future settlement screens." }, mcp: { none: "MCP shares inflowExplanation; retains partially acknowledged unlinked credits." },
+    guards: ["account ownership", "user-scoped people and payees", "unexplained payments"], idempotent: "none", undoable: false, logged: false,
+    moneyRules: [{ module: "src/lib/ledger/rules/settlement-policy.ts", export: "inflowExplanation" }], refresh: [] },
+
   {
     "id": "transaction.fields",
     "summary": "Categories, notes, transfer/review flags, bulk notes, payee category apply, tag apply/undo and auto-detect transfers.",
@@ -506,7 +512,7 @@ export const CAPABILITIES: readonly Capability[] = [
     "id": "net.save",
     "summary": "saveNetEvent through the actor-scoped ledger.",
     "kind": "write",
-    "impl": "promise",
+    "impl": "effect",
     "core": {
       "module": "src/lib/ledger/net-events.ts",
       "export": "saveNetEvent"
@@ -526,12 +532,17 @@ export const CAPABILITIES: readonly Capability[] = [
     },
     "guards": [
       "no existing event",
-      "expected relations"
+      "expected relations", "expected outstanding per target", "cash today Asia/Kolkata", "cash excludes bank", "bank direction", "no split outflow", "unexplained inflow"
     ],
     "idempotent": "mcp-key",
     "undoable": true,
     "logged": true,
     "moneyRules": [
+      { "module": "src/lib/ledger/rules/net-settlement.ts", "export": "netSettlementReceipt" },
+      { "module": "src/lib/ledger/rules/net-settlement.ts", "export": "netSettlementDate" },
+      { "module": "src/lib/ledger/rules/net-settlement-plan.ts", "export": "guidedSettlementLegs" },
+      { "module": "src/lib/ledger/rules/settlement-policy.ts", "export": "inflowExplanation" },
+      { "module": "src/lib/ledger/rules/balances.ts", "export": "outstandingPaise" },
       {
         "module": "src/lib/net-events/validate.ts",
         "export": "validateNetEventInvariant"
@@ -1347,7 +1358,6 @@ export const LEGACY_PROMISE_CORES: readonly string[] = [
   "settlement.cash.delete",
   "settlement.writeoff",
   "settlement.writeoff.undo",
-  "net.save",
   "net.delete",
   "owed.create",
   "owed.update",

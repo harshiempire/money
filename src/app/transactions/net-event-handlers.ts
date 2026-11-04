@@ -3,7 +3,8 @@ import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
 import { CurrentUser, type Db } from "@/lib/action/services";
-import { fromLedger } from "@/lib/action/ledger";
+import { Actor } from "@/lib/ledger/services";
+import { ledgerEffectErrors, fromLedger } from "@/lib/action/ledger";
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import {
   saveNetEvent as saveNetEventForActor,
@@ -18,7 +19,7 @@ const NewPayableSchema = Schema.Struct({
   categoryId: Schema.optional(Schema.NullOr(Schema.String)),
   note: Schema.optional(Schema.NullOr(Schema.String)),
 });
-// Shape and types only. The leg RULES (a payable leg uses offset, and carries
+// Shape and types only. The leg RULES (a payable leg uses offset or cash, and carries
 // either an existing owedExpenseId or a newPayable, not both and not neither)
 // are enforced by the ledger core with clear messages — a stricter union here
 // would reject those requests with a cryptic decoding message instead.
@@ -27,12 +28,14 @@ const NetEventLegSchema = Schema.Union([
     kind: Schema.Literal("receivable"),
     splitParticipantId: Schema.String,
     amountPaise: Schema.Number,
-    method: Schema.Literals(["bank", "offset"]),
+    method: Schema.Literals(["bank", "cash", "offset"]),
+    expectedOutstandingPaise: Schema.optional(Schema.Number),
   }),
   Schema.Struct({
     kind: Schema.Literal("payable"),
     amountPaise: Schema.Number,
-    method: Schema.Literals(["bank", "offset"]),
+    method: Schema.Literals(["bank", "cash", "offset"]),
+    expectedOutstandingPaise: Schema.optional(Schema.Number),
     owedExpenseId: Schema.optional(Schema.String),
     newPayable: Schema.optional(NewPayableSchema),
   }),
@@ -40,7 +43,7 @@ const NetEventLegSchema = Schema.Union([
 
 const saveNetEventInput = Schema.Struct({
   netEventId: Schema.optional(Schema.String),
-  eventDate: Schema.String,
+  eventDate: Schema.optional(Schema.String),
   inflowTransactionId: Schema.optional(Schema.String),
   outflowTransactionId: Schema.optional(Schema.String),
   // main also accepted null (the core normalizes it).
@@ -50,9 +53,9 @@ const saveNetEventInput = Schema.Struct({
 export const saveNetEventSpec: ActionSpec<
   typeof saveNetEventInput.Type,
   typeof saveNetEventInput.Encoded,
-  Awaited<ReturnType<typeof saveNetEventForActor>>,
+  Effect.Success<ReturnType<typeof saveNetEventForActor>>,
   CurrentUser | Db,
-  NonNullable<Awaited<ReturnType<typeof saveNetEventForActor>>["value"]>
+  NonNullable<Effect.Success<ReturnType<typeof saveNetEventForActor>>["value"]>
 > = {
   input: saveNetEventInput,
   revalidate: refreshPaths("net.save"),
@@ -64,8 +67,7 @@ export const saveNetEventSpec: ActionSpec<
     const account = yield* Effect.promise(() =>
       getOrCreateAccountForBank(user.id, "bob"),
     );
-    const result = yield* fromLedger(() =>
-      saveNetEventForActor(
+    const result = yield* saveNetEventForActor(
         { actor: { userId: user.id, accountId: account.id }, source: "app" },
         {
           eventDate: input.eventDate,
@@ -82,8 +84,7 @@ export const saveNetEventSpec: ActionSpec<
           // The core validates the leg rules; the cast only widens the union for it.
           legs: input.legs.map((leg) => pickNetEventLeg(leg as NetEventLeg)),
         },
-      ),
-    );
+      ).pipe(Effect.provideService(Actor, { userId: user.id, accountId: account.id }), ledgerEffectErrors);
 
     if (result.value === undefined) {
       return yield* Effect.die(new Error("saveNetEvent: the ledger core returned no value"));

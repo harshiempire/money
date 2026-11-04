@@ -1,3 +1,4 @@
+import { indiaTodayIso } from "@/lib/dates/india";
 /**
  * Throwaway DB only. Never load a .env file:
  * Set MONEY_LEDGER_TEST_DBURL_FILE to a local file holding the throwaway URL;
@@ -168,7 +169,9 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
   }
 
   test("net both payable fields are rejected before any database or ownership work", async () => {
-    const { saveNetEvent } = await import("./net-events");
+    const core = await import("./net-events");
+    const { runLedger } = await import("./run");
+    const saveNetEvent = (ctx: WriteContext, input: Parameters<typeof core.saveNetEvent>[1]) => runLedger(core.saveNetEvent(ctx, input), ctx.actor);
     // Invalid UUIDs would fail at the database boundary if validation got that far.
     const ctx: WriteContext = { source: "app", actor: { userId: "no-db-user", accountId: "no-db-account" } };
     const malformed = {
@@ -616,7 +619,8 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
       runLedger(splitCores.recordSettlement(ctx, { ...input, allocations: { kind: "explicit", rows: input.allocations } }), ctx.actor) };
     const cashCores = await import("./settlements");
     const settlements = { ...cashCores, recordCashSettlement: (ctx: WriteContext, input: import("./settlements").RecordCashSettlementInput) => runLedger(cashCores.recordCashSettlement(ctx, input), ctx.actor) };
-    const net = await import("./net-events");
+    const netCores = await import("./net-events");
+    const net = { ...netCores, saveNetEvent: (ctx: WriteContext, input: Parameters<typeof netCores.saveNetEvent>[1]) => runLedger(netCores.saveNetEvent(ctx, input), ctx.actor) };
     const owed = await import("./owed-expenses");
     const { relationalSnapshot } = await import("./relational-store");
     // The snapshot is one atomic SELECT; it needs no extra BEGIN/COMMIT.
@@ -1195,6 +1199,74 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     await f.undoChange(f.app, edited.changeId!);
     expect(await r.snapshot()).toEqual(before);
   }), 60000);
+  test("guided cash plus offsets is atomic, uses the server date and supports exact undo", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const expense = await r.owed.createOwedExpense(f.app, {...r.expenseInput, amountPaise: 18500});
+    const before = await r.snapshot();
+    const legs = [
+      {kind: "receivable" as const, splitParticipantId: r.share.id, amountPaise: 6000, method: "offset" as const, expectedOutstandingPaise: 6000},
+      {kind: "payable" as const, owedExpenseId: expense.value, amountPaise: 12500, method: "cash" as const, expectedOutstandingPaise: 18500},
+      {kind: "payable" as const, owedExpenseId: expense.value, amountPaise: 6000, method: "offset" as const, expectedOutstandingPaise: 18500},
+    ];
+    const saved = await r.net.saveNetEvent(f.app, { legs});
+    const rows = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.netEventId,saved.value.netEventId));
+    expect(rows).toHaveLength(3);
+    expect(rows.filter(row => row.method === "cash").map(row=>Number(row.amountPaise))).toEqual([12500]);
+    expect(rows.every(row => row.inflowTransactionId === null)).toBe(true);
+    const [event] = await f.db.select().from(f.schema.netEvents).where(eq(f.schema.netEvents.id,saved.value.netEventId));
+    expect(event.eventDate).toBe(indiaTodayIso());
+    const after = await r.snapshot();
+    await expect(r.net.saveNetEvent(f.app,{ legs})).rejects.toMatchObject({code:"stale"});
+    expect(await r.snapshot()).toEqual(after);
+    const undone = await f.undoChange(f.app,saved.changeId!);
+    expect(await r.snapshot()).toEqual(before);
+    await f.undoChange(f.app, undone.changeId!);
+    expect(await r.snapshot()).toEqual(after);
+  }),60000);
+
+  test("guided settlements reject changed balances, allocated bank sources and wrong directions without writes", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const before = await r.snapshot();
+    await expect(r.net.saveNetEvent(f.app,{...r.netInput, legs:r.netInput.legs.map(leg=>({...leg,...(leg.kind==="receivable"?{expectedOutstandingPaise:6001}:{})}))})).rejects.toMatchObject({code:"stale"});
+    expect(await r.snapshot()).toEqual(before);
+    await f.db.update(f.schema.transactions).set({drCr:"debit"}).where(eq(f.schema.transactions.id,f.ids[1]));
+    await expect(r.net.saveNetEvent(f.app,r.netInput)).rejects.toThrow("wrong direction");
+    await f.db.update(f.schema.transactions).set({drCr:"credit"}).where(eq(f.schema.transactions.id,f.ids[1]));
+    await r.splits.recordSettlement(f.app,{inflowTransactionId:f.ids[1],allocations:[{splitParticipantId:r.share.id,amountPaise:1000}]});
+    const allocated = await r.snapshot();
+    await expect(r.net.saveNetEvent(f.app,r.netInput)).rejects.toMatchObject({code:"stale"});
+    expect(await r.snapshot()).toEqual(allocated);
+  }),60000);
+
+  test("net guards reject cash dates, cash-bank mixtures, split outflows and conflicting previews atomically", () => fixture(async f => {
+    const r = await relationalFixture(f);
+    const cash = [{ kind: "receivable" as const, splitParticipantId: r.share.id, amountPaise: 1000, method: "cash" as const, expectedOutstandingPaise: 6000 }];
+    const before = await r.snapshot();
+    for (const eventDate of ["2000-01-01", "2099-01-01"]) {
+      await expect(r.net.saveNetEvent(f.app, { eventDate, legs: cash })).rejects.toMatchObject({ code: "invalid_input" });
+      expect(await r.snapshot()).toEqual(before);
+    }
+    await expect(r.net.saveNetEvent(f.app, { inflowTransactionId: f.ids[1], legs: cash })).rejects.toThrow("cannot also use a bank");
+    await expect(r.net.saveNetEvent(f.app, { ...r.netInput, outflowTransactionId: f.ids[0] })).rejects.toThrow("already a split bill");
+    await expect(r.net.saveNetEvent(f.app, { ...r.netInput, outflowTransactionId: f.ids[1] })).rejects.toThrow("wrong direction");
+    await expect(r.net.saveNetEvent(f.app, { legs: [cash[0], { ...cash[0], expectedOutstandingPaise: 5000 }] })).rejects.toMatchObject({ code: "invalid_input" });
+    expect(await r.snapshot()).toEqual(before);
+    const saved = await r.net.saveNetEvent(f.app, { eventDate: indiaTodayIso(), legs: cash });
+    expect(saved.value.receipt.legs[0].leftPaise).toBe(5000);
+  }), 60000);
+
+  test("settlement payment read scopes accounts, payees and people independently", () => fixture(async f => {
+    const { loadSettlementPaymentsForAccount } = await import("./read/settlement-payments");
+    const foreignPerson = crypto.randomUUID(), foreignPayee = crypto.randomUUID();
+    await f.db.insert(f.schema.persons).values({ id: foreignPerson, userId: f.otherUser, name: "Foreign Finch" });
+    await f.db.insert(f.schema.counterparties).values({ id: foreignPayee, userId: f.otherUser, key: "foreign-finch", kind: "merchant", personId: foreignPerson });
+    await f.db.update(f.schema.transactions).set({ counterpartyId: foreignPayee }).where(eq(f.schema.transactions.id, f.ids[1]));
+    const rows = await loadSettlementPaymentsForAccount(f.actor);
+    expect(rows.find(r => r.id === f.ids[1])?.personName).toBeNull();
+    expect(rows.some(r => r.personName === "Foreign Finch")).toBe(false);
+    expect(await loadSettlementPaymentsForAccount({ userId: f.otherUser, accountId: f.actor.accountId })).toEqual([]);
+  }), 60000);
+
   test("net event edit replaces the event id and undo restores the exact prior event and legs", () => fixture(async f => {
     const r = await relationalFixture(f);
     const created = await r.net.saveNetEvent(f.app, r.netInput);
@@ -1488,7 +1560,7 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     const add = await api.call("add_owed_expense", { person: "Kiran", date: "2026-10-02", what: "Dinner", amount: "15", idempotency_key: "p4-add-owed" }); expect(add.applied).toBe(true);
     const owedRef = (add.refs as string[]).find(ref => ref.startsWith("owe_"))!;
     const update = await api.call("update_owed_expense", { owed_ref: owedRef, amount: "10", what: "Dinner corrected", idempotency_key: "p4-edit-owed" }); expect(update.applied).toBe(true);
-    const net = await api.call("net_settle", { date: "2026-10-04", inflow_ref: inflow, receivables: [{ share_ref: sh, amount: "50" }], payables: [{ owed_ref: owedRef, amount: "10" }], idempotency_key: "p4-net-settle" }); expect(net.applied).toBe(true);
+    const net = await api.call("net_settle", { date: "2026-10-04", inflow_ref: inflow, receivables: [{ share_ref: sh, amount: "50", expected_outstanding: "55" }], payables: [{ owed_ref: owedRef, amount: "10", expected_outstanding: "10" }], idempotency_key: "p4-net-settle" }); expect(net.applied).toBe(true);
     expect((await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", idempotency_key: "p4-net-bank-refusal" })).applied).toBe(false);
     expect((await api.undo(net.change_id, "p4-undo-net")).applied).toBe(true);
     const deleted = await api.call("delete_owed_expense", { owed_ref: owedRef, idempotency_key: "p4-delete-owed" }); expect(deleted.applied).toBe(true);
