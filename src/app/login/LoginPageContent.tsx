@@ -28,6 +28,8 @@ export function LoginPageContent() {
       <div className="w-full max-w-sm">
         <h1 className="text-2xl font-semibold">Sign in</h1>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+          {/* Full navigation refreshes the session when entering the auth flow. */}
+          {/* oxlint-disable-next-line next/no-html-link-for-pages */}
           <a href="/register" className="underline-offset-4 hover:underline">
             Create an account
           </a>

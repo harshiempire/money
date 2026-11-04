@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import {
   MAX_MONTH_YEAR,
@@ -192,9 +193,12 @@ export function MonthJumpDialog({
           const isToday =
             today?.year === year && today.month === month.month;
           return (
-            <a
+            <Link
               key={month.monthKey}
               href={month.href}
+              // <Link> navigates without a reload, so close the picker
+              // ourselves (a plain <a> used to close it by reloading).
+              onClick={() => dialogRef.current?.close()}
               aria-label={month.longLabel}
               aria-current={selected ? "date" : undefined}
               autoFocus={selected}
@@ -216,7 +220,7 @@ export function MonthJumpDialog({
                   />
                 ) : null}
               </span>
-            </a>
+            </Link>
           );
         })}
       </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
 import { useMemo, useRef, useState, useTransition } from "react";
@@ -379,9 +380,9 @@ function SettleForm({
       <p className="mt-1 text-xs text-neutral-500">
         If the person also paid cash, save the bank amount here, then record the
         cash part from{" "}
-        <a className="underline" href="/reimbursements">
+        <Link className="underline" href="/reimbursements">
           Reimbursements
-        </a>
+        </Link>
         .
       </p>
       {netSettledPaise > 0 && (

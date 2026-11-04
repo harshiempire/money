@@ -11,6 +11,8 @@ export default async function RegisterPage() {
       <h1 className="text-2xl font-semibold">Create account</h1>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
         Already have an account?{" "}
+        {/* Full navigation refreshes the session when entering the auth flow. */}
+        {/* oxlint-disable-next-line next/no-html-link-for-pages */}
         <a href="/login" className="underline-offset-4 hover:underline">
           Sign in
         </a>

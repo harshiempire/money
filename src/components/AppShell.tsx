@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { SignOutButton } from "./SignOutButton";
@@ -108,9 +109,9 @@ export function AppShell({
     <div className="flex min-h-screen">
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-neutral-200 dark:border-neutral-800 md:flex">
         <div className="flex flex-1 flex-col p-4">
-          <a href="/" className="text-lg font-semibold">
+          <Link href="/" className="text-lg font-semibold">
             Money
-          </a>
+          </Link>
           <nav className="mt-6 space-y-5">
             {NAV_GROUPS.map((group) => (
               <div key={group.label}>
@@ -121,14 +122,14 @@ export function AppShell({
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     return (
-                      <a
+                      <Link
                         key={item.href}
                         href={item.href}
                         className={navItemClass(item.href)}
                       >
                         <Icon className="h-4 w-4 shrink-0" />
                         {item.label}
-                      </a>
+                      </Link>
                     );
                   })}
                 </div>
@@ -171,7 +172,7 @@ export function AppShell({
             {MORE_LINKS.map((item) => {
               const Icon = item.icon;
               return (
-                <a
+                <Link
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-2 rounded px-2 py-2 text-sm ${
@@ -183,7 +184,7 @@ export function AppShell({
                 >
                   <Icon className="h-4 w-4" />
                   {item.label}
-                </a>
+                </Link>
               );
             })}
             <div className="my-2 border-t border-neutral-200 dark:border-neutral-800" />
@@ -201,10 +202,10 @@ export function AppShell({
         {MOBILE_TABS.map((tab) => {
           const Icon = tab.icon;
           return (
-            <a key={tab.href} href={tab.href} className={tabClass(tab.href)}>
+            <Link key={tab.href} href={tab.href} className={tabClass(tab.href)}>
               <Icon className="h-5 w-5" />
               {tab.label}
-            </a>
+            </Link>
           );
         })}
         <button

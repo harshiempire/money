@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { AppShell } from "@/components/AppShell";
@@ -152,9 +153,9 @@ export default async function DashboardPage({
           <ul className="mt-2 space-y-1 text-amber-800 dark:text-amber-300/90">
             {triage.uncategorizedCount > 0 && (
               <li>
-                <a className="underline" href="/transactions">
+                <Link className="underline" href="/transactions">
                   {triage.uncategorizedCount} uncategorized
-                </a>
+                </Link>
                 {triage.uncategorizedNetSelfPaise !== 0 && (
                   <span className="font-mono text-xs">
                     {" "}
@@ -166,9 +167,9 @@ export default async function DashboardPage({
             )}
             {triage.needsReviewCount > 0 && (
               <li>
-                <a className="underline" href="/review">
+                <Link className="underline" href="/review">
                   {triage.needsReviewCount} flagged for review
-                </a>
+                </Link>
               </li>
             )}
           </ul>
@@ -181,12 +182,12 @@ export default async function DashboardPage({
             Import a Bank of Baroda statement to see your spend breakdown and
             categories here.
           </p>
-          <a
+          <Link
             href="/import"
             className="mt-3 inline-block rounded bg-neutral-900 px-3 py-1.5 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
           >
             Import statement →
-          </a>
+          </Link>
         </SectionCard>
       ) : (
         <>
@@ -195,12 +196,12 @@ export default async function DashboardPage({
               className="mt-8"
               title="Spend breakdown"
               action={
-                <a
+                <Link
                   href={spendLink}
                   className="text-xs text-neutral-500 underline-offset-2 hover:underline"
                 >
                   Full report →
-                </a>
+                </Link>
               }
             >
               <SpendBreakdown
@@ -224,9 +225,9 @@ export default async function DashboardPage({
           {spendCats.length === 0 ? (
             <p className="mt-2 text-sm text-neutral-500">
               Nothing categorized yet — head to{" "}
-              <a className="underline" href="/transactions">
+              <Link className="underline" href="/transactions">
                 /transactions
-              </a>{" "}
+              </Link>{" "}
               to tag rows.
             </p>
           ) : (
@@ -376,7 +377,7 @@ function PeriodPicker({
         {period.label}
       </span>
       <div className="ml-auto flex gap-1.5">
-        <a
+        <Link
           href="/"
           className={`rounded border px-2 py-1 text-xs ${
             !active
@@ -385,9 +386,9 @@ function PeriodPicker({
           }`}
         >
           Statement period
-        </a>
+        </Link>
         {presets.map((p) => (
-          <a
+          <Link
             key={p.key}
             href={`/?preset=${p.key}`}
             className={`rounded border px-2 py-1 text-xs ${
@@ -397,14 +398,14 @@ function PeriodPicker({
             }`}
           >
             {p.label}
-          </a>
+          </Link>
         ))}
-        <a
+        <Link
           href="/spend"
           className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
         >
           Spend report
-        </a>
+        </Link>
       </div>
     </div>
   );

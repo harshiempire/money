@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { and, eq, gte, lte, isNull, or, sql, desc } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { AppShell } from "@/components/AppShell";
@@ -238,19 +239,19 @@ export default async function TransactionsPage({
             {periodLabel}
           </span>
           {showAllTime ? (
-            <a
+            <Link
               href={periodHref(false)}
               className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
             >
               Latest statement
-            </a>
+            </Link>
           ) : (
-            <a
+            <Link
               href={periodHref(true)}
               className="text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
             >
               Show all time
-            </a>
+            </Link>
           )}
         </div>
       )}
@@ -264,12 +265,12 @@ export default async function TransactionsPage({
       {highlightMissingFromList && (
         <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
           The linked transaction is outside the current filters.{" "}
-          <a
+          <Link
             href={`/transactions?txn=${highlightTxnId}&all=1#txn-${highlightTxnId}`}
             className="underline underline-offset-2"
           >
             Show all time
-          </a>{" "}
+          </Link>{" "}
           to locate it.
         </p>
       )}
@@ -535,9 +536,9 @@ export default async function TransactionsPage({
       )}
       {(currentPage > 1 || offset + rows.length < totals.count) && (
         <nav aria-label="Transaction pages" className="mt-5 flex items-center justify-between gap-3 text-sm">
-          {currentPage > 1 ? <a className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage - 1)}>← Previous</a> : <span />}
+          {currentPage > 1 ? <Link className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage - 1)}>← Previous</Link> : <span />}
           <span className="text-neutral-500">Page {currentPage} of {Math.max(1, Math.ceil(totals.count / pageSize))}</span>
-          {offset + rows.length < totals.count && <a className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage + 1)}>Load more →</a>}
+          {offset + rows.length < totals.count && <Link className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700" href={pageHref(currentPage + 1)}>Load more →</Link>}
         </nav>
       )}
     </AppShell>
@@ -609,7 +610,10 @@ function FiltersBar({
   attention?: string;
 }) {
   return (
+    // key: <Link> navigation keeps this form mounted, and inputs only read
+    // defaultValue on mount, so remount it whenever the filters change.
     <form
+      key={[query, from, to, channel, showAllTime, importId, attention].join("|")}
       method="get"
       className="mt-5 flex flex-wrap items-end gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
     >
@@ -662,12 +666,12 @@ function FiltersBar({
         >
           Apply
         </button>
-        <a
+        <Link
           href="/transactions"
           className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
         >
           Reset
-        </a>
+        </Link>
       </div>
     </form>
   );

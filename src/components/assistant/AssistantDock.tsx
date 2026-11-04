@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { moneyKeys } from "@/lib/query/keys";
 import { useMoneyQueryUser, useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
-import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { ActionError, callAction, unwrap, type ActionFailure } from "@/lib/action/result";
 import {
   assistantTurn,
@@ -174,7 +174,9 @@ export function AssistantDock() {
   const docked = mode === "docked" && desktop;
 
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const busyRef = useRef(false);
   const inFlightOps = useRef(new Set<string>());
   const lastRequest = useRef<{ text: string; resumedAfterPick: boolean; focus: string | null } | null>(null);
@@ -204,33 +206,6 @@ export function AssistantDock() {
   const toggleFromKeyboard = useEffectEvent(() => setPanelOpen(!openRef.current));
 
   // ─── Persistence ───────────────────────────────────────────────────────
-  useEffect(() => {
-    let restoredOpen = false;
-    let restoredIds: string[] = [];
-    let restoredMessages: ChatMessage[] | undefined;
-    try {
-      const ui = JSON.parse(localStorage.getItem(UI_KEY) ?? "null");
-      if (ui) {
-        restoredOpen = Boolean(ui.open);
-        if (ui.mode === "docked" || ui.mode === "floating") setMode(ui.mode);
-        if (typeof ui.pos?.r === "number" && typeof ui.pos?.b === "number") setPos(ui.pos);
-      }
-      const chat = JSON.parse(sessionStorage.getItem(CHAT_KEY) ?? "null");
-      if (chat) {
-        restoredMessages = (chat.messages ?? []).map(restoreMessage);
-        setTxns(chat.txns ?? {});
-        restoredIds = Object.keys(chat.txns ?? {});
-        setFocus(chat.focus ?? null);
-        setUsed(chat.used ?? []);
-      }
-    } catch {
-      /* corrupt storage — start fresh */
-    }
-    setPanelOpen(restoredOpen, restoredIds);
-    if (restoredMessages) setMessages(startTagRuns(restoredMessages));
-    setHydrated(true);
-  }, []);
-
   useEffect(() => {
     if (!hydrated) return;
     const chat = { messages: messages.filter((m) => m.kind !== "thinking"), txns, focus, used };
@@ -567,6 +542,37 @@ export function AssistantDock() {
       setBatch((b) => (b ? { ...b, phase: "review", error: errorText(e, "Couldn't draft tags.") } : b));
     }
   };
+
+  const restoreFromStorage = useEffectEvent(() => {
+    let restoredOpen = false;
+    let restoredIds: string[] = [];
+    let restoredMessages: ChatMessage[] | undefined;
+    try {
+      const ui = JSON.parse(localStorage.getItem(UI_KEY) ?? "null");
+      if (ui) {
+        restoredOpen = Boolean(ui.open);
+        if (ui.mode === "docked" || ui.mode === "floating") setMode(ui.mode);
+        if (typeof ui.pos?.r === "number" && typeof ui.pos?.b === "number") setPos(ui.pos);
+      }
+      const chat = JSON.parse(sessionStorage.getItem(CHAT_KEY) ?? "null");
+      if (chat) {
+        restoredMessages = (chat.messages ?? []).map(restoreMessage);
+        setTxns(chat.txns ?? {});
+        restoredIds = Object.keys(chat.txns ?? {});
+        setFocus(chat.focus ?? null);
+        setUsed(chat.used ?? []);
+      }
+    } catch {
+      /* corrupt storage — start fresh */
+    }
+    setPanelOpen(restoredOpen, restoredIds);
+    if (restoredMessages) setMessages(startTagRuns(restoredMessages));
+    setHydrated(true);
+  });
+
+  useEffect(() => {
+    restoreFromStorage();
+  }, []);
 
   const refreshBoot = async () => {
     await refetchBoot().catch(() => {});
