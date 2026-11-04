@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -54,7 +55,7 @@ export const saveNetEventSpec: ActionSpec<
   NonNullable<Awaited<ReturnType<typeof saveNetEventForActor>>["value"]>
 > = {
   input: saveNetEventInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/spend", "/"],
+  revalidate: refreshPaths("net.save"),
   revalidateWhen: (r) => r.revalidate,
   // The handler fails (as a logged defect) before this if the core returned no value.
   toData: (r) => r.value as NonNullable<typeof r.value>,
@@ -100,7 +101,7 @@ export const deleteNetEventSpec: ActionSpec<
   void
 > = {
   input: deleteNetEventInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/spend", "/"],
+  revalidate: refreshPaths("net.delete"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("deleteNetEvent")(function* (input) {

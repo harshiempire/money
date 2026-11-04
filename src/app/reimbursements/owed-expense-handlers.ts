@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -26,7 +27,7 @@ export const createOwedExpenseSpec: ActionSpec<
   NonNullable<Awaited<ReturnType<typeof createOwedExpenseForActor>>["value"]>
 > = {
   input: createOwedExpenseInput,
-  revalidate: ["/reimbursements", "/transactions", "/people", "/spend", "/"],
+  revalidate: refreshPaths("owed.create"),
   revalidateWhen: (r) => r.revalidate,
   // The handler fails (as a logged defect) before this if the core returned no value.
   toData: (r) => r.value as NonNullable<typeof r.value>,
@@ -75,7 +76,7 @@ export const updateOwedExpenseSpec: ActionSpec<
   void
 > = {
   input: updateOwedExpenseInput,
-  revalidate: ["/reimbursements", "/transactions", "/people", "/spend", "/"],
+  revalidate: refreshPaths("owed.update"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("updateOwedExpense")(function* (input) {
@@ -121,7 +122,7 @@ export const deleteOwedExpenseSpec: ActionSpec<
   void
 > = {
   input: deleteOwedExpenseInput,
-  revalidate: ["/reimbursements", "/transactions", "/people", "/spend", "/"],
+  revalidate: refreshPaths("owed.delete"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("deleteOwedExpense")(function* (input) {

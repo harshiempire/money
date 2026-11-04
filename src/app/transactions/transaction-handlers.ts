@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -69,7 +70,7 @@ export const setTransactionCategorySpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: setTransactionCategoryInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   handler: Effect.fn("setTransactionCategory")(function* (input) {
     const user = yield* CurrentUser;
     // The shared write (also used by the assistant's tag apply/undo). Only the
@@ -100,7 +101,7 @@ export const applyCategoryToCounterpartySpec: ActionSpec<
   { updated: number; ids: string[] }
 > = {
   input: applyCategoryToCounterpartyInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   revalidateWhen: (r) => r.revalidate,
   toData: (r) => r.value,
   handler: Effect.fn("applyCategoryToCounterparty")(function* (input) {
@@ -196,7 +197,7 @@ export const setTransactionTransferSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: setTransactionTransferInput,
-  revalidate: ["/transactions", "/review", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   handler: Effect.fn("setTransactionTransfer")(function* (input) {
     const user = yield* CurrentUser;
     const { accountId } = yield* fromLedger(() =>
@@ -232,7 +233,7 @@ export const setTransactionNeedsReviewSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: setTransactionNeedsReviewInput,
-  revalidate: ["/transactions", "/review", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   handler: Effect.fn("setTransactionNeedsReview")(function* (input) {
     const user = yield* CurrentUser;
     const { accountId } = yield* fromLedger(() =>
@@ -270,7 +271,7 @@ export const setTransactionNoteSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: setTransactionNoteInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   handler: Effect.fn("setTransactionNote")(function* (input) {
     const user = yield* CurrentUser;
     const { accountId } = yield* fromLedger(() =>
@@ -371,7 +372,7 @@ export const applyNoteToTransactionsSpec: ActionSpec<
   { updated: number }
 > = {
   input: applyNoteToTransactionsInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   revalidateWhen: (r) => r.revalidate,
   toData: (r) => r.value,
   handler: Effect.fn("applyNoteToTransactions")(function* (input) {
@@ -413,7 +414,7 @@ export const autoDetectTransfersSpec: ActionSpec<
 > = {
   input: autoDetectTransfersInput,
   // As before: only /transactions when nothing was found.
-  revalidate: (r) => (r.pairs === 0 ? ["/transactions"] : ["/transactions", "/", "/timeline"]),
+  revalidate: refreshPaths("transaction.fields"),
   handler: Effect.fn("autoDetectTransfers")(function* () {
     const user = yield* CurrentUser;
     const account = yield* Effect.promise(() =>

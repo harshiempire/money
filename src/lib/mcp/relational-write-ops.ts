@@ -1,3 +1,4 @@
+import { CAPABILITIES, refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { runCore, CoreFailure, ledgerToolError } from "./run-core";
 import type { SettlementReceipt } from "@/lib/ledger/rules/settlement-policy";
@@ -221,7 +222,9 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
         result = await addStandingNote(ctx, input.body); break;
       }
     }
-    for (const path of ["/", "/transactions", "/reimbursements", "/people", "/spend", "/connections"]) revalidatePath(path);
+    const capability = CAPABILITIES.find(c => "tools" in c.mcp && c.mcp.tools.some(t => t.name === tool));
+    if (!capability) throw new Error(`Unregistered relational tool: ${tool}`);
+    for (const path of refreshPaths(capability.id)) revalidatePath(path);
     return result.response ?? render(result);
   } catch (e) {
     // A concurrent identical request may have committed after the first replay check.

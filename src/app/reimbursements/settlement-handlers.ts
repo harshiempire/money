@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -27,7 +28,7 @@ export const recordCashSettlementSpec: ActionSpec<
   Effect.Success<ReturnType<typeof recordCashSettlementForActor>>["value"]
 > = {
   input: recordCashSettlementInput,
-  revalidate: ["/reimbursements", "/transactions", "/"],
+  revalidate: refreshPaths("settlement.cash.record"),
   revalidateWhen: (r) => r.revalidate,
   toData: (r) => r.value,
   handler: Effect.fn("recordCashSettlement")(function* (input) {
@@ -59,7 +60,7 @@ export const deleteCashSettlementSpec: ActionSpec<
   void
 > = {
   input: deleteCashSettlementInput,
-  revalidate: ["/reimbursements", "/transactions", "/"],
+  revalidate: refreshPaths("settlement.cash.delete"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("deleteCashSettlement")(function* (input) {
@@ -93,7 +94,7 @@ export const writeOffParticipantShareSpec: ActionSpec<
   void
 > = {
   input: writeOffParticipantShareInput,
-  revalidate: ["/reimbursements", "/transactions", "/people", "/"],
+  revalidate: refreshPaths("settlement.writeoff"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("writeOffParticipantShare")(function* (input) {
@@ -124,7 +125,7 @@ export const undoWriteOffSpec: ActionSpec<
   void
 > = {
   input: undoWriteOffInput,
-  revalidate: ["/reimbursements", "/transactions", "/people", "/"],
+  revalidate: refreshPaths("settlement.writeoff.undo"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("undoWriteOff")(function* (input) {

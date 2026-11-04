@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -213,7 +214,7 @@ export const applySuggestedTagsSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: applySuggestedTagsInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   revalidateWhen: (r) => r.applied.length > 0,
   handler: Effect.fn("applySuggestedTags")(function* (input) {
     const actor = yield* actorFromSession();
@@ -235,7 +236,7 @@ export const undoSuggestedTagsSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: undoSuggestedTagsInput,
-  revalidate: ["/transactions", "/"],
+  revalidate: refreshPaths("transaction.fields"),
   revalidateWhen: (r) => r.restored > 0,
   handler: Effect.fn("undoSuggestedTags")(function* (input) {
     const actor = yield* actorFromSession();

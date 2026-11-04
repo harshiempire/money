@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -33,10 +34,8 @@ function context(p: McpPrincipal, tool: string, input: { idempotency_key: string
     idempotency: { key: input.idempotency_key, requestHash: requestHash(tool, input) },
   };
 }
-function refresh() {
-  revalidatePath("/transactions");
-  revalidatePath("/");
-  revalidatePath("/connections");
+function refresh(id: string) {
+  for (const path of refreshPaths(id)) revalidatePath(path);
 }
 const failure = (code: string, message: string) => ({ applied: false, errors: [{ code, message }] });
 const keys = () => ({
@@ -114,7 +113,7 @@ export const mcpWriteOps: McpWriteOps = {
       kind: "transaction_fields",
       ...(input.reason !== undefined ? { summary: input.reason } : {}),
     });
-    if (!result.errors?.length) refresh();
+    if (!result.errors?.length) refresh("transaction.fields");
     return editOutput(p, result);
   },
   async payee(p, input) {
@@ -142,7 +141,7 @@ export const mcpWriteOps: McpWriteOps = {
       categoryId: next,
       guard: { currentDefaultCategoryId: current },
     });
-    if (!result.confirm) refresh();
+    if (!result.confirm) refresh("payee.default");
     return payeeOutput(result);
   },
   async changes(p, input) {
@@ -195,10 +194,7 @@ export const mcpWriteOps: McpWriteOps = {
           : [{ code: "stale", message: "A target or its related shares or settlements changed. Nothing was undone." }],
       };
     }
-    refresh();
-    revalidatePath("/reimbursements");
-    revalidatePath("/people");
-    revalidatePath("/spend");
+    refresh("change.undo");
     return {
       ...(result.response ?? { applied: true, change_id: result.changeId }),
       ...(result.replayed ? { replayed: true } : {}),

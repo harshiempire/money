@@ -1,3 +1,4 @@
+import { refreshPaths } from "@/lib/ledger/capabilities";
 import "server-only";
 import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
@@ -37,7 +38,7 @@ export const createSplitSpec: ActionSpec<
   void
 > = {
   input: createSplitInput,
-  revalidate: ["/transactions", "/reimbursements", "/"],
+  revalidate: refreshPaths("split.create"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("createSplit")(function* (input) {
@@ -77,7 +78,7 @@ export const deleteSplitSpec: ActionSpec<
   void
 > = {
   input: deleteSplitInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/"],
+  revalidate: refreshPaths("split.delete"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("deleteSplit")(function* (input) {
@@ -128,7 +129,7 @@ export const recordSettlementSpec: ActionSpec<
   Effect.Success<ReturnType<typeof recordSettlementForActor>>["value"]
 > = {
   input: recordSettlementInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/"],
+  revalidate: refreshPaths("settlement.bank.record"),
   revalidateWhen: (r) => r.revalidate,
   toData: (r) => r.value,
   handler: Effect.fn("recordSettlement")(function* (input) {
@@ -180,7 +181,7 @@ export const clearSettlementSpec: ActionSpec<
   void
 > = {
   input: clearSettlementInput,
-  revalidate: ["/transactions", "/reimbursements", "/people", "/"],
+  revalidate: refreshPaths("settlement.bank.clear"),
   revalidateWhen: (r) => r.revalidate,
   toData: () => undefined,
   handler: Effect.fn("clearSettlement")(function* (input) {
