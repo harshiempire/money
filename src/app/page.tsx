@@ -191,26 +191,14 @@ export default async function DashboardPage({
       ) : (
         <>
           {showBreakdown && (
-            <SectionCard
+            <SpendBreakdown
               className="mt-8"
-              title="Spend breakdown"
-              action={
-                <a
-                  href={spendLink}
-                  className="text-xs text-neutral-500 underline-offset-2 hover:underline"
-                >
-                  Full report →
-                </a>
-              }
-            >
-              <SpendBreakdown
-                bridge={bridge}
-                netSelfPaise={totals.netSelfPaise}
-                owedSelfPaise={totals.owedSelfPaise}
-                reimbursement={reimbursement}
-                compact
-              />
-            </SectionCard>
+              bridge={bridge}
+              netSelfPaise={totals.netSelfPaise}
+              owedSelfPaise={totals.owedSelfPaise}
+              reimbursement={reimbursement}
+              reportHref={spendLink}
+            />
           )}
 
           <section className="mt-10 grid gap-8 md:grid-cols-2">

@@ -80,3 +80,11 @@
 body {
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
+
+@utility bg-waterfall-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    oklch(0.82 0.12 75) 0 5px,
+    oklch(0.9 0.08 75) 5px 10px
+  );
+}

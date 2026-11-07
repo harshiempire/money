@@ -138,14 +138,13 @@ export default async function SpendReportPage({
         )}
       </StatHero>
 
-      <SectionCard className="mt-8" title="Spend breakdown">
-        <SpendBreakdown
-          bridge={bridge}
-          netSelfPaise={totals.netSelfPaise}
-          owedSelfPaise={totals.owedSelfPaise}
-          reimbursement={reimbursement}
-        />
-      </SectionCard>
+      <SpendBreakdown
+        className="mt-8"
+        bridge={bridge}
+        netSelfPaise={totals.netSelfPaise}
+        owedSelfPaise={totals.owedSelfPaise}
+        reimbursement={reimbursement}
+      />
 
       {daily.length >= 2 && (
         <SectionCard className="mt-8" title="Daily spend">
