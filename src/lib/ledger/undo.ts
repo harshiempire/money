@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { Schema } from "effect";
 import { schema } from "@/db";
 import { LedgerError, type WriteContext } from "./context";
-import { inverse, Operations, sameFields, type Operation, type RowOperation } from "./rules";
+import { inverse, Operations, sameFields, STANDING_NOTE_CAP, type Operation, type RowOperation } from "./rules";
 import { runChange } from "./store";
 import { lockRelationalActor, relationalSnapshot, applyRowOperations } from "./relational-store";
 export type UndoResult = {
@@ -101,8 +101,17 @@ export async function undoChange(ctx: WriteContext, changeId: string): Promise<U
       else if (op.target === "standing_note") {
         const n = schema.assistantContextNotes;
         if (!op.after) await tx.delete(n).where(and(eq(n.id, op.id), eq(n.userId, ctx.actor.userId)));
-        else await tx.insert(n).values({ id: op.id, ...op.after,
-          createdAt: sql`${op.after.createdAt}::timestamptz`, updatedAt: sql`${op.after.updatedAt}::timestamptz` });
+        else {
+          const values = { ...op.after, createdAt: sql`${op.after.createdAt}::timestamptz`, updatedAt: sql`${op.after.updatedAt}::timestamptz` };
+          if (op.before) await tx.update(n).set(values).where(and(eq(n.id, op.id), eq(n.userId, ctx.actor.userId)));
+          else {
+            // The actor lock taken above serializes this count against every note write.
+            const rows = await tx.select({ id: n.id }).from(n).where(eq(n.userId, ctx.actor.userId));
+            if (rows.length >= STANDING_NOTE_CAP)
+              throw new LedgerError({ code: "limit_reached", message: `Notes are limited to ${STANDING_NOTE_CAP}. Delete one before undoing this.` });
+            await tx.insert(n).values({ id: op.id, ...values });
+          }
+        }
       }
     }
     await applyRowOperations(

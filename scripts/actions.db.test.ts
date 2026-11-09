@@ -968,7 +968,7 @@ dbTest("context notes: save/update/delete/add/list, tolerances, warnings and for
   expect(unwrap(await f.call(a.listContextNotesActionSpec, undefined)).some(n => n.id === other.id)).toBe(false);
   expect(unwrap(await f.call(a.deleteContextNoteSpec, { id: saved.note.id }))).toBeUndefined();
   expect(unwrap(await f.call(a.listContextNotesActionSpec, undefined))).toHaveLength(2);
-  expect(f.paths).toEqual([]);
+  expect([...new Set(f.paths)]).toEqual(["/connections"]);
 }), 30000);
 
 dbTest("tag suggestions: stub, loose offset, validation and tenant-scoped snapshots", () => fixture(async (f) => {
@@ -1069,6 +1069,7 @@ dbTest("assistant cards/reads/bootstrap: drafts, no guessed person and foreign i
   expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: [f.debit, f.foreign] }, true)).map(t => t.id)).toEqual([f.foreign]);
   expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: 42 }))).toEqual([]);
   const note = unwrap(await f.call(tag.addContextNoteSpec, { body: "Sample context" }));
+  expect(f.paths.splice(0)).toEqual(["/connections"]);
   const boot = unwrap(await f.call(a.getAssistantBootstrapSpec, undefined));
   expect(boot).toMatchObject({ aiState: "off", accountName: "Test", contextNotes: [{ id: note.id, body: "Sample context" }], proposedDrafts: [] });
   expect(boot.categories.map(c => c.id)).toEqual([f.category]);

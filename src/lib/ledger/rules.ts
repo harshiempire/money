@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { Schema } from "effect";
 
+export const STANDING_NOTE_MAX = 500;
+export const STANDING_NOTE_CAP = 40;
+
 export const Fields = Schema.Struct({
   categoryId: Schema.NullOr(Schema.String),
   note: Schema.NullOr(Schema.String),

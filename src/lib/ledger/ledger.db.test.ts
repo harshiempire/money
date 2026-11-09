@@ -1561,6 +1561,67 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     const stranger = await api.call("rename_payee", { ...input, ref: api.txRef(f.otherId), idempotency_key: "p4-foreign-payee" }); expect(stranger.applied).toBe(false); expect(JSON.stringify(stranger)).toContain("not_found");
   }), 90000);
 
+  test("standing notes: app edits and deletes are logged, undoable and capped", () => fixture(async f => {
+    const { Effect } = await import("effect");
+    const { Db } = await import("./services");
+    const notes = await import("./standing-notes");
+    const { undoChange } = await import("./undo");
+    const n = f.schema.assistantContextNotes;
+    const run = <A, E>(effect: import("effect").Effect.Effect<A, E, import("./services").Db>) =>
+      Effect.runPromise(effect.pipe(Effect.provideService(Db, f.db)));
+    const rows = () => f.db.select().from(n).where(eq(n.userId, f.actor.userId));
+    const log = () => f.db.select().from(f.schema.ledgerChanges).where(eq(f.schema.ledgerChanges.userId, f.actor.userId));
+
+    const added = await run(notes.addStandingNote(f.app, "  Sample shop is Food  "));
+    expect(added.note.body).toBe("Sample shop is Food");
+    expect((await log()).map(c => [c.kind, c.source])).toEqual([["add_standing_note", "app"]]);
+    const original = await rows();
+
+    const edited = await run(notes.updateStandingNote(f.app, { id: added.note.id, body: "Sample shop is Groceries" }));
+    expect((await rows())[0].body).toBe("Sample shop is Groceries");
+    // Saving the same text changes nothing and adds no history row.
+    const same = await run(notes.updateStandingNote(f.app, { id: added.note.id, body: " Sample shop is Groceries " }));
+    expect(same.changeId).toBeNull(); expect(await log()).toHaveLength(2);
+    expect((await undoChange(f.app, edited.changeId!)).stale).toBeUndefined();
+    expect(await rows()).toEqual(original);
+
+    const removed = await run(notes.deleteStandingNote(f.app, added.note.id));
+    expect(await rows()).toHaveLength(0);
+    expect((await undoChange(f.app, removed.changeId!)).stale).toBeUndefined();
+    expect(await rows()).toEqual(original);
+
+    // Undo refuses, and changes nothing, when the note moved on after the logged edit.
+    const again = await run(notes.updateStandingNote(f.app, { id: added.note.id, body: "Second text" }));
+    await run(notes.updateStandingNote(f.app, { id: added.note.id, body: "Third text" }));
+    expect((await undoChange(f.app, again.changeId!)).stale).toHaveLength(1);
+    expect((await rows())[0].body).toBe("Third text");
+
+    // A note owned by someone else cannot be read through either write.
+    const foreign = { ...f.app, actor: { userId: f.otherUser, accountId: f.otherAccount } };
+    await expect(run(notes.updateStandingNote(foreign, { id: added.note.id, body: "Taken" }))).rejects.toThrow("That note isn't available.");
+    expect((await run(notes.deleteStandingNote(foreign, added.note.id))).changeId).toBeNull();
+    expect((await rows())[0].body).toBe("Third text");
+
+    await expect(run(notes.addStandingNote(f.app, "   "))).rejects.toThrow("nonblank");
+    await expect(run(notes.updateStandingNote(f.app, { id: added.note.id, body: "x".repeat(501) }))).rejects.toThrow("at most 500");
+
+    await f.db.insert(n).values(Array.from({ length: 39 }, (_, i) => ({ userId: f.actor.userId, body: `Filler ${i}` })));
+    await expect(run(notes.addStandingNote(f.app, "One too many"))).rejects.toThrow("Notes are limited to 40.");
+    const dropped = await run(notes.deleteStandingNote(f.app, added.note.id));
+    await run(notes.addStandingNote(f.app, "Took the free slot"));
+    await expect(undoChange(f.app, dropped.changeId!)).rejects.toThrow("Delete one before undoing this.");
+    expect(await rows()).toHaveLength(40);
+    expect((await rows()).some(row => row.id === added.note.id)).toBe(false);
+
+    // Local test database only: a database without migration 0012 gets the same message as before.
+    await f.db.execute(sql`alter table assistant_context_note rename to assistant_context_note_hidden`);
+    try {
+      await expect(run(notes.deleteStandingNote(f.app, "any"))).rejects.toThrow("Notes aren't available until migration 0012 is applied.");
+    } finally {
+      await f.db.execute(sql`alter table assistant_context_note_hidden rename to assistant_context_note`);
+    }
+  }), 60000);
+
   test("phase4 shared cores cap combined net legs and prevent owed edits below settlements", () => fixture(async f => {
     const r = await relationalFixture(f);
     const expense = await r.owed.createOwedExpense(f.app, r.expenseInput);

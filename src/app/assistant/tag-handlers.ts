@@ -4,8 +4,10 @@ import { Effect, Schema } from "effect";
 import type { ActionSpec } from "@/lib/action/core";
 import { sanitizedInput } from "@/lib/action/sanitized-input";
 import { CurrentUser, type Db } from "@/lib/action/services";
-import { Invalid, NotFound, Conflict, Unavailable } from "@/lib/action/errors";
-import { fromLedger } from "@/lib/action/ledger";
+import { Invalid, NotFound, Unavailable } from "@/lib/action/errors";
+import { fromLedger, ledgerEffectErrors } from "@/lib/action/ledger";
+import { STANDING_NOTE_MAX } from "@/lib/ledger/rules";
+import { addStandingNote, deleteStandingNote, updateStandingNote } from "@/lib/ledger/standing-notes";
 
 import { getOrCreateAccountForBank } from "@/db/money-account";
 import { assistantModel, isAiAllowed } from "@/lib/ai/access";
@@ -13,17 +15,15 @@ import { getChatgptAccess } from "@/lib/ai/chatgpt/token-store";
 import { checkAssistantRateLimit } from "@/lib/rate-limit";
 import {
   applyTagDraft,
-  deleteStandingNote,
   draftTagChunk,
   loadTagMonth,
   readStandingNotes,
   rememberPayeeDefaultForActor,
-  saveStandingNote,
   undoTagDraft,
 } from "@/lib/assistant/actor-ops";
 import { loadTxnCards } from "@/lib/assistant/data";
 import { TAG_APPLY_CHUNK, type AppliedTag, type TagApplyRequest } from "@/lib/assistant/tag-apply";
-import { monthTitle, standingNotesForModel, type ContextNote, type ModelGuess, type TagDraftRow } from "@/lib/assistant/tag-batch";
+import { monthTitle, standingNoteModelWarning, standingNotesForModel, type ContextNote, type ModelGuess, type TagDraftRow } from "@/lib/assistant/tag-batch";
 import { suggestTagNames } from "@/lib/assistant/tag-suggest";
 import type { CategoryLite, TxnCardData } from "@/lib/assistant/types";
 
@@ -32,6 +32,12 @@ const actorFromSession = Effect.fn("actorFromSession")(function* () {
   const account = yield* Effect.promise(() => getOrCreateAccountForBank(user.id, "bob"));
   return { userId: user.id, accountId: account.id };
 });
+
+/** The panel has always trimmed and shortened a note rather than refusing it; agents get a refusal from the core. */
+function noteBody(raw: unknown) {
+  const body = (typeof raw === "string" ? raw : "").trim().slice(0, STANDING_NOTE_MAX);
+  return body ? Effect.succeed(body) : Effect.fail(new Invalid({ message: "Write a note first." }));
+}
 
 const listContextNotesActionInput = Schema.Void;
 export const listContextNotesActionSpec: ActionSpec<
@@ -55,13 +61,14 @@ export const saveContextNoteSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: saveContextNoteInput,
+  revalidate: refreshPaths("standing-note.update"),
   handler: Effect.fn("saveContextNote")(function* (input) {
     const actor = yield* actorFromSession();
-    const body = typeof input?.body === "string" ? input.body : "";
-    const id = typeof input?.id === "string" ? input.id : undefined;
-    const saved = yield* Effect.promise(() => saveStandingNote(actor, { body, ...(id !== undefined ? { id } : {}) }));
-    if (!saved.ok) return yield* noteFailure(saved.error);
-    return { note: saved.note, warning: saved.warning };
+    const body = yield* noteBody(input?.body);
+    const id = typeof input?.id === "string" ? input.id : "";
+    const ctx = { actor, source: "app" as const };
+    const { note } = yield* (id ? updateStandingNote(ctx, { id, body }) : addStandingNote(ctx, body)).pipe(ledgerEffectErrors);
+    return { note, warning: standingNoteModelWarning(body) ?? undefined };
   }),
 };
 
@@ -73,11 +80,12 @@ export const deleteContextNoteSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: deleteContextNoteInput,
+  revalidate: refreshPaths("standing-note.delete"),
   handler: Effect.fn("deleteContextNote")(function* (input) {
     const actor = yield* actorFromSession();
     const id = typeof input?.id === "string" ? input.id : "";
-    const removed = yield* Effect.promise(() => deleteStandingNote(actor, id));
-    if (!removed.ok) return yield* noteFailure(removed.error);
+    if (!id) return yield* new NotFound({ message: "That note isn't available." });
+    yield* deleteStandingNote({ actor, source: "app" }, id).pipe(ledgerEffectErrors);
     return;
   }),
 };
@@ -91,11 +99,12 @@ export const addContextNoteSpec: ActionSpec<
   CurrentUser | Db
 > = {
   input: addContextNoteInput,
+  revalidate: refreshPaths("standing-note.add"),
   handler: Effect.fn("addContextNote")(function* (input) {
     const actor = yield* actorFromSession();
-    const saved = yield* Effect.promise(() => saveStandingNote(actor, { body: typeof input.body === "string" ? input.body : "" }));
-    if (!saved.ok) return yield* new Invalid({ message: saved.error });
-    return { id: saved.note.id };
+    const body = yield* noteBody(input.body);
+    const { note } = yield* addStandingNote({ actor, source: "app" }, body).pipe(ledgerEffectErrors);
+    return { id: note.id };
   }),
 };
 
@@ -286,10 +295,3 @@ export const rememberPayeeDefaultSpec: ActionSpec<
     return {};
   }),
 };
-
-function noteFailure(message: string) {
-  if (message === "That note isn't available.") return new NotFound({ message });
-  if (message === "Notes aren't available until migration 0012 is applied.") return new Unavailable({ message });
-  if (message === "Notes are limited to 40.") return new Conflict({ message });
-  return new Invalid({ message });
-}

@@ -16,7 +16,8 @@ import * as settlements from "@/lib/ledger/settlements";
 import * as owed from "@/lib/ledger/owed-expenses";
 import { saveNetEvent } from "@/lib/ledger/net-events";
 import { linkPayeesToPerson } from "@/lib/ledger/person-links";
-import { renamePayee, addStandingNote } from "@/lib/ledger/metadata";
+import { renamePayee } from "@/lib/ledger/metadata";
+import { addStandingNote } from "@/lib/ledger/standing-notes";
 import type { NetSettlementReceipt } from "@/lib/ledger/rules/net-settlement";
 import type { NetEventLeg } from "@/lib/net-events/legs";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
@@ -235,7 +236,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "add_standing_note": {
         const input = decode(tool, raw); summary = "Added standing note.";
-        result = await addStandingNote(ctx, input.body); break;
+        result = await runCore(addStandingNote(ctx, input.body), p); break;
       }
     }
     const capability = CAPABILITIES.find(c => "tools" in c.mcp && c.mcp.tools.some(t => t.name === tool));
