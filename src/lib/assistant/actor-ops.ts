@@ -9,12 +9,10 @@ import { LedgerError } from "@/lib/ledger/context";
 import { and, eq, gte, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { loadCategories } from "@/lib/assistant/data";
-import { isMissingTable } from "@/lib/db/pg-errors";
 import { setCategoryForActor } from "@/lib/transactions/category-for-actor";
 import { runTagApply, runTagUndo, type AppliedTag, type TagApplyRequest, type TagApplyResult, type TagUndoResult } from "./tag-apply";
 import {
   assembleTagChunk,
-  standingNoteModelWarning,
   standingNotesForModel,
   type ContextNote,
   type ModelGuess,
@@ -30,8 +28,6 @@ export interface MoneyActor {
   accountId: string;
 }
 
-const NOTE_MAX = 500;
-const NOTE_CAP = 40;
 const t = schema.transactions;
 
 export interface TagMonthSnapshot {
@@ -80,52 +76,6 @@ export async function readStandingNotes(actor: MoneyActor): Promise<ContextNote[
 export async function notesForModel(actor: MoneyActor): Promise<string[]> {
   const notes = await readStandingNotes(actor);
   return standingNotesForModel(notes.map((note) => note.body));
-}
-
-const NOTES_UNAVAILABLE = "Notes aren't available until migration 0012 is applied.";
-
-export async function saveStandingNote(
-  actor: MoneyActor,
-  input: { id?: string; body: string },
-): Promise<{ ok: true; note: ContextNote; warning?: string } | { ok: false; error: string }> {
-  const body = input.body.trim().slice(0, NOTE_MAX);
-  if (!body) return { ok: false, error: "Write a note first." };
-  const warning = standingNoteModelWarning(body) ?? undefined;
-  const id = input.id ?? "";
-  try {
-    if (id) {
-      const [updated] = await db
-        .update(schema.assistantContextNotes)
-        .set({ body, updatedAt: new Date() })
-        .where(and(eq(schema.assistantContextNotes.id, id), eq(schema.assistantContextNotes.userId, actor.userId)))
-        .returning({ id: schema.assistantContextNotes.id, body: schema.assistantContextNotes.body });
-      if (!updated) return { ok: false, error: "That note isn't available." };
-      return { ok: true, note: updated, warning };
-    }
-    const existing = await loadContextNotes(actor.userId);
-    if (existing.length >= NOTE_CAP) return { ok: false, error: `Notes are limited to ${NOTE_CAP}.` };
-    const [created] = await db
-      .insert(schema.assistantContextNotes)
-      .values({ userId: actor.userId, body })
-      .returning({ id: schema.assistantContextNotes.id, body: schema.assistantContextNotes.body });
-    return { ok: true, note: created, warning };
-  } catch (err) {
-    if (isMissingTable(err)) return { ok: false, error: NOTES_UNAVAILABLE };
-    throw err;
-  }
-}
-
-export async function deleteStandingNote(actor: MoneyActor, id: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!id) return { ok: false, error: "That note isn't available." };
-  try {
-    await db
-      .delete(schema.assistantContextNotes)
-      .where(and(eq(schema.assistantContextNotes.id, id), eq(schema.assistantContextNotes.userId, actor.userId)));
-  } catch (err) {
-    if (isMissingTable(err)) return { ok: false, error: NOTES_UNAVAILABLE };
-    throw err;
-  }
-  return { ok: true };
 }
 
 export async function applyTagDraft(actor: MoneyActor, rows: TagApplyRequest[]): Promise<TagApplyResult> {

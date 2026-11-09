@@ -1,10 +1,11 @@
 import "server-only";
-import { Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { isMissingTable } from "@/lib/db/pg-errors";
 import { LedgerError, migrationMessage, type WriteContext } from "./context";
 import { idempotencyDecision, relationalSummary, type Operation } from "./rules";
+import { Db } from "./services";
 export type LedgerTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 class MissingLedger extends Error {}
 const changes = schema.ledgerChanges;
@@ -140,6 +141,31 @@ export async function runChange<R extends { changeId: string | null }>(
     throw e;
   }
 }
+
+class ChangeRollback {
+  constructor(readonly exit: Exit.Exit<unknown, unknown>) {}
+}
+
+/** `runChange` for Effect cores. Any failed Exit (including interruption) rolls the transaction back. */
+export const runChangeEffect = Effect.fn("runChangeEffect")(function* <R extends { changeId: string | null }>(
+  ctx: WriteContext,
+  meta: { kind: string; summary?: string | null },
+  work: (tx: LedgerTx) => Effect.Effect<{ ops: Operation[]; result: R }, LedgerError>,
+) {
+  const database = yield* Db;
+  return yield* Effect.tryPromise({
+    try: signal => runChange(ctx, meta, async tx => {
+      const exit = await Effect.runPromiseExit(work(tx), { signal });
+      if (Exit.isFailure(exit)) throw new ChangeRollback(exit);
+      return exit.value;
+    }, database),
+    catch: error => error,
+  }).pipe(Effect.catch(error => {
+    if (error instanceof ChangeRollback) return error.exit as Exit.Exit<never, LedgerError>;
+    if (error instanceof LedgerError) return Effect.fail(error);
+    return Effect.die(error);
+  }));
+});
 
 /** Check before resolving mutable tool inputs, so retries still work after later edits. */
 export async function replayChange<R>(ctx: WriteContext): Promise<(R & ReceiptResult) | null> {

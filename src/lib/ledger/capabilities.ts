@@ -754,13 +754,15 @@ export const CAPABILITIES: readonly Capability[] = [
     "id": "standing-note.add",
     "summary": "Add a logged, unredacted standing note.",
     "kind": "write",
-    "impl": "promise",
+    "impl": "effect",
     "core": {
-      "module": "src/lib/ledger/metadata.ts",
+      "module": "src/lib/ledger/standing-notes.ts",
       "export": "addStandingNote"
     },
     "app": {
-      "none": "Ask Money uses its legacy unlogged note writer instead."
+      "actions": [
+        "addContextNote"
+      ]
     },
     "mcp": {
       "tools": [
@@ -771,6 +773,7 @@ export const CAPABILITIES: readonly Capability[] = [
       ]
     },
     "guards": [
+      "500 character limit",
       "40 note cap"
     ],
     "idempotent": "mcp-key",
@@ -778,12 +781,61 @@ export const CAPABILITIES: readonly Capability[] = [
     "logged": true,
     "moneyRules": [],
     "refresh": [
-      "transactions",
-      "dashboard",
-      "connections",
-      "reimbursements",
-      "people",
-      "spend"
+      "connections"
+    ]
+  },
+  {
+    "id": "standing-note.update",
+    "summary": "Edit a logged standing note; saveContextNote with no id adds one through addStandingNote.",
+    "kind": "write",
+    "impl": "effect",
+    "core": {
+      "module": "src/lib/ledger/standing-notes.ts",
+      "export": "updateStandingNote"
+    },
+    "app": {
+      "actions": [
+        "saveContextNote"
+      ]
+    },
+    "mcp": {
+      "none": "Agents can add notes and undo their own changes, but have no edit tool yet."
+    },
+    "guards": [
+      "500 character limit"
+    ],
+    "idempotent": "none",
+    "undoable": true,
+    "logged": true,
+    "moneyRules": [],
+    "refresh": [
+      "connections"
+    ]
+  },
+  {
+    "id": "standing-note.delete",
+    "summary": "Delete a logged standing note; a missing or foreign id is a quiet no-op.",
+    "kind": "write",
+    "impl": "effect",
+    "core": {
+      "module": "src/lib/ledger/standing-notes.ts",
+      "export": "deleteStandingNote"
+    },
+    "app": {
+      "actions": [
+        "deleteContextNote"
+      ]
+    },
+    "mcp": {
+      "none": "Agents can add notes and undo their own changes, but have no delete tool yet."
+    },
+    "guards": [],
+    "idempotent": "none",
+    "undoable": true,
+    "logged": true,
+    "moneyRules": [],
+    "refresh": [
+      "connections"
     ]
   },
   {
@@ -893,33 +945,6 @@ export const CAPABILITIES: readonly Capability[] = [
     "read": {
       "module": "src/lib/ledger/changes.ts",
       "export": "listChanges"
-    }
-  },
-  {
-    "id": "assistant.standing-note.write",
-    "summary": "Legacy Ask Money standing-note save/delete bypasses the logged core.",
-    "kind": "write",
-    "impl": "promise",
-    "core": null,
-    "app": {
-      "actions": [
-        "saveContextNote",
-        "addContextNote",
-        "deleteContextNote"
-      ]
-    },
-    "mcp": {
-      "none": "MCP uses standing-note.add through the logged core."
-    },
-    "guards": [],
-    "idempotent": "none",
-    "undoable": false,
-    "logged": false,
-    "moneyRules": [],
-    "refresh": [],
-    "read": {
-      "module": "src/lib/assistant/actor-ops.ts",
-      "export": "readStandingNotes"
     }
   },
   {
@@ -1363,11 +1388,9 @@ export const LEGACY_PROMISE_CORES: readonly string[] = [
   "owed.update",
   "owed.delete",
   "payee.rename",
-  "standing-note.add",
   "person.link",
   "change.undo",
   "change.list",
-  "assistant.standing-note.write",
   "overview",
   "period.summary",
   "transactions.list",
