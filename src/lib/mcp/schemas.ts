@@ -84,9 +84,9 @@ export const SummaryOutput = Schema.Struct({
     partial: Schema.Boolean.annotate({ description: "False: MCP reads the complete requested calendar range, without clipping at today." }),
   }),
   totals: Schema.Struct({
-    total_debit: Schema.String.annotate({ description: "Sum of all bank debit amounts in the period, including transfers and the full amount of split bills; excludes credits and owed expenses. Exact rupee string." }),
+    total_debit: Schema.String.annotate({ description: "Sum of all bank debit amounts in the period, including transfers, the full amount of split bills and net settlement outflows; excludes credits and owed expenses. Exact rupee string." }),
     total_credit: Schema.String.annotate({ description: "Sum of all bank credit amounts in the period, including transfers and reimbursements; excludes debits and owed expenses. Exact rupee string." }),
-    net_self: Schema.String.annotate({ description: "Non-transfer debit owner shares (unsplit: full amount; split: your_share plus written-off shares, capped at debit amount), minus non-transfer credit remainders after settlement allocations and owed-back expenses (clamped at zero per credit), plus full owed_expense amounts incurred in the period. Settled owed expenses still count. Exact rupee string." }),
+    net_self: Schema.String.annotate({ description: "Non-transfer debit owner shares (unsplit: full amount; split: your_share plus written-off shares, capped at debit amount), minus non-transfer credit remainders after settlement allocations and owed-back expenses (clamped at zero per credit), plus full owed_expense amounts incurred in the period. Settled owed expenses still count. A debit that is a net settlement's outflow counts as zero, because the owed expense it repays was already counted when incurred. Exact rupee string." }),
     owed_self: Schema.String.annotate({
       description: "Full amounts of owed_expense rows incurred in the period, including settled ones and owed-back overpayments. Money the owner owes others; does not count split participant shares. Scoped by user. Exact rupee string.",
     }),
@@ -95,10 +95,10 @@ export const SummaryOutput = Schema.Struct({
   open_shares: Schema.String.annotate({ description: "Other people's outstanding split shares on bank transactions dated in the period: sum of max(0, expected minus all settlements, including writeoffs) per participant, even if settled after the period. Includes transfers and credits with splits; excludes owed_expense rows. Exact rupee string." }),
   bridge: Schema.Struct({
     personal_debit_gross: Schema.String.annotate({
-      description: "Full bank debit amounts excluding transfers, before removing other people's split shares; excludes credits and owed expenses. Exact rupee string.",
+      description: "Full bank debit amounts excluding transfers, before removing other people's split shares; excludes credits and owed expenses. A debit that is a net settlement's outflow counts as zero, because the owed expense it repays was already counted when incurred. Exact rupee string.",
     }),
     your_share_debit: Schema.String.annotate({
-      description: "Non-transfer debits: full amount if unsplit, otherwise your_share plus written-off participant shares, capped at the debit amount. Excludes credits and owed expenses. Exact rupee string.",
+      description: "Non-transfer debits: full amount if unsplit, otherwise your_share plus written-off participant shares, capped at the debit amount. Excludes credits and owed expenses. A debit that is a net settlement's outflow counts as zero, because the owed expense it repays was already counted when incurred. Exact rupee string.",
     }),
     others_share: Schema.String.annotate({
       description: "Other people's split shares on non-transfer debits, less written-off shares: personal_debit_gross minus your_share_debit. Includes shares repaid by bank, cash or offset; excludes credits, transfers and owed_expense rows. Exact rupee string.",

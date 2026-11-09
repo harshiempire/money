@@ -1012,7 +1012,7 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     "id": "period.summary",
-    "summary": "Read or prepare period.summary without ledger writes.",
+    "summary": "Spend totals for a period. A net settlement's outflow debit counts as zero spend; raw bank totals still include it.",
     "kind": "read",
     "impl": "promise",
     "core": null,
