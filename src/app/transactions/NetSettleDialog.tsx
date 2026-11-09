@@ -4,7 +4,7 @@ import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
 import { useId, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { GuidedSettlementForm } from "./GuidedSettlementForm";
+import { GuidedSettlementForm, type GuidedDraft } from "./GuidedSettlementForm";
 import type { SettlementPayment } from "@/lib/ledger/rules/net-settlement-plan";
 import { deleteNetEvent, saveNetEvent } from "./net-event-actions";
 import type { NetEventLeg } from "@/lib/net-events/legs";
@@ -180,12 +180,16 @@ export function NetSettleButton({
   const router = useRouter();
   const [session, setSession] = useState(0);
   const [busy, setBusy] = useState(false);
+  // Chosen once per opening: a save refreshes these props, and the guided
+  // confirmation must stay on screen when that adds existingNetEventId.
   const [advanced, setAdvanced] = useState(false);
-  const [saveAttempted, setSaveAttempted] = useState(false);
+  const [draft, setDraft] = useState<GuidedDraft | null>(null);
   const open = () => {
     setSession((value) => value + 1);
-    setAdvanced(false);
-    setSaveAttempted(false);
+    setAdvanced(
+      !!existingNetEventId || !!(inflowTransactionId && outflowTransactionId),
+    );
+    setDraft(null);
     dialogRef.current?.showModal();
   };
   const invalidateReads = useInvalidateMoneyReads();
@@ -195,6 +199,7 @@ export function NetSettleButton({
     invalidateReads();
     router.refresh();
   };
+  const chosen = draft?.payment;
   const payment = selectedBankPayment({
     eventDate,
     inflowTransactionId,
@@ -224,44 +229,55 @@ export function NetSettleButton({
         }}
       >
         {session > 0 &&
-          (!existingNetEventId &&
-          !advanced &&
-          !(inflowTransactionId && outflowTransactionId) ? (
-            <>
-              <GuidedSettlementForm
-                key={session}
-                eventDate={eventDate}
-                receivables={receivables}
-                payables={payables}
-                payment={payment}
-                bankPayments={bankPayments}
-                defaultPerson={defaultPersonFilter}
-                onSave={async (request) => {
-                  setSaveAttempted(true);
-                  return saveNetEvent(request);
-                }}
-                onClose={close}
-                onBusyChange={setBusy}
-              />
-              {!saveAttempted && (
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="mb-5 ml-6 text-xs text-neutral-500 underline"
-                  onClick={() => setAdvanced(true)}
-                >
-                  Enter individual bill amounts or add a bill
-                </button>
-              )}
-            </>
+          (!advanced ? (
+            <GuidedSettlementForm
+              key={session}
+              eventDate={eventDate}
+              receivables={receivables}
+              payables={payables}
+              payment={payment}
+              bankPayments={bankPayments}
+              defaultPerson={defaultPersonFilter}
+              onSave={saveNetEvent}
+              onClose={close}
+              onBusyChange={setBusy}
+              onAdvanced={(next) => {
+                setDraft(next);
+                setAdvanced(true);
+              }}
+            />
           ) : (
             <NetSettleForm
               key={session}
-              eventDate={eventDate}
-              inflowTransactionId={inflowTransactionId}
-              outflowTransactionId={outflowTransactionId}
-              inflowAmountPaise={inflowAmountPaise ?? 0}
-              outflowAmountPaise={outflowAmountPaise ?? 0}
+              eventDate={chosen?.date ?? eventDate}
+              inflowTransactionId={
+                chosen
+                  ? chosen.direction === "credit"
+                    ? chosen.id
+                    : undefined
+                  : inflowTransactionId
+              }
+              outflowTransactionId={
+                chosen
+                  ? chosen.direction === "debit"
+                    ? chosen.id
+                    : undefined
+                  : outflowTransactionId
+              }
+              inflowAmountPaise={
+                chosen
+                  ? chosen.direction === "credit"
+                    ? chosen.amountPaise
+                    : 0
+                  : (inflowAmountPaise ?? 0)
+              }
+              outflowAmountPaise={
+                chosen
+                  ? chosen.direction === "debit"
+                    ? chosen.amountPaise
+                    : 0
+                  : (outflowAmountPaise ?? 0)
+              }
               receivables={restoreEventCapacity(
                 receivables,
                 existingLegs,
@@ -270,7 +286,7 @@ export function NetSettleButton({
               payables={restoreEventCapacity(payables, existingLegs, "payable")}
               categories={categories}
               existingNetEventId={existingNetEventId}
-              existingLegs={existingLegs}
+              existingLegs={draft?.legs ?? existingLegs}
               defaultPersonFilter={defaultPersonFilter ?? ""}
               knownPersonNames={knownPersonNames}
               onClose={close}

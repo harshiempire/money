@@ -114,6 +114,14 @@ export function SpendWaterfall({
           </div>
         ))}
       </div>
+      {reimbursement && reimbursement.outstandingReimbursePaise > 0 && (
+        <p className="mt-4 flex justify-between gap-3 text-sm">
+          <span>Still owed to you, including splits marked as transfers</span>
+          <span className="font-mono text-inflow">
+            {formatPaise(reimbursement.outstandingReimbursePaise)}
+          </span>
+        </p>
+      )}
       <details className="spend-waterfall-math">
         <summary>Show the math</summary>
         <div>

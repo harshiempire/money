@@ -96,13 +96,53 @@ export function selectionTotals(
   return { receivable, payable, net: receivable - payable };
 }
 
+/** The group key for a typed name. One person can have a group in each direction. */
+export function settlementPersonKey(groups: SettlementGroup[], name: string): string {
+  const people = groups
+    .filter((g) => g.personKey.startsWith("id:"))
+    .map((g) => ({ id: g.personKey.slice(3), name: g.personName }))
+    .filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i);
+  return personBalanceKey(undefined, name, people);
+}
+
+export interface SelectionAllocation {
+  kind: SettlementGroup["kind"];
+  id: string;
+  paise: number;
+  cap: number;
+}
+
+/** Spreads each group's selected amount across its bills, in order. Null if an amount is invalid. */
+export function selectionAllocations(
+  groups: SettlementGroup[],
+  selection: SettlementSelection,
+): SelectionAllocation[] | null {
+  const rows: SelectionAllocation[] = [];
+  for (const group of groups) {
+    let remaining = selection[group.key] ?? 0;
+    if (
+      !Number.isSafeInteger(remaining) ||
+      remaining < 0 ||
+      remaining > group.outstandingPaise
+    )
+      return null;
+    for (const item of group.items) {
+      const paise = Math.min(remaining, item.outstandingPaise);
+      if (paise > 0)
+        rows.push({ kind: group.kind, id: item.id, paise, cap: item.outstandingPaise });
+      remaining -= paise;
+    }
+  }
+  return rows;
+}
+
 /** Bounded, exact suggestions only. A numerical match still needs user confirmation. */
 export function suggestSettlement(
   groups: SettlementGroup[],
   expectedNet: number,
   preferredName = "",
 ): SettlementSelection {
-  const preferred = personBalanceKey(undefined, preferredName, groups.filter(g => g.personKey.startsWith("id:")).map(g => ({ id: g.personKey.slice(3), name: g.personName })).filter((p,i,a) => a.findIndex(q => q.id === p.id) === i));
+  const preferred = settlementPersonKey(groups, preferredName);
   const ordered = [...groups].sort(
     (a, b) =>
       Number(b.personKey === preferred) - Number(a.personKey === preferred),
@@ -160,7 +200,8 @@ export function personSettlementSelection(
   name: string,
   method: "bank" | "cash" | "offset",
 ): SettlementSelection {
-  const own = groups.filter((group) => group.personKey === personBalanceKey(undefined, name, groups.filter(g => g.personKey.startsWith("id:")).map(g => ({ id: g.personKey.slice(3), name: g.personName })).filter((p,i,a) => a.findIndex(q => q.id === p.id) === i)));
+  const key = settlementPersonKey(groups, name);
+  const own = groups.filter((group) => group.personKey === key);
   const full = Object.fromEntries(
     own.map((group) => [group.key, group.outstandingPaise]),
   );
@@ -176,29 +217,13 @@ export function guidedSettlementLegs(
   method: "bank" | "cash" | "offset",
   payment?: SettlementPayment,
 ): NetSettlementPlan {
-  const receivables: Array<{ id: string; paise: number; cap: number }> = [];
-  const payables: Array<{ id: string; paise: number; cap: number }> = [];
-  for (const group of groups) {
-    let remaining = selection[group.key] ?? 0;
-    if (
-      !Number.isSafeInteger(remaining) ||
-      remaining < 0 ||
-      remaining > group.outstandingPaise
-    )
-      return planFailure(
-        "The selected amount exceeds an open balance. Refresh and try again.",
-      );
-    for (const item of group.items) {
-      const paise = Math.min(remaining, item.outstandingPaise);
-      if (paise > 0)
-        (group.kind === "receivable" ? receivables : payables).push({
-          id: item.id,
-          paise,
-          cap: item.outstandingPaise,
-        });
-      remaining -= paise;
-    }
-  }
+  const allocated = selectionAllocations(groups, selection);
+  if (!allocated)
+    return planFailure(
+      "The selected amount exceeds an open balance. Refresh and try again.",
+    );
+  const receivables = allocated.filter((row) => row.kind === "receivable");
+  const payables = allocated.filter((row) => row.kind === "payable");
   const caps = new Map(
     [...receivables, ...payables].map((row) => [row.id, row.cap]),
   );

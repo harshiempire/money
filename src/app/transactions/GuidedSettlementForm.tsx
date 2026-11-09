@@ -9,13 +9,14 @@ import type {
   ReceivableOption,
 } from "@/lib/net-events/load-net-settle-data";
 import type { NetEventLeg } from "@/lib/net-events/legs";
-import { personBalanceKey } from "@/lib/ledger/rules/balances";
 import {
   guidedSettlementLegs,
   personSettlementSelection,
+  selectionAllocations,
   selectionTotals,
   settlementFix,
   settlementGroups,
+  settlementPersonKey,
   suggestSettlement,
   type SettlementGroup,
   type SettlementPayment,
@@ -29,6 +30,17 @@ export interface GuidedSettlementRequest {
   legs: NetEventLeg[];
 }
 
+/** What the guided form hands to the bill-by-bill form when the user switches. */
+export interface GuidedDraft {
+  payment?: SettlementPayment;
+  legs: Array<{
+    kind: "receivable" | "payable";
+    targetId: string;
+    amountPaise: number;
+    method: "offset";
+  }>;
+}
+
 export function GuidedSettlementForm({
   eventDate,
   receivables,
@@ -39,6 +51,7 @@ export function GuidedSettlementForm({
   onSave,
   onClose,
   onBusyChange,
+  onAdvanced,
 }: {
   eventDate: string;
   receivables: ReceivableOption[];
@@ -51,6 +64,7 @@ export function GuidedSettlementForm({
   ) => Promise<ActionResult<{ netEventId: string }>>;
   onClose: () => void;
   onBusyChange: (busy: boolean) => void;
+  onAdvanced: (draft: GuidedDraft) => void;
 }) {
   const methodName = useId();
   const groups = useMemo(
@@ -62,11 +76,7 @@ export function GuidedSettlementForm({
       groups.map((group) => [group.personKey, group.personName]),
     ).values(),
   ];
-  const knownPeople = groups
-    .filter((group) => group.personKey.startsWith("id:"))
-    .map((group) => ({ id: group.personKey.slice(3), name: group.personName }));
-  const personKey = (name: string) =>
-    personBalanceKey(undefined, name, knownPeople);
+  const personKey = (name: string) => settlementPersonKey(groups, name);
   const preferred =
     names.find((name) => personKey(name) === personKey(defaultPerson)) ?? "";
   const preferredTotal = selectionTotals(
@@ -96,6 +106,7 @@ export function GuidedSettlementForm({
   const saving = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshRequired, setRefreshRequired] = useState(false);
+  const [saveAttempted, setSaveAttempted] = useState(false);
   const [saved, setSaved] = useState<{
     remaining: number;
     person: string;
@@ -166,6 +177,23 @@ export function GuidedSettlementForm({
     clearError();
   }
 
+  function openAdvanced() {
+    // The bill-by-bill form has no cash option, so a cash draft starts empty.
+    const rows =
+      activeMethod === "cash"
+        ? null
+        : selectionAllocations(groups, activeSelection);
+    onAdvanced({
+      payment: activePayment,
+      legs: (rows ?? []).map((row) => ({
+        kind: row.kind,
+        targetId: row.id,
+        amountPaise: row.paise,
+        method: "offset",
+      })),
+    });
+  }
+
   async function submit() {
     if (saving.current || !canSave || refreshRequired) return;
     const plan = guidedSettlementLegs(
@@ -179,6 +207,7 @@ export function GuidedSettlementForm({
       return;
     }
     const legs = plan.legs;
+    setSaveAttempted(true);
     saving.current = true;
     setPending(true);
     onBusyChange(true);
@@ -823,6 +852,15 @@ export function GuidedSettlementForm({
           There are no open balances. Add a split bill or a bill someone paid
           for you first.
         </p>
+      )}
+      {!saveAttempted && (
+        <button
+          type="button"
+          className="gs-text-button"
+          onClick={openAdvanced}
+        >
+          Enter individual bill amounts or add a bill
+        </button>
       )}
     </div>
   );
