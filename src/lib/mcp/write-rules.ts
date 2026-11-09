@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { LedgerError } from "@/lib/ledger/context";
-import { equalShares } from "@/lib/assistant/card-math";
+import { equalShares } from "@/lib/ledger/rules/equal-split";
 import { personKey, closePersonNames } from "./person-names";
 export { personKey } from "./person-names";
 

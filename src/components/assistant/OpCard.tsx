@@ -1,8 +1,8 @@
 "use client";
 
 import { formatPaise, formatPaisePlain, formatPaiseSigned } from "@/lib/format";
+import { equalShares } from "@/lib/ledger/rules/equal-split";
 import {
-  equalShares,
   fillReceivablesLargestFirst,
   netBalance,
   rupeesString,
