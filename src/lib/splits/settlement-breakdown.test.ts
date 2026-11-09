@@ -8,28 +8,28 @@ describe("summarizeParticipantSettlements", () => {
   test("keeps money received, offsets, and forgiveness distinct", () => {
     const result = summarizeParticipantSettlements([
       {
-        splitParticipantId: "aryan",
+        splitParticipantId: "arjun",
         amountPaise: 1000,
         method: "bank",
       },
       {
-        splitParticipantId: "aryan",
+        splitParticipantId: "arjun",
         amountPaise: 200,
         method: "cash",
       },
       {
-        splitParticipantId: "aryan",
+        splitParticipantId: "arjun",
         amountPaise: 300,
         method: "offset",
       },
       {
-        splitParticipantId: "aryan",
+        splitParticipantId: "arjun",
         amountPaise: 600,
         method: "writeoff",
       },
     ]);
 
-    expect(result.get("aryan")).toEqual({
+    expect(result.get("arjun")).toEqual({
       totalPaise: 2100,
       breakdown: {
         bankPaise: 1000,

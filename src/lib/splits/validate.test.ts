@@ -28,7 +28,7 @@ describe("validateSplitBalances", () => {
       validateSplitBalances({
         totalPaise: 364900,
         yourSharePaise: 121633,
-        participants: [p(121633, "Kiran"), p(121634, "Rishith")],
+        participants: [p(121633, "Kiran"), p(121634, "Manoj")],
       }).ok,
     ).toBe(true);
   });
@@ -190,17 +190,17 @@ describe("validateAllocationAmounts", () => {
 describe("validatePayableReplaceable — repaid overpayment (finding 1)", () => {
   test("refuses to replace a leftover whose payable was already repaid", () => {
     const r = validatePayableReplaceable({
-      personName: "Aryan",
+      personName: "Arjun",
       settledPaise: 2000,
     });
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("Aryan");
+    expect(r.ok === false && r.message).toContain("Arjun");
     expect(r.ok === false && r.message).toContain("₹20.00");
   });
 
   test("allows replacing an untouched payable", () => {
     expect(
-      validatePayableReplaceable({ personName: "Aryan", settledPaise: 0 }).ok,
+      validatePayableReplaceable({ personName: "Arjun", settledPaise: 0 }).ok,
     ).toBe(true);
   });
 });
@@ -211,7 +211,7 @@ describe("validateSplitTotalMatchesTransaction (review: split total trusted the 
       validateSplitBalances({
         totalPaise: 20000,
         yourSharePaise: 10000,
-        participants: [p(10000, "Aryan")],
+        participants: [p(10000, "Arjun")],
       }).ok,
     ).toBe(true);
     const r = validateSplitTotalMatchesTransaction({
@@ -234,7 +234,7 @@ describe("validateSplitTotalMatchesTransaction (review: split total trusted the 
 });
 
 describe("validateParticipantIdsBelongToSplit (review: participant ids not pinned to the split)", () => {
-  const existing = new Set(["p-kiran", "p-rishith"]);
+  const existing = new Set(["p-kiran", "p-manoj"]);
 
   test("rejects an id from some other split instead of treating it as a new row", () => {
     const r = validateParticipantIdsBelongToSplit(
@@ -263,23 +263,23 @@ describe("validateParticipantIdsBelongToSplit (review: participant ids not pinne
 });
 
 describe("validateSettledParticipantEdit (review: settled payments could be reassigned by rename)", () => {
-  const aryan = { personName: "Aryan", expectedAmountPaise: 5000 };
+  const arjun = { personName: "Arjun", expectedAmountPaise: 5000 };
 
   test("refuses to rename a participant who has money settled against them", () => {
     const r = validateSettledParticipantEdit({
-      existing: aryan,
+      existing: arjun,
       kept: { personName: "Bob", expectedAmountPaise: 5000 },
       settledPaise: 5000,
     });
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("rename Aryan to Bob");
+    expect(r.ok === false && r.message).toContain("rename Arjun to Bob");
   });
 
   test("treats a case or whitespace change as the same person", () => {
     expect(
       validateSettledParticipantEdit({
-        existing: aryan,
-        kept: { personName: "  aryan ", expectedAmountPaise: 5000 },
+        existing: arjun,
+        kept: { personName: "  arjun ", expectedAmountPaise: 5000 },
         settledPaise: 5000,
       }).ok,
     ).toBe(true);
@@ -288,7 +288,7 @@ describe("validateSettledParticipantEdit (review: settled payments could be reas
   test("renaming is free when nothing has been settled", () => {
     expect(
       validateSettledParticipantEdit({
-        existing: aryan,
+        existing: arjun,
         kept: { personName: "Bob", expectedAmountPaise: 5000 },
         settledPaise: 0,
       }).ok,
@@ -297,29 +297,29 @@ describe("validateSettledParticipantEdit (review: settled payments could be reas
 
   test("still refuses removal of a settled participant", () => {
     const r = validateSettledParticipantEdit({
-      existing: aryan,
+      existing: arjun,
       kept: undefined,
       settledPaise: 100,
     });
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("Cannot remove Aryan");
+    expect(r.ok === false && r.message).toContain("Cannot remove Arjun");
   });
 
   test("blocks cutting a share below what was settled", () => {
     const r = validateSettledParticipantEdit({
-      existing: aryan,
-      kept: { personName: "Aryan", expectedAmountPaise: 4000 },
+      existing: arjun,
+      kept: { personName: "Arjun", expectedAmountPaise: 4000 },
       settledPaise: 5000,
     });
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("Cannot reduce Aryan's share");
+    expect(r.ok === false && r.message).toContain("Cannot reduce Arjun's share");
   });
 
   test("keeps an existing overpayment editable when the edit doesn't worsen it", () => {
     expect(
       validateSettledParticipantEdit({
-        existing: { personName: "Rishith", expectedAmountPaise: 121634 },
-        kept: { personName: "Rishith", expectedAmountPaise: 121700 },
+        existing: { personName: "Manoj", expectedAmountPaise: 121634 },
+        kept: { personName: "Manoj", expectedAmountPaise: 121700 },
         settledPaise: 122000,
       }).ok,
     ).toBe(true);

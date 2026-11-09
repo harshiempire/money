@@ -40,7 +40,7 @@ describe("parseRupees", () => {
 });
 
 describe("parseAllocationInputs", () => {
-  const label = (id: string) => ({ a: "Aryan", b: "Bob" })[id] ?? id;
+  const label = (id: string) => ({ a: "Arjun", b: "Bob" })[id] ?? id;
 
   test("blank rows are dropped and the rest are kept", () => {
     const r = parseAllocationInputs({ a: "", b: "2.50" }, label);
@@ -59,7 +59,7 @@ describe("parseAllocationInputs", () => {
     expect(r.ok).toBe(false);
     expect(r.problems).toHaveLength(1);
     expect(r.problems[0].splitParticipantId).toBe("a");
-    expect(r.problems[0].message).toContain("Aryan");
+    expect(r.problems[0].message).toContain("Arjun");
     expect(r.problems[0].message).toContain('"-10"');
   });
 

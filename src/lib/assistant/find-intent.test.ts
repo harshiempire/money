@@ -114,8 +114,8 @@ test("namedByUser: only people the user actually named", () => {
 
 const ETSI_CHAT = [
   "So I have a transaction on 6th August, which is of 2,247 rupees.",
-  "It is between three people: me, Kiran, and Abhinav.",
-  "Wait, it is not Abhinav. It is Sai Abhinav.",
+  "It is between three people: me, Kiran, and Mehta.",
+  "Wait, it is not Mehta. It is Tarun Mehta.",
   "So, there is a pizza and it is of 645 rupees. We have a white sauce chicken pasta, which is of 525 rupees. There is a chocolate puddle cake of 475 rupees. And we have a tax of 53.5 into two times. All these things are going to be divided among us by three.",
   "But there is one transaction which is of 495, which is fully paid by Kiran.",
 ].join("\n");
