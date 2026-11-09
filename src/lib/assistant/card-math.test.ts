@@ -11,7 +11,7 @@ import {
 import type { NetLine } from "./types";
 
 describe("itemizedShares", () => {
-  test("the Etsi bill: shared dishes ÷ 3, Nitin's own ₹495", () => {
+  test("the Etsi bill: shared dishes ÷ 3, Kiran's own ₹495", () => {
     const everyone = (pricePaise: number, qty = 1) => ({ pricePaise, qty, sharers: [] });
     const r = itemizedShares(
       [everyone(64500), everyone(52500), everyone(47500), everyone(5350, 2), { pricePaise: 49500, qty: 1, sharers: [0] }],
@@ -32,23 +32,23 @@ describe("itemizedShares", () => {
 
 describe("splitBalance", () => {
   test("balanced half split", () => {
-    expect(splitBalance(76000, "380.00", [{ name: "Nitin", amt: "380.00" }])).toMatchObject({
+    expect(splitBalance(76000, "380.00", [{ name: "Kiran", amt: "380.00" }])).toMatchObject({
       residualPaise: 0,
       ok: true,
     });
   });
   test("blank share means the remainder", () => {
-    const b = splitBalance(76000, "", [{ name: "Nitin", amt: "500" }]);
+    const b = splitBalance(76000, "", [{ name: "Kiran", amt: "500" }]);
     expect(b.yourSharePaise).toBe(26000);
     expect(b.ok).toBe(true);
   });
   test("unaccounted and over", () => {
-    expect(splitBalance(76000, "100", [{ name: "Nitin", amt: "380" }]).residualPaise).toBe(28000);
-    expect(splitBalance(76000, "500", [{ name: "Nitin", amt: "380" }]).residualPaise).toBe(-12000);
+    expect(splitBalance(76000, "100", [{ name: "Kiran", amt: "380" }]).residualPaise).toBe(28000);
+    expect(splitBalance(76000, "500", [{ name: "Kiran", amt: "380" }]).residualPaise).toBe(-12000);
   });
   test("needs a named participant and readable amounts", () => {
     expect(splitBalance(76000, "", [{ name: "", amt: "380" }]).ok).toBe(false);
-    expect(splitBalance(76000, "", [{ name: "Nitin", amt: "3.805" }])).toMatchObject({ invalid: true, ok: false });
+    expect(splitBalance(76000, "", [{ name: "Kiran", amt: "3.805" }])).toMatchObject({ invalid: true, ok: false });
   });
 });
 
@@ -59,23 +59,23 @@ test("typedPaise", () => {
 });
 
 describe("resolvePerson", () => {
-  const known = ["Nitin", "Nisha", "Satvik"];
+  const known = ["Kiran", "Kiya", "Satvik"];
   test("exact, case-insensitive", () => {
-    expect(resolvePerson("nitin", known)).toEqual({ name: "Nitin", known: true });
+    expect(resolvePerson("kiran", known)).toEqual({ name: "Kiran", known: true });
   });
   test("unique prefix", () => {
     expect(resolvePerson("Satv", known)).toEqual({ name: "Satvik", known: true });
   });
   test("ambiguous or unknown stays as said", () => {
-    expect(resolvePerson("Ni", known)).toEqual({ name: "Ni", known: false });
-    expect(resolvePerson("Nit", known)).toEqual({ name: "Nitin", known: true });
+    expect(resolvePerson("Ki", known)).toEqual({ name: "Ki", known: false });
+    expect(resolvePerson("Kir", known)).toEqual({ name: "Kiran", known: true });
     expect(resolvePerson("Rahul", known)).toEqual({ name: "Rahul", known: false });
   });
 });
 
 const line = (id: string, outstandingPaise: number, val = ""): NetLine => ({
   id,
-  person: "Nitin",
+  person: "Kiran",
   date: "2026-08-03",
   desc: id,
   outstandingPaise,

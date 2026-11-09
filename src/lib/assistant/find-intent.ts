@@ -241,7 +241,7 @@ export function groundBillItems(
  * Did the user actually name this person, now or earlier in the chat? The
  * model resolves "him" / "the person I mentioned" from history; a name that
  * appears nowhere in what the user wrote is a guess. A typed prefix counts
- * ("nit" backs "Nitin").
+ * ("kir" backs "Kiran").
  */
 export function namedByUser(name: string, userText: string): boolean {
   const first = name.trim().toLowerCase().split(/\s+/)[0] ?? "";

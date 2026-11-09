@@ -3,7 +3,7 @@ import { buildNetLegs } from "./build-legs";
 import { validateNetEventInvariant } from "./validate";
 
 describe("buildNetLegs", () => {
-  test("the handoff's Nitin example balances against a ₹1,120 inflow", () => {
+  test("the handoff's Kiran example balances against a ₹1,120 inflow", () => {
     const legs = buildNetLegs({
       receivables: [
         { id: "uber", paise: 124000 },

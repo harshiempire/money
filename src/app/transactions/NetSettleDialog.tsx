@@ -452,7 +452,7 @@ function NetSettleForm({
             list={personListId}
             value={personFilter}
             onChange={(e) => setPersonFilter(e.target.value)}
-            placeholder="e.g. Nitin"
+            placeholder="e.g. Kiran"
             className="mt-1 rounded border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
           />
           <datalist id={personListId}>

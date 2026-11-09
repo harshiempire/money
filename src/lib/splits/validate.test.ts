@@ -28,7 +28,7 @@ describe("validateSplitBalances", () => {
       validateSplitBalances({
         totalPaise: 364900,
         yourSharePaise: 121633,
-        participants: [p(121633, "Nitin"), p(121634, "Rishith")],
+        participants: [p(121633, "Kiran"), p(121634, "Rishith")],
       }).ok,
     ).toBe(true);
   });
@@ -110,12 +110,12 @@ describe("validateNoDuplicateParticipants — collapsing ids (finding 4)", () =>
     const input = {
       totalPaise: 10000,
       yourSharePaise: 2000,
-      participants: [p(5000, "Nitin", "P"), p(3000, "Nitin", "P")],
+      participants: [p(5000, "Kiran", "P"), p(3000, "Kiran", "P")],
     };
     expect(validateSplitBalances(input).ok).toBe(true);
     const r = validateNoDuplicateParticipants(input.participants);
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.message).toContain("Nitin");
+    expect(r.ok === false && r.message).toContain("Kiran");
   });
 
   test("rejects repeated names even when the ids differ", () => {
@@ -123,12 +123,12 @@ describe("validateNoDuplicateParticipants — collapsing ids (finding 4)", () =>
     // matches by trimmed, case-insensitive name), merging two shares into
     // one balance. Previously allowed.
     const r = validateNoDuplicateParticipants([
-      p(100, "Nitin", "a"),
-      p(100, "Nitin", "b"),
+      p(100, "Kiran", "a"),
+      p(100, "Kiran", "b"),
     ]);
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.message).toBe(
-      "Nitin appears twice in this split. Each person may only have one share.",
+      "Kiran appears twice in this split. Each person may only have one share.",
     );
   });
 
@@ -234,11 +234,11 @@ describe("validateSplitTotalMatchesTransaction (review: split total trusted the 
 });
 
 describe("validateParticipantIdsBelongToSplit (review: participant ids not pinned to the split)", () => {
-  const existing = new Set(["p-nitin", "p-rishith"]);
+  const existing = new Set(["p-kiran", "p-rishith"]);
 
   test("rejects an id from some other split instead of treating it as a new row", () => {
     const r = validateParticipantIdsBelongToSplit(
-      [p(100, "Nitin", "p-nitin"), p(100, "Bob", "p-from-elsewhere")],
+      [p(100, "Kiran", "p-kiran"), p(100, "Bob", "p-from-elsewhere")],
       existing,
     );
     expect(r.ok).toBe(false);
@@ -247,7 +247,7 @@ describe("validateParticipantIdsBelongToSplit (review: participant ids not pinne
 
   test("rejects any id when the split doesn't exist yet", () => {
     expect(
-      validateParticipantIdsBelongToSplit([p(100, "Nitin", "p-nitin")], new Set())
+      validateParticipantIdsBelongToSplit([p(100, "Kiran", "p-kiran")], new Set())
         .ok,
     ).toBe(false);
   });
@@ -255,7 +255,7 @@ describe("validateParticipantIdsBelongToSplit (review: participant ids not pinne
   test("accepts rows without an id (new participants) and rows on this split", () => {
     expect(
       validateParticipantIdsBelongToSplit(
-        [p(100, "Nitin", "p-nitin"), p(50, "Newcomer")],
+        [p(100, "Kiran", "p-kiran"), p(50, "Newcomer")],
         existing,
       ).ok,
     ).toBe(true);

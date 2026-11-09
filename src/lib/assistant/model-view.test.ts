@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { modelAmount, modelDate, modelSafePayee, modelSafeText, userChosenDisplayName } from "./model-view";
 
 test("modelSafePayee never leaks handles with phone or account numbers", () => {
-  expect(modelSafePayee({ counterpartyDisplayName: "Nitin K", parsedPurpose: null, label: "nitin.k@okaxis" })).toBe("Nitin K");
+  expect(modelSafePayee({ counterpartyDisplayName: "Kiran K", parsedPurpose: null, label: "kiran.k@okaxis" })).toBe("Kiran K");
   expect(modelSafePayee({ counterpartyDisplayName: null, parsedPurpose: "Swiggy", label: "swiggy.stores@axb" })).toBe("Swiggy");
   expect(modelSafePayee({ counterpartyDisplayName: null, parsedPurpose: null, label: "paytmqr1k9x@paytm" })).toBe("Payee");
   expect(modelSafePayee({ counterpartyDisplayName: null, parsedPurpose: "V", label: "8125246237@ybl" })).toBe("Payee");

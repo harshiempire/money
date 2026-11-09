@@ -15,10 +15,10 @@ const data: QueryData = {
     { id: "id-b", date: "2026-08-09", paise: 1000000, direction: "paid", payee: "Own savings", note: null, category: null, channel: "imps", isTransfer: true, netSettled: true },
   ],
   categories: [{ name: "Food", kind: "spend" }],
-  people: ["Nitin"],
+  people: ["Kiran"],
   splits: [{ txnId: "id-a", totalPaise: 224700, yourSharePaise: 58400 }],
-  participants: [{ txnId: "id-a", person: "Nitin", expectedPaise: 107900, settledPaise: 120000 }],
-  owed: [{ person: "Nitin", date: "2026-09-02", paise: 30000, what: "Movie", settledPaise: 10000 }],
+  participants: [{ txnId: "id-a", person: "Kiran", expectedPaise: 107900, settledPaise: 120000 }],
+  owed: [{ person: "Kiran", date: "2026-09-02", paise: 30000, what: "Movie", settledPaise: 10000 }],
 };
 
 describe("query tables", () => {
@@ -42,8 +42,8 @@ describe("query tables", () => {
   });
 
   test("open amounts never go below zero", () => {
-    expect(table("split_participant").rows).toEqual([["T1", "Nitin", 107900, 120000, 0]]);
-    expect(table("owed_expense").rows).toEqual([["Nitin", "2026-09-02", 30000, "Movie", 10000, 20000]]);
+    expect(table("split_participant").rows).toEqual([["T1", "Kiran", 107900, 120000, 0]]);
+    expect(table("owed_expense").rows).toEqual([["Kiran", "2026-09-02", 30000, "Movie", 10000, 20000]]);
   });
 
   test("the brief lists every table and column; describe_table gives the detail", () => {
