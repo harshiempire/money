@@ -3,13 +3,14 @@ import "server-only";
 import { runCore, CoreFailure, ledgerToolError } from "./run-core";
 import type { SettlementReceipt } from "@/lib/ledger/rules/settlement-policy";
 import { and, eq } from "drizzle-orm";
-import { Result, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import { revalidatePath } from "next/cache";
 import { db, schema } from "@/db";
 import { ForbiddenError } from "@/lib/auth/forbidden";
 import { LedgerError, type LedgerErrorCode, type WriteContext } from "@/lib/ledger/context";
 import { requestHash, type Operation } from "@/lib/ledger/rules";
-import { relationalSnapshot, relationalRows } from "@/lib/ledger/relational-store";
+import { ledgerQuery, relationalSnapshot, relationalRows } from "@/lib/ledger/relational-store";
+import type { Actor, Db } from "@/lib/ledger/services";
 import { replayChange } from "@/lib/ledger/store";
 import * as splits from "@/lib/ledger/splits";
 import * as settlements from "@/lib/ledger/settlements";
@@ -103,7 +104,10 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       return Schema.decodeUnknownSync(RelationalOutput)({ applied: true, change_id: value.changeId, summary: value.summary ?? summary, refs: [...refs], ...details });
     };
     ctx.idempotency!.renderResult = value => render(value as CoreResult);
-    let result: CoreResult;
+    // Each case only validates and picks a core. Anything thrown here is caught below;
+    // the core itself runs once, at the single boundary after the switch.
+    const write = ctx;
+    let core: Effect.Effect<CoreResult, LedgerError, Db | Actor>;
     switch (tool) {
       case "link_person": {
         const input = decode(tool, raw);
@@ -118,8 +122,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           baseRefs.push(...refs);
           return { counterpartyId: payee.id, person: link.person, currentPerson: link.current_person, ...(link.create_person !== undefined ? { createPerson: link.create_person } : {}), ...(link.distinct_from !== undefined ? { distinctFrom: link.distinct_from } : {}) };
         });
-        result = await linkPayeesToPerson(ctx, links);
-        summary = result.summary ?? "Updated person links.";
+        core = ledgerQuery(() => linkPayeesToPerson(write, links)).pipe(Effect.tap(linked => Effect.sync(() => { summary = linked.summary ?? "Updated person links."; })));
         break;
       }
       case "create_split": {
@@ -135,15 +138,15 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
         if (settledNames.length) refuse("settled_split", `Cannot replace: shares for ${settledNames.join(", ")} have settlements. Clear them first.`);
         summary = `Split ₹${exactRupees(bill.amountPaise)} with ${participants.map(row => row.personName).join(", ")}; your share ₹${exactRupees(amounts.yours)}.`;
         baseRefs.push(input.ref);
-        result = await splits.createSplit(ctx, { transactionId: bill.id, totalPaise: bill.amountPaise, yourSharePaise: amounts.yours, note: input.note ?? null,
-          expectNoExistingSplit: !input.replace_existing, participants: participants.map((row, i) => ({ personName: row.personName, expectedAmountPaise: amounts.participants[i] })) });
+        core = ledgerQuery(() => splits.createSplit(write, { transactionId: bill.id, totalPaise: bill.amountPaise, yourSharePaise: amounts.yours, note: input.note ?? null,
+          expectNoExistingSplit: !input.replace_existing, participants: participants.map((row, i) => ({ personName: row.personName, expectedAmountPaise: amounts.participants[i] })) }));
         break;
       }
       case "delete_split": {
         const input = decode(tool, raw), bill = txn(input.ref, input.rev);
         guardSplit(bill.id, input.split_rev);
         baseRefs.push(input.ref); summary = "Deleted split and its unsettled shares.";
-        result = await splits.deleteSplit(ctx, { transactionId: bill.id, expectNoSettlements: true }); break;
+        core = ledgerQuery(() => splits.deleteSplit(write, { transactionId: bill.id, expectNoSettlements: true })); break;
       }
       case "record_settlement": {
         const input = decode(tool, raw), inflow = txn(input.inflow_ref), name = person(input.person);
@@ -155,30 +158,30 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           return { splitParticipantId: target.id, amountPaise: moneyPaise(row.amount) };
         }) } : { kind: "oldest_first", personName: name };
         baseRefs.push(input.inflow_ref);
-        result = await runCore(splits.recordSettlement(ctx, { inflowTransactionId: inflow.id, mode: "append", allocations,
-          ...(input.leftover ? { residual: { kind: input.leftover.kind, personName: name, note: input.leftover.note ?? null } } : {}) }), p);
+        core = splits.recordSettlement(write, { inflowTransactionId: inflow.id, mode: "append", allocations,
+          ...(input.leftover ? { residual: { kind: input.leftover.kind, personName: name, note: input.leftover.note ?? null } } : {}) });
         break;
       }
 
       case "clear_settlement": {
         const input = decode(tool, raw), inflow = txn(input.inflow_ref);
         baseRefs.push(input.inflow_ref); summary = "Cleared ordinary bank allocations and the leftover explanation; net-event legs remain.";
-        result = await splits.clearSettlement(ctx, { inflowTransactionId: inflow.id }); break;
+        core = ledgerQuery(() => splits.clearSettlement(write, { inflowTransactionId: inflow.id })); break;
       }
       case "record_cash_settlement": {
         const input = decode(tool, raw), target = share(input.share_ref), amountPaise = moneyPaise(input.amount);
         baseRefs.push(input.share_ref); summary = `Recorded ₹${exactRupees(amountPaise)} cash from ${target.personName}.`;
-        result = await runCore(settlements.recordCashSettlement(ctx, { splitParticipantId: target.id, amountPaise, note: input.note ?? null }), p); break;
+        core = settlements.recordCashSettlement(write, { splitParticipantId: target.id, amountPaise, note: input.note ?? null }); break;
       }
       case "write_off_share": {
         const input = decode(tool, raw), target = share(input.share_ref);
         baseRefs.push(input.share_ref); summary = `Forgave ${target.personName}'s outstanding ₹${exactRupees(Math.max(0, target.expectedAmountPaise - settled(target.id)))}.`;
-        result = await settlements.writeOffParticipantShare(ctx, { splitParticipantId: target.id, note: input.note ?? null }); break;
+        core = ledgerQuery(() => settlements.writeOffParticipantShare(write, { splitParticipantId: target.id, note: input.note ?? null })); break;
       }
       case "undo_write_off": {
         const input = decode(tool, raw), target = settlement(input.settlement_ref);
         baseRefs.push(input.settlement_ref); summary = "Reversed share writeoff.";
-        result = await settlements.undoWriteOff(ctx, { settlementId: target.id }); break;
+        core = ledgerQuery(() => settlements.undoWriteOff(write, { settlementId: target.id })); break;
       }
       case "net_settle": {
         const input = decode(tool, raw);
@@ -206,39 +209,40 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           ...input.receivables.map((r, i): NetEventLeg => ({ kind: "receivable", splitParticipantId: receivables[i].id, amountPaise: receivables[i].paise, method: r.method!, expectedOutstandingPaise: moneyPaise(r.expected_outstanding) })),
           ...input.payables.map((r, i): NetEventLeg => ({ kind: "payable", owedExpenseId: payables[i].id, amountPaise: payables[i].paise, method: r.method!, expectedOutstandingPaise: moneyPaise(r.expected_outstanding) })),
         ] : built.map(l => ({ ...l, expectedOutstandingPaise: moneyPaise(l.kind === "receivable" ? input.receivables.find(r => share(r.share_ref).id === l.splitParticipantId)!.expected_outstanding : input.payables.find(r => expense(r.owed_ref).id === l.owedExpenseId)!.expected_outstanding) }));
-        result = await runCore(saveNetEvent(ctx, { eventDate: input.date, inflowTransactionId: inflow?.id, outflowTransactionId: outflow?.id, note: input.note, legs }), p); break;
+        core = saveNetEvent(write, { eventDate: input.date, inflowTransactionId: inflow?.id, outflowTransactionId: outflow?.id, note: input.note, legs }); break;
       }
       case "add_owed_expense": {
         const input = decode(tool, raw), name = person(input.person, input.create_person, input.distinct_from), amountPaise = moneyPaise(input.amount);
         const source = input.source_inflow_ref ? txn(input.source_inflow_ref) : undefined;
         if (source) baseRefs.push(txRef(source.id));
         summary = `Added ₹${exactRupees(amountPaise)} owed to ${name} for ${input.what.trim()}.`;
-        result = await owed.createOwedExpense(ctx, { personName: name, incurredDate: input.date, description: input.what, amountPaise, note: input.note, sourceInflowTransactionId: source?.id }); break;
+        core = ledgerQuery(() => owed.createOwedExpense(write, { personName: name, incurredDate: input.date, description: input.what, amountPaise, note: input.note, sourceInflowTransactionId: source?.id })); break;
       }
       case "update_owed_expense": {
         const input = decode(tool, raw), target = expense(input.owed_ref);
         if ([input.person, input.date, input.what, input.amount, input.note].every(v => v === undefined)) refuse("no_fields", "Supply a person, date, what, amount or note to update.");
         baseRefs.push(input.owed_ref); summary = `Updated owed expense for ${target.personName}.`;
-        result = await owed.updateOwedExpense(ctx, { id: target.id, personName: input.person !== undefined ? person(input.person) : undefined, incurredDate: input.date, description: input.what,
-          amountPaise: input.amount !== undefined ? moneyPaise(input.amount) : undefined, note: input.note }); break;
+        const personName = input.person !== undefined ? person(input.person) : undefined, amountPaise = input.amount !== undefined ? moneyPaise(input.amount) : undefined;
+        core = ledgerQuery(() => owed.updateOwedExpense(write, { id: target.id, personName, incurredDate: input.date, description: input.what, amountPaise, note: input.note })); break;
       }
       case "delete_owed_expense": {
         const input = decode(tool, raw), target = expense(input.owed_ref);
         baseRefs.push(input.owed_ref); summary = `Deleted ₹${exactRupees(target.amountPaise)} owed to ${target.personName} and dependent settlements.`;
-        result = await owed.deleteOwedExpense(ctx, { id: target.id }); break;
+        core = ledgerQuery(() => owed.deleteOwedExpense(write, { id: target.id })); break;
       }
       case "rename_payee": {
         const input = decode(tool, raw), target = txn(input.ref);
         const [row] = await db.select({ counterpartyId: schema.transactions.counterpartyId }).from(schema.transactions).where(and(eq(schema.transactions.id, target.id), eq(schema.transactions.accountId, p.actor.accountId)));
         const counterpartyId = row?.counterpartyId ?? refuse("no_payee", "That transaction has no payee.");
         baseRefs.push(input.ref); summary = `Renamed payee to ${input.display_name.trim()}.`;
-        result = await renamePayee(ctx, { counterpartyId, displayName: input.display_name, currentDisplayName: input.current_display_name }); break;
+        core = ledgerQuery(() => renamePayee(write, { counterpartyId, displayName: input.display_name, currentDisplayName: input.current_display_name })); break;
       }
       case "add_standing_note": {
         const input = decode(tool, raw); summary = "Added standing note.";
-        result = await runCore(addStandingNote(ctx, input.body), p); break;
+        core = addStandingNote(write, input.body); break;
       }
     }
+    const result = await runCore(core, p);
     const capability = CAPABILITIES.find(c => "tools" in c.mcp && c.mcp.tools.some(t => t.name === tool));
     if (!capability) throw new Error(`Unregistered relational tool: ${tool}`);
     for (const path of refreshPaths(capability.id)) revalidatePath(path);
