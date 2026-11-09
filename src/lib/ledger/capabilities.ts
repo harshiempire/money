@@ -178,6 +178,10 @@ export const CAPABILITIES: readonly Capability[] = [
     "logged": true,
     "moneyRules": [
   {
+    "module": "src/lib/ledger/rules/equal-split.ts",
+    "export": "equalShares"
+  },
+  {
     "module": "src/lib/splits/validate.ts",
     "export": "validateSplitInput"
   },

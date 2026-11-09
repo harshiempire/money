@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   YOU,
-  equalShares,
   fillReceivablesLargestFirst,
   itemizedShares,
   netBalance,
@@ -10,16 +9,6 @@ import {
   typedPaise,
 } from "./card-math";
 import type { NetLine } from "./types";
-
-describe("equalShares", () => {
-  test("₹760 half each", () => {
-    expect(equalShares(76000, 1)).toEqual({ yours: 38000, each: 38000 });
-  });
-  test("the odd paisa goes to you", () => {
-    expect(equalShares(10001, 1)).toEqual({ yours: 5001, each: 5000 });
-    expect(equalShares(10000, 2)).toEqual({ yours: 3334, each: 3333 });
-  });
-});
 
 describe("itemizedShares", () => {
   test("the Etsi bill: shared dishes ÷ 3, Nitin's own ₹495", () => {

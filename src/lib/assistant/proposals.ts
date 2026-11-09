@@ -5,9 +5,9 @@
  * data; the model only supplied names, the mode and verbatim amounts.
  */
 import { formatPaise } from "@/lib/format";
+import { equalShares } from "@/lib/ledger/rules/equal-split";
 import {
   YOU,
-  equalShares,
   fillReceivablesLargestFirst,
   itemizedShares,
   resolvePerson,

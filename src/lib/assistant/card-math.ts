@@ -14,17 +14,6 @@ export const typedPaise = (s: string): number => {
   return parseAmountToPaise(s) ?? NaN;
 };
 
-/**
- * Equal shares between `people` participants and you. Remainder paise go to
- * you (as SplitDialog's "Equal split" does), so participants owe round-ish
- * amounts and the total always balances exactly.
- */
-export function equalShares(totalPaise: number, people: number): { yours: number; each: number } {
-  const n = people + 1;
-  const each = Math.floor(totalPaise / n);
-  return { yours: totalPaise - each * people, each };
-}
-
 /** Stands for the user in an item's list of sharers. */
 export const YOU = -1;
 

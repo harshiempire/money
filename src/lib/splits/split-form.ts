@@ -11,6 +11,7 @@
  * behaves; the server's own validation is the final word on amounts.
  */
 import { formatPaise } from "@/lib/format";
+import { equalShares } from "@/lib/ledger/rules/equal-split";
 
 export interface SplitFormParticipant {
   /** Existing participant id, kept so its row (and settlements) survive an edit. */
@@ -98,8 +99,8 @@ export const newParticipantRow = blankParticipant;
 
 /**
  * Suggested "your share" when a new split's share is still blank and the
- * number of rows changes: total / (1 + named participants), rounded to paise.
- * Returns null when nothing should change.
+ * number of rows changes: your part of an equal split with the named
+ * participants. Returns null when nothing should change.
  */
 export function autoSuggestYourShare(
   values: SplitFormValues,
@@ -109,9 +110,9 @@ export function autoSuggestYourShare(
   if (hasExistingSplit || values.yourShare !== "" || totalRupees === "") {
     return null;
   }
-  const t = Number.parseFloat(totalRupees);
-  const n = values.participants.filter((p) => p.personName).length + 1;
-  if (n > 1 && Number.isFinite(t)) return (t / n).toFixed(2);
+  const totalP = rupeesToPaise(totalRupees);
+  const people = values.participants.filter((p) => p.personName).length;
+  if (people > 0 && Number.isFinite(totalP)) return paiseToRupeesStr(equalShares(totalP, people).yours);
   return null;
 }
 
@@ -128,16 +129,14 @@ export function equalSplitValues(
 ): Pick<SplitFormValues, "yourShare" | "participants"> | null {
   const totalP = rupeesToPaise(totalRupees);
   const named = values.participants.filter((p) => p.personName.trim());
-  const n = named.length + 1;
-  if (!Number.isFinite(totalP) || n <= 1) return null;
-  const base = Math.floor(totalP / n);
-  const remainder = totalP - base * n;
+  if (!Number.isFinite(totalP) || named.length === 0) return null;
+  const { yours, each } = equalShares(totalP, named.length);
   return {
-    yourShare: paiseToRupeesStr(base + remainder),
+    yourShare: paiseToRupeesStr(yours),
     participants: named.map((p) => ({
       id: p.id,
       personName: p.personName,
-      expectedRupees: paiseToRupeesStr(base),
+      expectedRupees: paiseToRupeesStr(each),
     })),
   };
 }

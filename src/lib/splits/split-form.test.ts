@@ -201,13 +201,17 @@ describe("splitFormSignature", () => {
 });
 
 describe("autoSuggestYourShare", () => {
-  test("new split, blank share: total / (1 + named rows)", () => {
+  test("new split, blank share: your part of an equal split, with leftover paise", () => {
     expect(autoSuggestYourShare(values("", [row("Alex", ""), row("", "")]), "100.00", false)).toBe(
       "50.00",
     );
     expect(
       autoSuggestYourShare(values("", [row("Alex", ""), row("Sam", "")]), "100.00", false),
-    ).toBe("33.33");
+    ).toBe("33.34");
+  });
+
+  test("an unreadable total suggests nothing", () => {
+    expect(autoSuggestYourShare(values("", [row("Alex", "")]), "abc", false)).toBeNull();
   });
 
   test("does nothing for an existing split, a typed share, or nobody named", () => {
