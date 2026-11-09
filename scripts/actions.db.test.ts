@@ -1408,7 +1408,7 @@ dbTest('settlement stale guards retain exact errors at the app, MCP core boundar
   const share = await f.makeShare();
   const { sql } = await import('drizzle-orm');
   const { mcpRelationalWrite } = await import('@/lib/mcp/relational-write-ops');
-  const { runCore, CoreFailure } = await import('@/lib/mcp/run-core');
+  const { runCore } = await import('@/lib/mcp/run-core');
   const { recordSettlement } = await import('@/lib/ledger/splits');
   const refs = await import('@/lib/mcp/refs');
   const oldSecret = process.env.AUTH_SECRET;
@@ -1427,10 +1427,9 @@ dbTest('settlement stale guards retain exact errors at the app, MCP core boundar
     // that optional core guard through its real MCP Effect error boundary.
     let caught: unknown;
     try {
-      await runCore(recordSettlement({ actor, source: 'mcp', tokenId, label: 'Stale test', idempotency: { key: 'stale-core-guard', requestHash: 'test-stale-guard' } }, { inflowTransactionId: f.credit, mode: 'append', allocations: { kind: 'explicit', rows }, expected: { allocations: [] } }), principal);
+      await runCore(recordSettlement({ actor, source: 'mcp', tokenId, label: 'Stale test', idempotency: { key: 'stale-core-guard', requestHash: 'test-stale-guard' } }, { inflowTransactionId: f.credit, mode: 'append', allocations: { kind: 'explicit', rows }, expected: { allocations: [] } }).pipe(Effect.orDie), principal);
     } catch (error) { caught = error; }
-    expect(caught).toBeInstanceOf(CoreFailure);
-    expect((caught as CoreFailure).error).toEqual({ code: 'stale', message });
+    expect(caught).toMatchObject({ code: 'stale', message });
     // The real adapter supplies a full relational snapshot instead. Hold the
     // actor lock until it reaches the core, change a share, then release it.
     let acquired!: (pid: number) => void, release!: () => void;
