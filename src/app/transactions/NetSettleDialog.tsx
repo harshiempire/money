@@ -3,10 +3,10 @@
 import { useInvalidateMoneyReads } from "@/lib/query/use-money-query";
 
 import { useId, useMemo, useRef, useState, useTransition } from "react";
-import {
-  deleteNetEvent,
-  saveNetEvent,
-} from "./net-event-actions";
+import { useRouter } from "next/navigation";
+import { GuidedSettlementForm } from "./GuidedSettlementForm";
+import type { SettlementPayment } from "@/lib/ledger/rules/net-settlement-plan";
+import { deleteNetEvent, saveNetEvent } from "./net-event-actions";
 import type { NetEventLeg } from "@/lib/net-events/legs";
 import { callAction } from "@/lib/action/result";
 import type { CategoryOption } from "./RowActions";
@@ -16,6 +16,10 @@ import type {
 } from "@/lib/net-events/load-net-settle-data";
 import { balanceAllocationsToExpectedNet } from "@/lib/net-events/validate";
 import { buildNetLegs } from "@/lib/net-events/build-legs";
+
+const EMPTY_NAMES: string[] = [];
+const EMPTY_PAYMENTS: SettlementPayment[] = [];
+const EMPTY_LEGS: NetSettleExistingLeg[] = [];
 
 const paiseToRupeesStr = (p: number) => (p / 100).toFixed(2);
 const rupeesToPaise = (r: string) => {
@@ -72,8 +76,14 @@ function buildLegs(
     return raw?.trim() ? rupeesToPaise(raw) : 0;
   };
   return buildNetLegs({
-    receivables: receivables.map((r) => ({ id: r.id, paise: allocated(receivableAllocs, r.id) })),
-    payables: payables.map((p) => ({ id: p.id, paise: allocated(payableAllocs, p.id) })),
+    receivables: receivables.map((r) => ({
+      id: r.id,
+      paise: allocated(receivableAllocs, r.id),
+    })),
+    payables: payables.map((p) => ({
+      id: p.id,
+      paise: allocated(payableAllocs, p.id),
+    })),
     newPayables: localPayables.map((p) => ({
       spec: {
         personName: p.personName,
@@ -89,6 +99,52 @@ function buildLegs(
   });
 }
 
+function selectedBankPayment(input: {
+  eventDate: string;
+  inflowTransactionId?: string;
+  outflowTransactionId?: string;
+  inflowAmountPaise?: number;
+  outflowAmountPaise?: number;
+  paymentDescription?: string;
+  defaultPersonFilter?: string;
+}): SettlementPayment | undefined {
+  const id = input.inflowTransactionId ?? input.outflowTransactionId;
+  if (!id) return undefined;
+  const direction = input.inflowTransactionId ? "credit" : "debit";
+  return {
+    id,
+    date: input.eventDate,
+    direction,
+    amountPaise:
+      (direction === "credit"
+        ? input.inflowAmountPaise
+        : input.outflowAmountPaise) ?? 0,
+    description:
+      input.paymentDescription ||
+      input.defaultPersonFilter ||
+      "Selected bank payment",
+    personName: input.defaultPersonFilter ?? null,
+  };
+}
+
+// Editing can reuse this event's allocation, including bills now fully settled.
+function restoreEventCapacity<
+  T extends { id: string; outstandingPaise: number },
+>(
+  rows: T[],
+  legs: NetSettleExistingLeg[],
+  kind: NetSettleExistingLeg["kind"],
+): T[] {
+  return rows.map((row) => ({
+    ...row,
+    outstandingPaise:
+      row.outstandingPaise +
+      legs
+        .filter((leg) => leg.kind === kind && leg.targetId === row.id)
+        .reduce((sum, leg) => sum + leg.amountPaise, 0),
+  }));
+}
+
 export function NetSettleButton({
   eventDate,
   inflowTransactionId,
@@ -99,9 +155,11 @@ export function NetSettleButton({
   payables,
   categories,
   existingNetEventId,
-  existingLegs,
+  existingLegs = EMPTY_LEGS,
   defaultPersonFilter,
-  knownPersonNames = [],
+  knownPersonNames = EMPTY_NAMES,
+  bankPayments = EMPTY_PAYMENTS,
+  paymentDescription,
 }: {
   eventDate: string;
   inflowTransactionId?: string;
@@ -115,10 +173,35 @@ export function NetSettleButton({
   existingLegs?: NetSettleExistingLeg[];
   defaultPersonFilter?: string;
   knownPersonNames?: string[];
+  bankPayments?: SettlementPayment[];
+  paymentDescription?: string;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const open = () => dialogRef.current?.showModal();
-  const close = () => dialogRef.current?.close();
+  const router = useRouter();
+  const [session, setSession] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [saveAttempted, setSaveAttempted] = useState(false);
+  const open = () => {
+    setSession((value) => value + 1);
+    setAdvanced(false);
+    setSaveAttempted(false);
+    dialogRef.current?.showModal();
+  };
+  const close = () => {
+    if (busy) return;
+    dialogRef.current?.close();
+    router.refresh();
+  };
+  const payment = selectedBankPayment({
+    eventDate,
+    inflowTransactionId,
+    outflowTransactionId,
+    inflowAmountPaise,
+    outflowAmountPaise,
+    paymentDescription,
+    defaultPersonFilter,
+  });
 
   return (
     <>
@@ -127,27 +210,70 @@ export function NetSettleButton({
         onClick={open}
         className="shrink-0 whitespace-nowrap rounded border border-violet-300 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950"
       >
-        {existingNetEventId ? "Net ✓" : "Net settle"}
+        {existingNetEventId ? "Net ✓" : "Settle up"}
       </button>
       <dialog
         ref={dialogRef}
-        className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="settlement-dialog rounded-xl p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        aria-label="Settle up"
+        onCancel={(event) => {
+          event.preventDefault();
+          close();
+        }}
       >
-        <NetSettleForm
-          eventDate={eventDate}
-          inflowTransactionId={inflowTransactionId}
-          outflowTransactionId={outflowTransactionId}
-          inflowAmountPaise={inflowAmountPaise ?? 0}
-          outflowAmountPaise={outflowAmountPaise ?? 0}
-          receivables={receivables}
-          payables={payables}
-          categories={categories}
-          existingNetEventId={existingNetEventId}
-          existingLegs={existingLegs ?? []}
-          defaultPersonFilter={defaultPersonFilter ?? ""}
-          knownPersonNames={knownPersonNames}
-          onClose={close}
-        />
+        {session > 0 &&
+          (!existingNetEventId &&
+          !advanced &&
+          !(inflowTransactionId && outflowTransactionId) ? (
+            <>
+              <GuidedSettlementForm
+                key={session}
+                eventDate={eventDate}
+                receivables={receivables}
+                payables={payables}
+                payment={payment}
+                bankPayments={bankPayments}
+                defaultPerson={defaultPersonFilter}
+                onSave={async (request) => {
+                  setSaveAttempted(true);
+                  return saveNetEvent(request);
+                }}
+                onClose={close}
+                onBusyChange={setBusy}
+              />
+              {!saveAttempted && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="mb-5 ml-6 text-xs text-neutral-500 underline"
+                  onClick={() => setAdvanced(true)}
+                >
+                  Enter individual bill amounts or add a bill
+                </button>
+              )}
+            </>
+          ) : (
+            <NetSettleForm
+              key={session}
+              eventDate={eventDate}
+              inflowTransactionId={inflowTransactionId}
+              outflowTransactionId={outflowTransactionId}
+              inflowAmountPaise={inflowAmountPaise ?? 0}
+              outflowAmountPaise={outflowAmountPaise ?? 0}
+              receivables={restoreEventCapacity(
+                receivables,
+                existingLegs,
+                "receivable",
+              )}
+              payables={restoreEventCapacity(payables, existingLegs, "payable")}
+              categories={categories}
+              existingNetEventId={existingNetEventId}
+              existingLegs={existingLegs}
+              defaultPersonFilter={defaultPersonFilter ?? ""}
+              knownPersonNames={knownPersonNames}
+              onClose={close}
+            />
+          ))}
       </dialog>
     </>
   );
@@ -514,13 +640,7 @@ function NetSettleForm({
           Net = Σ receivables − Σ payables = ₹{paiseToRupeesStr(netTotal)}
         </div>
         <div>Expected bank delta = ₹{paiseToRupeesStr(expectedNet)}</div>
-        <div
-          className={
-            invariantOk
-              ? "mt-1 text-inflow"
-              : "mt-1 text-red-600"
-          }
-        >
+        <div className={invariantOk ? "mt-1 text-inflow" : "mt-1 text-red-600"}>
           {invariantOk
             ? "✓ Balanced"
             : `✗ Off by ₹${paiseToRupeesStr(Math.abs(residualPaise))} (${Math.abs(residualPaise)} paise) — ${

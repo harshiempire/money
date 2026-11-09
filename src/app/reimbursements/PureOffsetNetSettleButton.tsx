@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { NetSettleButton } from "../transactions/NetSettleDialog";
+import type { SettlementPayment } from "@/lib/ledger/rules/net-settlement-plan";
 import type { CategoryOption } from "../transactions/RowActions";
 import type {
   PayableOption,
@@ -13,11 +14,13 @@ export function PureOffsetNetSettleButton({
   payables,
   categories,
   knownPersonNames,
+  bankPayments,
 }: {
   receivables: ReceivableOption[];
   payables: PayableOption[];
   categories: CategoryOption[];
   knownPersonNames: string[];
+  bankPayments: SettlementPayment[];
 }) {
   const [today] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -28,6 +31,7 @@ export function PureOffsetNetSettleButton({
       payables={payables}
       categories={categories}
       knownPersonNames={knownPersonNames}
+      bankPayments={bankPayments}
     />
   );
 }

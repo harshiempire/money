@@ -96,6 +96,7 @@ export function buildParticipantOptions(
 
 export function buildOpenReceivablesFromLedger(
   ledger: AccountSplitLedger,
+  includeSettled = false,
 ): ReceivableOption[] {
   const splitMeta = new Map(ledger.splits.map((s) => [s.id, s]));
   return ledger.participants
@@ -114,7 +115,7 @@ export function buildOpenReceivablesFromLedger(
         splitTransactionDescription: meta.rawDescription,
       };
     })
-    .filter((r) => r.outstandingPaise > 0);
+    .filter((r) => includeSettled || r.outstandingPaise > 0);
 }
 
 export const getAccountSplitLedger = cache(loadAccountSplitLedgerImpl);

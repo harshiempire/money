@@ -91,7 +91,7 @@ export async function loadTransactionTableContext(
   // while these are still in flight and unattached, they'd reject with no
   // handler and crash the process on unhandledRejection.
   const ledgerPromise = getAccountSplitLedger(accountId);
-  const payablesPromise = loadOpenPayablesForUser(userId);
+  const payablesPromise = loadOpenPayablesForUser(userId, true);
   const hintsPromise = loadCounterpartyPersonHints(accountId);
 
   // categoriesPromise/personsPromise are lazy Drizzle query builders, not
@@ -342,7 +342,8 @@ export async function loadTransactionTableContext(
   const participantOptions: ParticipantOption[] =
     buildParticipantOptions(ledger);
   const categoryOptions: CategoryOption[] = categories;
-  const openReceivables = buildOpenReceivablesFromLedger(ledger);
+  const editedTargets = new Set([...netEventsByTxn.values()].flatMap(event => event.legs.map(leg => leg.targetId)));
+  const openReceivables = buildOpenReceivablesFromLedger(ledger, true).filter(row => row.outstandingPaise > 0 || editedTargets.has(row.id));
 
   return {
     rows,
@@ -355,7 +356,7 @@ export async function loadTransactionTableContext(
     knownPersonNames: personRows.map((p) => p.name),
     counterpartyPersonHints,
     openReceivables,
-    openPayables,
+    openPayables: openPayables.filter(row => row.outstandingPaise > 0 || editedTargets.has(row.id)),
     netEventsByTxn,
     creditResidualByTxn,
   };

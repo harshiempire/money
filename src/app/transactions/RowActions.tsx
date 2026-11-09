@@ -183,6 +183,7 @@ export function RowActions({
             eventDate={txnDate}
             inflowTransactionId={transactionId}
             inflowAmountPaise={amountPaise}
+            paymentDescription={rawDescription}
             receivables={receivables}
             payables={payables}
             categories={categories}
@@ -198,6 +199,7 @@ export function RowActions({
           eventDate={txnDate}
           outflowTransactionId={transactionId}
           outflowAmountPaise={amountPaise}
+          paymentDescription={rawDescription}
           receivables={receivables}
           payables={payables}
           categories={categories}

@@ -10,15 +10,21 @@ export function SpendBreakdown({
   owedSelfPaise = 0,
   reimbursement,
   compact = false,
+  reportHref,
 }: {
   bridge: SplitBridgeTotals;
   netSelfPaise: number;
   owedSelfPaise?: number;
   reimbursement?: ReimbursementBridgeTotals;
   compact?: boolean;
+  reportHref?: string;
 }) {
-  if (bridge.personalDebitGrossPaise <= 0 && bridge.netCreditPaise <= 0) {
+  if (bridge.personalDebitGrossPaise <= 0 && bridge.netCreditPaise <= 0 && owedSelfPaise <= 0) {
     return null;
+  }
+
+  if (reportHref) {
+    return <SpendWaterfall bridge={bridge} netSelfPaise={netSelfPaise} owedSelfPaise={owedSelfPaise} reimbursement={reimbursement} reportHref={reportHref} />;
   }
 
   const splitCount =

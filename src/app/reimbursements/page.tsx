@@ -26,6 +26,7 @@ import {
 } from "./SplitAwaitingItem";
 import { ForgivenHistory } from "./ForgivenHistory";
 import { PureOffsetNetSettleButton } from "./PureOffsetNetSettleButton";
+import { loadSettlementPaymentsForAccount } from "@/lib/ledger/read/settlement-payments";
 import {
   loadOpenPayablesForUser,
   loadOpenReceivablesForAccount,
@@ -98,8 +99,9 @@ export default async function ReimbursementsPage({
   ]);
   const { period } = resolved;
 
-  const [openReceivables, openPayables, categories, personRows, forgivenRows] =
+  const [bankPayments, openReceivables, openPayables, categories, personRows, forgivenRows] =
     await Promise.all([
+    loadSettlementPaymentsForAccount({ userId: user.id, accountId: account.id }),
     loadOpenReceivablesForAccount(account.id),
     loadOpenPayablesForUser(user.id),
     db
@@ -390,6 +392,7 @@ export default async function ReimbursementsPage({
           payables={openPayables}
           categories={categoryOptions}
           knownPersonNames={knownPersonNames}
+          bankPayments={bankPayments}
         />
       </div>
 
