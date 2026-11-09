@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/db";
 import {
@@ -39,12 +40,12 @@ export default async function ReviewPage() {
       </p>
 
       <p className="mt-4">
-        <a
+        <Link
           href="/transactions"
           className="text-sm text-neutral-600 underline-offset-4 hover:underline dark:text-neutral-400"
         >
           ← All transactions
-        </a>
+        </Link>
       </p>
 
       <TransactionTable

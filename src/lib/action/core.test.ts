@@ -101,7 +101,7 @@ describe("runAction", () => {
 
   test("decoding never starts when the session check fails", async () => {
     const calls: string[] = [];
-    const Probe = Schema.declare((u: unknown): u is unknown => {
+    const Probe = Schema.declare((_u: unknown): _u is unknown => {
       calls.push("decode");
       return true;
     });
@@ -342,9 +342,7 @@ describe("success data projection", () => {
     const result = await runAction(
       {
         input: Input,
-        handler: Effect.fn("receipt")(function* () {
-          return receipt;
-        }),
+        handler: Effect.fn("receipt")(() => Effect.succeed(receipt)),
         toData: (r) => r.value,
       },
       good,
@@ -364,9 +362,7 @@ describe("success data projection", () => {
     const result = await runAction(
       {
         input: Input,
-        handler: Effect.fn("voidReceipt")(function* () {
-          return { revalidate: false };
-        }),
+        handler: Effect.fn("voidReceipt")(() => Effect.succeed({ revalidate: false })),
         toData: () => undefined,
       },
       good,

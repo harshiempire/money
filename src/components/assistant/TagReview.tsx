@@ -727,7 +727,7 @@ export function TagReview({
                   const locked = Boolean(result) || applying;
                   const saved = result?.savedIds.includes(row.txnId) && !result.undone;
                   const rowFailure = result?.failedRows.find((item) => item.transactionId === row.txnId);
-                  const choices = row.choices.filter((c) => !chosen[row.txnId]);
+                  const choices = row.choices.filter(() => !chosen[row.txnId]);
                   return (
                     <tr key={row.txnId} className="border-t border-neutral-100 align-top">
                       <td className="px-3 py-3">

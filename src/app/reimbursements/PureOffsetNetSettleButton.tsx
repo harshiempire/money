@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { NetSettleButton } from "../transactions/NetSettleDialog";
 import type { CategoryOption } from "../transactions/RowActions";
 import type {
@@ -18,7 +19,7 @@ export function PureOffsetNetSettleButton({
   categories: CategoryOption[];
   knownPersonNames: string[];
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const [today] = useState(() => new Date().toISOString().slice(0, 10));
 
   return (
     <NetSettleButton

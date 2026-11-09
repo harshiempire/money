@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import {
   formatDate,
@@ -72,6 +73,8 @@ export function LinkedTransactionLink({
 
   if (onPage) {
     return (
+      // Keep the custom in-page scroll and highlight handler.
+      // oxlint-disable-next-line next/no-html-link-for-pages
       <a
         href={`#txn-${transactionId}`}
         className={className}
@@ -216,12 +219,12 @@ function PreviewPanel({
           )}
 
           <footer className="mt-4 flex justify-end">
-            <a
+            <Link
               href={transactionHref(preview.id)}
               className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
             >
               Open in statement →
-            </a>
+            </Link>
           </footer>
         </>
       )}

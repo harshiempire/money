@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { CategoryAccordion } from "@/components/spend/CategoryAccordion";
 import { DailySpendChart } from "@/components/spend/DailySpendChart";
@@ -116,19 +117,19 @@ export default async function SpendReportPage({
           </span>
         )}
         {reimbursement.outstandingReimbursePaise > 0 && (
-          <a
+          <Link
             className="text-owed-to-me underline"
             href={reimbQuery ? `/reimbursements?${reimbQuery}` : "/reimbursements"}
           >
             {formatPaise(reimbursement.outstandingReimbursePaise)} still owed
             from this period
-          </a>
+          </Link>
         )}
         {reimbursement.outstandingPayablePaise > 0 && (
-          <a className="text-i-owe underline" href="/people">
+          <Link className="text-i-owe underline" href="/people">
             {formatPaise(reimbursement.outstandingPayablePaise)} you owe others
             (this period)
-          </a>
+          </Link>
         )}
         {totals.owedSelfPaise > 0 && (
           <span className="text-neutral-500">
@@ -232,7 +233,7 @@ export default async function SpendReportPage({
                     }`}
                   >
                     <td className="py-2 pr-3">
-                      <a
+                      <Link
                         href={spendPeriodHref({ month: row.monthKey })}
                         className="hover:underline"
                       >
@@ -242,7 +243,7 @@ export default async function SpendReportPage({
                             (partial)
                           </span>
                         )}
-                      </a>
+                      </Link>
                     </td>
                     <td className="py-2 pr-3 text-right font-mono text-xs">
                       {formatPaise(row.netSelfPaise)}
@@ -283,7 +284,7 @@ export default async function SpendReportPage({
                   isCurrent ? "bg-neutral-50 dark:bg-neutral-900/40" : ""
                 }`}
               >
-                <a
+                <Link
                   href={spendPeriodHref({ month: row.monthKey })}
                   className="font-medium hover:underline"
                 >
@@ -293,7 +294,7 @@ export default async function SpendReportPage({
                       (partial)
                     </span>
                   )}
-                </a>
+                </Link>
                 <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                   <div>
                     <dt className="text-neutral-500">Net</dt>
@@ -335,12 +336,12 @@ export default async function SpendReportPage({
 
       {periodQuery && (
         <p className="mt-8 text-xs text-neutral-500">
-          <a
+          <Link
             className="underline"
             href={`/transactions?${period.from ? `from=${period.from}&` : ""}${period.to ? `to=${period.to}` : ""}`}
           >
             View transactions in this period →
-          </a>
+          </Link>
         </p>
       )}
     </AppShell>

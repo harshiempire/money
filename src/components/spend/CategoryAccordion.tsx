@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { counterpartyLabel, formatDate, formatPaise } from "@/lib/format";
 import { transactionHref } from "@/lib/transactions/href";
@@ -81,12 +82,12 @@ export function CategoryAccordion({
                     {r.source === "bank" ? (
                       <>
                         {" "}
-                        <a
+                        <Link
                           href={transactionHref(r.id)}
                           className="text-neutral-500 underline-offset-2 hover:underline"
                         >
                           View →
-                        </a>
+                        </Link>
                       </>
                     ) : (
                       <span className="ml-1 text-neutral-500">

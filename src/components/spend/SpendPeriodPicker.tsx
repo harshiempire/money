@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { MonthJump } from "@/components/spend/MonthJump";
 import { PRESET_PERIODS } from "@/lib/period";
 import { currentMonthKey } from "@/lib/spend/month-jump";
@@ -51,12 +52,12 @@ export function SpendPeriodPicker({
       {mode === "month" && monthKey && (
         <div className="flex items-center justify-center gap-4">
           {prevHref ? (
-            <a
+            <Link
               href={prevHref}
               className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
             >
               ←
-            </a>
+            </Link>
           ) : (
             <span className="w-10" />
           )}
@@ -74,12 +75,12 @@ export function SpendPeriodPicker({
             )}
           </div>
           {nextHref ? (
-            <a
+            <Link
               href={nextHref}
               className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700"
             >
               →
-            </a>
+            </Link>
           ) : (
             <span className="w-10" />
           )}
@@ -97,7 +98,7 @@ export function SpendPeriodPicker({
 
       <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
         {presetKeys.map((key) => (
-          <a
+          <Link
             key={key}
             href={href({ preset: key })}
             className={`rounded border px-2 py-1 ${
@@ -108,9 +109,9 @@ export function SpendPeriodPicker({
             }`}
           >
             {PRESET_PERIODS[key]().label}
-          </a>
+          </Link>
         ))}
-        <a
+        <Link
           href={href({ statement: "1" })}
           className={`rounded border px-2 py-1 ${
             mode === "statement"
@@ -119,7 +120,7 @@ export function SpendPeriodPicker({
           }`}
         >
           Statement
-        </a>
+        </Link>
         {mode !== "month" && (
           <MonthJump
             variant="chip"
@@ -131,7 +132,10 @@ export function SpendPeriodPicker({
         )}
       </div>
 
+      {/* key: <Link> navigation keeps this form mounted, and inputs only read
+          defaultValue on mount, so remount it when the period changes. */}
       <form
+        key={`${period.from ?? sp.from ?? ""}|${period.to ?? sp.to ?? ""}`}
         method="get"
         action={basePath}
         className={`mx-auto flex max-w-md flex-wrap items-end justify-center gap-3 rounded border p-3 text-sm ${
@@ -166,12 +170,12 @@ export function SpendPeriodPicker({
             Apply
           </button>
           {isCustomRange && (
-            <a
+            <Link
               href={href({})}
               className="text-xs text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400"
             >
               Clear
-            </a>
+            </Link>
           )}
         </div>
       </form>
@@ -187,7 +191,7 @@ export function SpendPeriodPicker({
                 period.from === s.periodStart && period.to === s.periodEnd;
               return (
                 <li key={`${s.periodStart}-${s.periodEnd}`}>
-                  <a
+                  <Link
                     href={href({
                       from: s.periodStart,
                       to: s.periodEnd,
@@ -195,7 +199,7 @@ export function SpendPeriodPicker({
                     className={active ? "font-medium text-neutral-900 dark:text-neutral-100" : "underline"}
                   >
                     {s.periodStart} → {s.periodEnd}
-                  </a>
+                  </Link>
                 </li>
               );
             })}
