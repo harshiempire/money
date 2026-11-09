@@ -1413,6 +1413,57 @@ describe.skipIf(!enabled)("ledger throwaway DB", () => {
     await r.owed.updateOwedExpense(f.app, { id: owed.id, amountPaise: 3000 });
   }));
 
+  test("agents mark a credit's leftover in one call: owed back, replay, one-time, undo", () => phase4Fixture(async (f, api) => {
+    await f.db.update(f.schema.transactions).set({ drCr: "credit", amountPaise: 8000 }).where(eq(f.schema.transactions.id, f.ids[1]));
+    const created = await api.call("create_split", { ref: api.txRef(f.ids[0]), rev: await api.rev(f.ids[0]), participants: [{ person: "Kiran", create_person: true }], equal: true, idempotency_key: "left-split-1" });
+    expect(created.applied).toBe(true);
+    const input = { inflow_ref: api.txRef(f.ids[1]), person: "Kiran", leftover: { kind: "owed_back", note: "Overpaid for lunch" }, idempotency_key: "left-owed-1" };
+    const marked = await api.call("record_settlement", input);
+    expect(marked).toMatchObject({ applied: true, unallocated: "0.00", leftover: { kind: "owed_back", amount: "30.00" }, allocations: [{ person: "Kiran", amount: "50.00", left: "0.00" }] });
+    expect(marked.summary).toContain("₹30.00 marked owed back");
+    const owedRows = () => f.db.select().from(f.schema.owedExpenses).where(eq(f.schema.owedExpenses.sourceInflowTransactionId, f.ids[1]));
+    expect(await owedRows()).toMatchObject([{ personName: "Kiran", amountPaise: 3000, note: "Overpaid for lunch", description: "Overpayment from Kiran" }]);
+    expect(await api.call("record_settlement", input)).toMatchObject({ applied: true, replayed: true, change_id: marked.change_id });
+    expect(await owedRows()).toHaveLength(1);
+    expect(await api.call("record_settlement", { inflow_ref: api.txRef(f.ids[1]), person: "Kiran", allocations: [], leftover: { kind: "kept" }, idempotency_key: "left-again-1" }))
+      .toMatchObject({ applied: false, errors: [{ code: "explained_inflow" }] });
+    const undone = await api.undo(marked.change_id, "left-undo-1");
+    expect(undone.applied).toBe(true);
+    expect(await owedRows()).toHaveLength(0);
+    expect(await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.ids[1]))).toHaveLength(0);
+    expect((await api.undo(undone.change_id, "left-redo-1")).applied).toBe(true);
+    expect(await owedRows()).toMatchObject([{ amountPaise: 3000 }]);
+  }));
+  test("agents can mark a leftover afterwards, and every refusal writes nothing", () => phase4Fixture(async (f, api) => {
+    await f.db.update(f.schema.transactions).set({ drCr: "credit", amountPaise: 8000 }).where(eq(f.schema.transactions.id, f.ids[1]));
+    await api.call("create_split", { ref: api.txRef(f.ids[0]), rev: await api.rev(f.ids[0]), participants: [{ person: "Kiran", create_person: true }], equal: true, idempotency_key: "after-split-1" });
+    const inflow = api.txRef(f.ids[1]);
+    expect(await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [], idempotency_key: "after-empty-1" }))
+      .toMatchObject({ applied: false, errors: [{ code: "invalid_input", message: "Give at least one allocation, or a leftover to mark." }] });
+    expect(await api.call("record_settlement", { inflow_ref: inflow, person: "Nobody Known", allocations: [], leftover: { kind: "kept" }, idempotency_key: "after-unknown-1" }))
+      .toMatchObject({ applied: false, errors: [{ code: "unknown_person" }] });
+    expect(await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", idempotency_key: "after-first-1" })).toMatchObject({ applied: true, unallocated: "30.00", leftover: null });
+    const credit = async () => (await f.db.select().from(f.schema.transactions).where(eq(f.schema.transactions.id, f.ids[1])))[0];
+    const marked = await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [], leftover: { kind: "kept" }, idempotency_key: "after-kept-1" });
+    expect(marked).toMatchObject({ applied: true, unallocated: "0.00", leftover: { kind: "kept", amount: "30.00" }, allocations: [] });
+    expect(await credit()).toMatchObject({ residualDisposition: "kept", residualAcknowledgedPaise: 3000 });
+    const settlements = () => f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.ids[1]));
+    expect(await settlements()).toHaveLength(1);
+    expect((await api.undo(marked.change_id, "after-undo-1")).applied).toBe(true);
+    expect(await credit()).toMatchObject({ residualDisposition: null, residualAcknowledgedPaise: null });
+    expect(await settlements()).toHaveLength(1);
+    await f.db.update(f.schema.transactions).set({ amountPaise: 5000 }).where(eq(f.schema.transactions.id, f.ids[1]));
+    expect(await api.call("record_settlement", { inflow_ref: inflow, person: "Kiran", allocations: [], leftover: { kind: "written_off" }, idempotency_key: "after-none-1" }))
+      .toMatchObject({ applied: false, errors: [{ code: "fully_allocated" }] });
+    expect(await credit()).toMatchObject({ residualDisposition: null });
+  }));
+  test("a leftover is refused when the allocations in the same call use the whole credit", () => phase4Fixture(async (f, api) => {
+    await f.db.update(f.schema.transactions).set({ drCr: "credit", amountPaise: 5000 }).where(eq(f.schema.transactions.id, f.ids[1]));
+    await api.call("create_split", { ref: api.txRef(f.ids[0]), rev: await api.rev(f.ids[0]), participants: [{ person: "Kiran", create_person: true }], equal: true, idempotency_key: "whole-split-1" });
+    expect(await api.call("record_settlement", { inflow_ref: api.txRef(f.ids[1]), person: "Kiran", leftover: { kind: "kept" }, idempotency_key: "whole-left-1" }))
+      .toMatchObject({ applied: false, errors: [{ code: "fully_allocated", message: "Nothing is left over on this payment after these allocations." }] });
+    expect(await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.inflowTransactionId, f.ids[1]))).toHaveLength(0);
+  }));
   test("kept and written-off credits are not unlinked inflows in balances or period review", () => phase4Fixture(async (f, api) => {
     const r = await relationalFixture(f);
     const { mcpReadOps } = await import("@/lib/mcp/read-ops");
