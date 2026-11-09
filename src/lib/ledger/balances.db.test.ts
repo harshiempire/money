@@ -74,8 +74,11 @@ describe.skipIf(!enabled)('shared balance adapters on local Docker DB', () => {
         expect(sql.find(t=>t.name==='people')!.rows[index]).toEqual([p.name,p.owedToYouPaise,p.youOwePaise]);
         if (!p.openShareCount && !p.openOwedCount) continue;
         const a=app.find(a=>a.personId===p.personId)!;
+        const linked=[...new Set(p.linkedPayees.map(l=>l.displayName?.trim()||l.key))];
+        expect(a.linkedPayees).toEqual(linked);
         expect(a).toMatchObject({receivableOutstandingPaise:p.owedToYouPaise,payableOutstandingPaise:p.youOwePaise,netPaise:p.netPaise});
         const detail=await getPersonDetail(actor.userId,p.personId!);
+        expect(detail!.linkedPayees).toEqual(linked);
         expect(detail).toMatchObject({receivableOutstandingPaise:p.owedToYouPaise,payableOutstandingPaise:p.youOwePaise,netPaise:p.netPaise});
         expect(detail!.receivables.map(r=>[r.participantId,r.outstandingPaise])).toEqual(p.shares.map(s=>[s.id,s.leftPaise]));
         expect(detail!.payables.map(r=>[r.owedExpenseId,r.outstandingPaise])).toEqual(p.owed.map(o=>[o.id,o.leftPaise]));
