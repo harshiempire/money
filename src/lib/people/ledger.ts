@@ -13,6 +13,7 @@ export interface PersonBalanceRow {
   netPaise: number;
   openReceivableCount: number;
   openPayableCount: number;
+  linkedPayees: string[];
 }
 
 export interface PersonReceivableRow {
@@ -51,10 +52,15 @@ async function balancesForUser(userId: string) {
   const [account] = await db.select({ id: schema.moneyAccounts.id }).from(schema.moneyAccounts).where(and(eq(schema.moneyAccounts.userId, userId),eq(schema.moneyAccounts.bank,"bob"))).limit(1);
   return runLedger(loadBalances(), { userId, accountId: account?.id ?? "00000000-0000-0000-0000-000000000000" });
 }
+/** Confirmed payee links only, by display name when there is one. Several handles can share a name. */
+const linkedPayeeLabels = (rows: ReadonlyArray<{ key: string; displayName: string | null }>) =>
+  [...new Set(rows.map(row => row.displayName?.trim() || row.key))];
+
 export async function listPersonBalances(userId: string): Promise<PersonBalanceRow[]> {
   return (await balancesForUser(userId)).filter(p => p.openShareCount || p.openOwedCount).map(p => ({
     personId:p.personId ?? p.key, personName:p.name, receivableOutstandingPaise:p.owedToYouPaise,
     payableOutstandingPaise:p.youOwePaise, netPaise:p.netPaise, openReceivableCount:p.openShareCount, openPayableCount:p.openOwedCount,
+    linkedPayees:linkedPayeeLabels(p.linkedPayees),
   })).sort((a,b) => Math.abs(b.netPaise)-Math.abs(a.netPaise));
 }
 
@@ -69,6 +75,7 @@ export async function getPersonDetail(
   receivableOutstandingPaise: number;
   payableOutstandingPaise: number;
   netPaise: number;
+  linkedPayees: string[];
 } | null> {
   const [person] = await db
     .select()
@@ -219,5 +226,6 @@ export async function getPersonDetail(
     receivableOutstandingPaise,
     payableOutstandingPaise,
     netPaise: receivableOutstandingPaise - payableOutstandingPaise,
+    linkedPayees: linkedPayeeLabels(balance?.linkedPayees ?? []),
   };
 }

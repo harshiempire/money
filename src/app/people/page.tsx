@@ -6,6 +6,15 @@ import { listPersonBalances } from "@/lib/people/ledger";
 
 export const dynamic = "force-dynamic";
 
+function LinkedPayees({ names }: { names: string[] }) {
+  if (names.length === 0) return null;
+  return (
+    <div className="break-words text-[10px] text-neutral-500">
+      Linked: {names.join(", ")}
+    </div>
+  );
+}
+
 export default async function PeoplePage() {
   const user = await getCurrentUser();
   const balances = await listPersonBalances(user.id);
@@ -51,6 +60,7 @@ export default async function PeoplePage() {
                     {p.openPayableCount} payable
                     {p.openPayableCount === 1 ? "" : "s"}
                   </div>
+                  <LinkedPayees names={p.linkedPayees} />
                 </td>
                 <td className="py-2 pr-3 text-right font-mono text-xs text-owed-to-me">
                   {formatPaise(p.receivableOutstandingPaise)}
@@ -90,6 +100,7 @@ export default async function PeoplePage() {
                 {p.openPayableCount} payable
                 {p.openPayableCount === 1 ? "" : "s"}
               </div>
+              <LinkedPayees names={p.linkedPayees} />
               <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
                 <div>
                   <dt className="text-neutral-500">They owe me</dt>

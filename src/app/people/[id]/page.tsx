@@ -49,6 +49,12 @@ export default async function PersonDetailPage({
 
       <CopyBalanceSummary summary={balanceSummary} />
 
+      {detail.linkedPayees.length > 0 && (
+        <p className="mt-3 break-words text-xs text-neutral-500">
+          Linked payees: {detail.linkedPayees.join(", ")}
+        </p>
+      )}
+
       {detail.receivables.length > 0 && (
         <section className="mt-8">
           <h2 className="text-lg font-semibold">Open receivables</h2>
