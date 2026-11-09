@@ -7,6 +7,7 @@ import { useMemo, useRef, useState, useTransition } from "react";
 import { formatPaise } from "@/lib/format";
 import { parseAllocationInputs } from "@/lib/splits/allocation-input";
 import { callAction } from "@/lib/action/result";
+import type { SettlementReceipt } from "@/lib/ledger/rules/settlement-policy";
 import { clearSettlement, recordSettlement } from "./split-actions";
 
 export interface ParticipantOption {
@@ -187,6 +188,7 @@ export function SettleButton({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const open = () => dialogRef.current?.showModal();
   const close = () => dialogRef.current?.close();
+  const [receipt, setReceipt] = useState<SettlementReceipt | null>(null);
 
   const hasResidualDisposition =
     residual.disposition !== null || residual.overpaymentPayablePaise > 0;
@@ -226,16 +228,24 @@ export function SettleButton({
       </button>
       <dialog
         ref={dialogRef}
+        onClose={() => setReceipt(null)}
         className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
       >
-        <SettleForm
-          inflowTransactionId={inflowTransactionId}
-          amountPaise={amountPaise}
-          participants={participants}
-          existing={existing}
-          residual={residual}
-          onClose={close}
-        />
+        {receipt ? (
+          <SettleReceipt receipt={receipt} onDone={close} />
+        ) : (
+          // Remount when saved allocations change, so the form and its guard always match.
+          <SettleForm
+            key={allocationSignature(existing)}
+            inflowTransactionId={inflowTransactionId}
+            amountPaise={amountPaise}
+            participants={participants}
+            existing={existing}
+            residual={residual}
+            onClose={close}
+            onSaved={setReceipt}
+          />
+        )}
       </dialog>
     </>
   );
@@ -247,6 +257,75 @@ const DISPOSITION_OPTIONS: Array<{ value: ResidualChoice; label: string }> = [
   { value: "written_off", label: "Round off — forget it" },
 ];
 
+const allocationSignature = (rows: ExistingAllocation[]) =>
+  rows.map((r) => `${r.splitParticipantId}:${r.amountPaise}`).sort().join(",");
+
+const LEFTOVER_LABEL = {
+  owed_back: "owed back",
+  kept: "kept",
+  written_off: "written off",
+} as const;
+
+function SettleReceipt({
+  receipt,
+  onDone,
+}: {
+  receipt: SettlementReceipt;
+  onDone: () => void;
+}) {
+  const hasShares = receipt.applied.length > 0;
+  return (
+    <div className="w-[32rem] max-w-[90vw] p-5">
+      <h2 className="text-lg font-semibold">Settlement saved</h2>
+      {hasShares && (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {receipt.applied.map((row) => (
+            <li key={row.splitParticipantId} className="flex items-baseline justify-between gap-3">
+              <span className="font-medium">{row.personName}</span>
+              <span className="font-mono text-xs text-neutral-500">
+                {formatPaise(row.amountPaise)} applied · {formatPaise(row.leftPaise)} still open
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <dl className="mt-3 space-y-1 border-t border-neutral-200 pt-3 text-sm dark:border-neutral-800">
+        <div className="flex justify-between">
+          <dt>Applied from this payment</dt>
+          <dd className="font-mono">{formatPaise(receipt.appliedPaise)}</dd>
+        </div>
+        {hasShares && (
+          <div className="flex justify-between">
+            <dt>Still open on these shares</dt>
+            <dd className="font-mono">{formatPaise(receipt.stillOpenPaise)}</dd>
+          </div>
+        )}
+        {receipt.leftover && (
+          <div className="flex justify-between">
+            <dt>Leftover {LEFTOVER_LABEL[receipt.leftover.kind]}</dt>
+            <dd className="font-mono">{formatPaise(receipt.leftover.paise)}</dd>
+          </div>
+        )}
+        {receipt.unallocatedPaise > 0 && (
+          <div className="flex justify-between">
+            <dt>Not allocated yet</dt>
+            <dd className="font-mono">{formatPaise(receipt.unallocatedPaise)}</dd>
+          </div>
+        )}
+      </dl>
+      <footer className="mt-5 flex justify-end">
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+        >
+          Done
+        </button>
+      </footer>
+    </div>
+  );
+}
+
 function SettleForm({
   inflowTransactionId,
   amountPaise,
@@ -254,6 +333,7 @@ function SettleForm({
   existing,
   residual,
   onClose,
+  onSaved,
 }: {
   inflowTransactionId: string;
   amountPaise: number;
@@ -261,6 +341,7 @@ function SettleForm({
   existing: ExistingAllocation[];
   residual: CreditResidual;
   onClose: () => void;
+  onSaved: (receipt: SettlementReceipt) => void;
 }) {
   const initialAllocs: Record<string, string> = Object.fromEntries(
     existing.map((e) => [e.splitParticipantId, paiseToRupeesStr(e.amountPaise)]),
@@ -333,6 +414,7 @@ function SettleForm({
         recordSettlement({
           inflowTransactionId,
           allocations: currentAllocations,
+          expectedAllocations: existing,
           residual: disposition
             ? {
                 kind: disposition,
@@ -343,9 +425,10 @@ function SettleForm({
             : null,
         }),
       );
-      if (result.ok) invalidateReads();
-      if (result.ok) onClose();
-      else window.alert(result.message);
+      if (result.ok) {
+        invalidateReads();
+        onSaved(result.data);
+      } else window.alert(result.message);
     });
   };
 
