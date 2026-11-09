@@ -159,6 +159,8 @@ export function relationalRows(snapshot: Snapshot) {
   const operations = [...snapshot.values()];
   // These are the locked pre-write rows, not a cache of subsequent mutations.
   return {
+    events: operations.flatMap(op => op.target === "net_event" && op.after ? [{ id: op.id, ...op.after.row }] : []),
+    residuals: operations.flatMap(op => op.target === "transaction_residual" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     splits: operations.flatMap(op => op.target === "split" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     participants: operations.flatMap(op => op.target === "participant" && op.after ? [{ id: op.id, ...op.after.row }] : []),
     settlements: operations.flatMap(op => op.target === "settlement" && op.after ? [{ id: op.id, ...op.after.row }] : []),

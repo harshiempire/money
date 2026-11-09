@@ -385,3 +385,11 @@ Pure money and grouping rules live in `src/lib/ledger/rules/balances.ts`: every 
 `refreshPaths(id)` unions `AREA_PATHS` for the capability. Both doors use it; preserve every existing refreshed page when changing areas. Handler imports support the shared refresh values; business handlers stay unchanged.
 
 Run `node scripts/check-capabilities.mjs` (Node 24+) or `bun --no-env-file run check:capabilities`, and `bun test --no-env-file src/lib/ledger/capabilities.test.ts`. CI installs nothing.
+
+### Net settlement rules (move 2b)
+
+`net.save` is an Effect core on `runRelationalChangeEffect`; app and MCP share its locked guards and undo snapshots. Receivable and payable legs support cash. Cash cannot link any bank row and uses today's **Asia/Kolkata** date: omission means today; a different supplied date is refused, never overwritten. Inflows must be credits, outflows debits; split-bill outflows and already allocated/explained inflows are refused. Editing excludes the event's own rows. Per-target combined caps and optional app `expectedOutstandingPaise` guards are checked under locks; conflicting duplicate previews are refused.
+
+The result preserves `netEventId` and adds `receipt`: event id/date, legs with kind, target, method, exact integer amount/remaining paise, and bank inflow/outflow paise. MCP renders target refs and exact rupee strings, retaining `change_id` and `refs`. **Breaking MCP schema:** every `net_settle` receivable/payable now requires `expected_outstanding`, copied from `get_open_balances.left`. Optional per-line `method` supports cash; when using explicit methods, supply one on every line. Optional `date` follows the cash rule above.
+
+Browser-safe planners live in `src/lib/ledger/rules/net-settlement-plan.ts`. Leg builders return `{ ok: true, legs }` or `{ ok: false, code, message }`; they never throw. `personBalanceKey` owns grouping. `savedBillAmounts` and `equalOffsetAmounts` take a UI formatter; no display formatter lives in the rules. `read/settlement-payments.ts` uses Actor/Db and independently scopes account ownership, counterparties and people. It shares `inflowExplanation` with MCP; MCP retains its existing partially acknowledged unlinked-credit behavior.

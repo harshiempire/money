@@ -1,3 +1,4 @@
+import { inflowExplanation } from "@/lib/ledger/rules/settlement-policy";
 import { buildPersonBalances, personBalanceKey } from "@/lib/ledger/rules/balances";
 import { readOutstanding } from "@/lib/ledger/read/money";
 import type { MoneyActor } from "@/lib/assistant/actor-ops";
@@ -145,7 +146,7 @@ export function buildReadView(model: McpReadModel, actor: MoneyActor, key: Uint8
     if (t.drCr !== "credit" || !t.residualDisposition) continue;
     const allocated = model.settlements.filter(s => s.inflowTransactionId === t.id).reduce((n, s) => n + s.amountPaise, 0);
     const sourced = model.owed.filter(o => o.sourceInflowTransactionId === t.id).reduce((n, o) => n + o.amountPaise, 0);
-    if (allocated + sourced + (t.residualAcknowledgedPaise ?? 0) >= t.amountPaise) linkedInflowRefs.add(txRef(t.id)!);
+    if (inflowExplanation({ inflowAmountPaise: t.amountPaise, allocations: [{ amountPaise: allocated + sourced }], netReservedPaise: 0, owedSourced: false, residualDisposition: t.residualDisposition, residualAcknowledgedPaise: t.residualAcknowledgedPaise ?? null }).status === "explained") linkedInflowRefs.add(txRef(t.id)!);
   }
   const uncategorizedRefs = new Set(model.transactions.filter(isUncategorized).map(t => txRef(t.id)!));
   return { personTargets, transactions, transactionKeys, linkedInflowRefs, uncategorizedRefs, shares, owed, settlements, splits, netEvents, people, payees };

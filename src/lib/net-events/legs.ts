@@ -12,12 +12,14 @@ export type NetEventLeg =
       kind: "receivable";
       splitParticipantId: string;
       amountPaise: number;
-      method: "bank" | "offset";
+      method: "bank" | "cash" | "offset";
+      expectedOutstandingPaise?: number;
     }
   | ({
       kind: "payable";
       amountPaise: number;
-      method: "offset";
+      method: "offset" | "cash";
+      expectedOutstandingPaise?: number;
     } & (
       { owedExpenseId: string; newPayable?: never } | { owedExpenseId?: never; newPayable: NewPayableSpec }
     ));
@@ -29,11 +31,13 @@ export function pickNetEventLeg(leg: NetEventLeg): NetEventLeg {
     splitParticipantId: leg.splitParticipantId,
     amountPaise: leg.amountPaise,
     method: leg.method,
+    ...(leg.expectedOutstandingPaise !== undefined ? {expectedOutstandingPaise: leg.expectedOutstandingPaise} : {}),
   };
   return {
     kind: leg.kind,
     amountPaise: leg.amountPaise,
     method: leg.method,
+    ...(leg.expectedOutstandingPaise !== undefined ? {expectedOutstandingPaise: leg.expectedOutstandingPaise} : {}),
     ...(leg.owedExpenseId !== undefined ? { owedExpenseId: leg.owedExpenseId } : {}),
     ...(leg.newPayable !== undefined ? { newPayable: {
       personName: leg.newPayable.personName,

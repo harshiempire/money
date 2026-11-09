@@ -456,6 +456,57 @@ dbTest(
 );
 
 dbTest(
+  "guided net action preserves cash methods and stale balance guards through decoding",
+  () => fixture(async (f) => {
+    const share = await f.makeShare();
+    const owedExpenseId = unwrap(await f.call(f.owed.createOwedExpenseSpec, {
+      personName: "Kiran", incurredDate: "2026-10-03", amountPaise: 18500,
+      description: "Dinner", categoryId: f.category,
+    }));
+    const legs = [
+      {kind: "receivable", splitParticipantId: share.id, amountPaise: 6000, method: "offset", expectedOutstandingPaise: 6000},
+      {kind: "payable", owedExpenseId, amountPaise: 12500, method: "cash", expectedOutstandingPaise: 18500},
+      {kind: "payable", owedExpenseId, amountPaise: 6000, method: "offset", expectedOutstandingPaise: 18500},
+    ];
+    f.paths.length = 0;
+    failure(await f.call(f.net.saveNetEventSpec, {legs: legs.map(leg => ({...leg, expectedOutstandingPaise: 1}))}), "CONFLICT");
+    expect(f.paths).toEqual([]);
+    failure(await f.call(f.net.saveNetEventSpec, {legs}, true), "FORBIDDEN");
+    const saved = unwrap(await f.call(f.net.saveNetEventSpec, {legs}));
+    const rows = await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.netEventId, saved.netEventId));
+    expect(rows.filter(row => row.method === "cash").map(row => Number(row.amountPaise))).toEqual([12500]);
+    expect(rows.filter(row => row.method === "offset").map(row => Number(row.amountPaise))).toEqual([6000,6000]);
+    expect(f.paths).toContain("/connections");
+    expect(await f.call(f.net.deleteNetEventSpec, {netEventId: saved.netEventId})).toEqual({ok: true, data: undefined});
+  }),
+  30000,
+);
+
+dbTest("net app and MCP return the same cash receipt, and MCP requires the outstanding guard", () => fixture(async f => {
+  const share = await f.makeShare();
+  const app = unwrap(await f.call(f.net.saveNetEventSpec, { legs: [{ kind: "receivable", splitParticipantId: share.id, amountPaise: 2001, method: "cash", expectedOutstandingPaise: 6000 }] }));
+  await f.call(f.net.deleteNetEventSpec, { netEventId: app.netEventId });
+  const { mcpRelationalWrite } = await import("@/lib/mcp/relational-write-ops");
+  const refs = await import("@/lib/mcp/refs");
+  const previous = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = "net-parity-test-secret";
+  try {
+    const actor = { userId: f.user, accountId: f.account };
+    const principal = { actor, scope: "write" as const, tokenId: crypto.randomUUID(), label: "Test" };
+    const ref = refs.shareRef(refs.deriveMcpRefKey(process.env.AUTH_SECRET), f.user, f.account, share.id);
+    const row = { share_ref: ref, amount: "20.01", method: "cash" };
+    const missing = await mcpRelationalWrite(principal, "net_settle", { receivables: [row], payables: [], idempotency_key: "missing-guard" });
+    expect(missing).toMatchObject({ applied: false, errors: [{ code: "invalid_input" }] });
+    const token = crypto.randomUUID();
+    await f.db.insert(f.schema.mcpTokens).values({ id: token, userId: f.user, accountId: f.account, name: "Test", tokenHash: crypto.randomUUID(), tokenHint: "testhint", scope: "write", userTokenVersion: 0 });
+    principal.tokenId = token;
+    const saved = await mcpRelationalWrite(principal, "net_settle", { receivables: [{ ...row, expected_outstanding: "60" }], payables: [], idempotency_key: "matching-guard" });
+    expect(saved.applied).toBe(true);
+    expect(saved.receipt).toEqual({ date: app.receipt.eventDate, bank_inflow: "0.00", bank_outflow: "0.00", legs: app.receipt.legs.map(l => ({ kind: l.kind, ref, method: l.method, amount: (l.amountPaise / 100).toFixed(2), left: (l.leftPaise / 100).toFixed(2) })) });
+  } finally { process.env.AUTH_SECRET = previous; }
+}), 30000);
+
+dbTest(
   "net actions: return event id, rows, delete, exact ledger failure and ownership",
   () =>
     fixture(async (f) => {
@@ -1259,5 +1310,152 @@ dbTest('shared settlement policy: guarded replace, append, receipts, cash refusa
   } finally {
     if (oldSecret === undefined) delete process.env.AUTH_SECRET;
     else process.env.AUTH_SECRET = oldSecret;
+  }
+}), 30000);
+
+// These tests exercise the real defineAction and MCP adapter boundaries: a Die
+// exit must never masquerade as the expected INVALID/CONFLICT refusal.
+dbTest('net refusal codes and exact messages survive both doors', () => fixture(async f => {
+  const share = await f.makeShare();
+  const owedExpenseId = unwrap(await f.call(f.owed.createOwedExpenseSpec, { personName: 'Finch', incurredDate: '2026-10-03', amountPaise: 20000, description: 'Test bill' }));
+  const { mcpRelationalWrite } = await import('@/lib/mcp/relational-write-ops');
+  const refs = await import('@/lib/mcp/refs');
+  const { indiaTodayIso } = await import('@/lib/dates/india');
+  const oldSecret = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = 'net-refusal-test-secret';
+  try {
+    const actor = { userId: f.user, accountId: f.account }, tokenId = crypto.randomUUID();
+    await f.db.insert(f.schema.mcpTokens).values({ id: tokenId, userId: f.user, accountId: f.account, name: 'Refusal test', tokenHash: crypto.randomUUID(), tokenHint: 'mny_test', scope: 'write', userTokenVersion: 0 });
+    const principal = { actor, scope: 'write' as const, tokenId, label: 'Refusal test' };
+    const key = refs.deriveMcpRefKey(process.env.AUTH_SECRET);
+    const txRef = (id: string) => refs.transactionRef(key, f.user, id);
+    type Input = Parameters<typeof import('@/lib/ledger/net-events').saveNetEvent>[1];
+    const bank = { kind: 'receivable' as const, splitParticipantId: share.id, amountPaise: 4000, method: 'bank' as const, expectedOutstandingPaise: 6000 };
+    const cases: Array<{ name: string; code: 'invalid_input' | 'invalid_amount' | 'stale'; message: string; input: Input; explained?: boolean; unsafe?: boolean }> = [
+      { name: 'unsafe outstanding', code: 'invalid_amount', message: 'Balance exceeds the exact integer paise range.', unsafe: true, input: { legs: [{ ...bank, method: 'cash' }] } },
+      { name: 'stale outstanding', code: 'stale', message: 'A balance changed since you opened this settlement. Refresh and review it again.', input: { inflowTransactionId: f.credit, legs: [{ ...bank, expectedOutstandingPaise: 5999 }] } },
+      { name: 'stale payable outstanding', code: 'stale', message: 'A balance changed since you opened this settlement. Refresh and review it again.', input: { legs: [{ kind: 'payable', owedExpenseId, method: 'cash', amountPaise: 2000, expectedOutstandingPaise: 19999 }] } },
+      { name: 'conflicting payable guards', code: 'invalid_input', message: 'Conflicting balance previews for the same bill.', input: { legs: [{ kind: 'payable', owedExpenseId, method: 'cash', amountPaise: 2000, expectedOutstandingPaise: 20000 }, { kind: 'payable', owedExpenseId, method: 'cash', amountPaise: 2000, expectedOutstandingPaise: 19999 }] } },
+      { name: 'payable cap', code: 'invalid_input', message: 'Combined payable legs exceed outstanding by 0.01', input: { legs: [{ kind: 'payable', owedExpenseId, method: 'cash', amountPaise: 20001, expectedOutstandingPaise: 20000 }] } },
+      { name: 'conflicting duplicate guards', code: 'invalid_input', message: 'Conflicting balance previews for the same bill.', input: { inflowTransactionId: f.credit, legs: [{ ...bank, amountPaise: 2000 }, { ...bank, amountPaise: 2000, expectedOutstandingPaise: 5999 }] } },
+      { name: 'past cash date', code: 'invalid_input', message: "Cash settlements use today's date. Set the date to today or leave it empty.", input: { eventDate: '2000-01-01', legs: [{ ...bank, method: 'cash' }] } },
+      { name: 'future cash date', code: 'invalid_input', message: "Cash settlements use today's date. Set the date to today or leave it empty.", input: { eventDate: '2099-01-01', legs: [{ ...bank, method: 'cash' }] } },
+      { name: 'cash with inflow', code: 'invalid_input', message: 'Cash settlements cannot also use a bank payment.', input: { inflowTransactionId: f.credit, legs: [{ ...bank, method: 'cash' }] } },
+      { name: 'cash with outflow', code: 'invalid_input', message: 'Cash settlements cannot also use a bank payment.', input: { outflowTransactionId: f.debit, legs: [{ ...bank, method: 'cash' }] } },
+      { name: 'wrong inflow direction', code: 'invalid_input', message: 'The bank payment has the wrong direction. Refresh and choose another payment.', input: { inflowTransactionId: f.debit, legs: [bank] } },
+      { name: 'wrong outflow direction', code: 'invalid_input', message: 'The bank payment has the wrong direction. Refresh and choose another payment.', input: { outflowTransactionId: f.credit, legs: [{ kind: 'payable', owedExpenseId, method: 'offset', amountPaise: 4000, expectedOutstandingPaise: 20000 }] } },
+      { name: 'split bill outflow', code: 'invalid_input', message: 'This bank payment is already a split bill. Choose a separate settlement payment.', input: { outflowTransactionId: f.debit, legs: [{ kind: 'payable', owedExpenseId, method: 'offset', amountPaise: 10000, expectedOutstandingPaise: 20000 }] } },
+      { name: 'explained inflow', code: 'stale', message: 'This payment is already allocated or explained elsewhere. Refresh and review its settlement first.', explained: true, input: { inflowTransactionId: f.credit, legs: [bank] } },
+      { name: 'empty legs', code: 'invalid_input', message: 'At least one non-zero leg is required', input: { legs: [] } },
+      { name: 'bank leg without inflow', code: 'invalid_input', message: 'Bank receivable legs require an inflow transaction', input: { legs: [bank] } },
+      { name: 'bank reconciliation', code: 'invalid_input', message: 'Net 39.99 does not match bank delta 40', input: { inflowTransactionId: f.credit, legs: [{ ...bank, amountPaise: 3999 }] } },
+      { name: 'combined target cap', code: 'invalid_input', message: 'Combined receivable legs exceed outstanding by 10', input: { legs: [{ ...bank, amountPaise: 7000, method: 'cash' }] } },
+    ];
+    for (const [i, row] of cases.entries()) {
+      if (row.unsafe) await f.db.update(f.schema.splitParticipants).set({ expectedAmountPaise: Number.MAX_SAFE_INTEGER + 1 }).where(eq(f.schema.splitParticipants.id, share.id));
+      if (row.explained) await f.db.update(f.schema.transactions).set({ residualDisposition: 'kept', residualAcknowledgedPaise: 1000 }).where(eq(f.schema.transactions.id, f.credit));
+      f.paths.length = 0;
+      expect(await f.call(f.net.saveNetEventSpec, row.input), row.name).toEqual({ ok: false, code: row.code === 'stale' ? 'CONFLICT' : 'INVALID', message: row.message });
+      const receivables = row.input.legs.flatMap(l => l.kind === 'receivable' ? [{ share_ref: refs.shareRef(key, f.user, f.account, l.splitParticipantId), amount: (l.amountPaise / 100).toFixed(2), method: l.method, expected_outstanding: (l.expectedOutstandingPaise! / 100).toFixed(2) }] : []);
+      const payables = row.input.legs.flatMap(l => l.kind === 'payable' ? [{ owed_ref: refs.owedRef(key, f.user, f.account, l.owedExpenseId!), amount: (l.amountPaise / 100).toFixed(2), method: l.method, expected_outstanding: (l.expectedOutstandingPaise! / 100).toFixed(2) }] : []);
+      const agent = await mcpRelationalWrite(principal, 'net_settle', { receivables, payables, date: row.input.eventDate ?? indiaTodayIso(), ...(row.input.inflowTransactionId ? { inflow_ref: txRef(row.input.inflowTransactionId) } : {}), ...(row.input.outflowTransactionId ? { outflow_ref: txRef(row.input.outflowTransactionId) } : {}), idempotency_key: `refusal-net-${i}` });
+      expect(agent, row.name).toEqual({ applied: false, errors: [{ code: row.code, message: row.message }] });
+      expect(f.paths, row.name).toEqual([]);
+      if (row.unsafe) await f.db.update(f.schema.splitParticipants).set({ expectedAmountPaise: 6000 }).where(eq(f.schema.splitParticipants.id, share.id));
+      if (row.explained) await f.db.update(f.schema.transactions).set({ residualDisposition: null, residualAcknowledgedPaise: null }).where(eq(f.schema.transactions.id, f.credit));
+    }
+    expect(await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, share.id))).toEqual([]);
+  } finally {
+    if (oldSecret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = oldSecret;
+  }
+}), 30000);
+
+dbTest('cash refusal codes and exact messages survive both doors', () => fixture(async f => {
+  const share = await f.makeShare();
+  const { mcpRelationalWrite } = await import('@/lib/mcp/relational-write-ops');
+  const refs = await import('@/lib/mcp/refs');
+  const oldSecret = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = 'cash-refusal-test-secret';
+  try {
+    const actor = { userId: f.user, accountId: f.account }, tokenId = crypto.randomUUID();
+    await f.db.insert(f.schema.mcpTokens).values({ id: tokenId, userId: f.user, accountId: f.account, name: 'Cash refusals', tokenHash: crypto.randomUUID(), tokenHint: 'mny_test', scope: 'write', userTokenVersion: 0 });
+    const principal = { actor, scope: 'write' as const, tokenId, label: 'Cash refusals' };
+    const share_ref = refs.shareRef(refs.deriveMcpRefKey(process.env.AUTH_SECRET), f.user, f.account, share.id);
+    const schemaMessage = "Use the tool's documented fields, exact decimal rupees and idempotency key.";
+    const cases = [
+      { amountPaise: 0, amount: '0', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
+      { amountPaise: -1, amount: '-0.01', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
+      { amountPaise: 1.5, amount: '0.015', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
+      { amountPaise: 6001, amount: '60.01', cap: 6000, appMessage: '₹60.00 is still open; record $60.00 or less.', code: 'over_allocation', message: '₹60.00 is still open; record $60.00 or less.' },
+      { amountPaise: 1, amount: '0.01', cap: 0, appMessage: 'Nothing is open on this share.', code: 'over_allocation', message: 'Nothing is open on this share.' },
+      { amountPaise: 1, amount: '0.01', cap: Number.MAX_SAFE_INTEGER + 1, appMessage: 'Balance exceeds the exact integer paise range.', code: 'invalid_amount', message: 'Balance exceeds the exact integer paise range.' },
+    ];
+    for (const [i, row] of cases.entries()) {
+      await f.db.update(f.schema.splitParticipants).set({ expectedAmountPaise: row.cap }).where(eq(f.schema.splitParticipants.id, share.id));
+      f.paths.length = 0;
+      expect(await f.call(f.cash.recordCashSettlementSpec, { splitParticipantId: share.id, amountPaise: row.amountPaise })).toEqual({ ok: false, code: 'INVALID', message: row.appMessage });
+      expect(await mcpRelationalWrite(principal, 'record_cash_settlement', { share_ref, amount: row.amount, idempotency_key: `cash-refusal-${i}` })).toEqual({ applied: false, errors: [{ code: row.code, message: row.message }] });
+      expect(f.paths).toEqual([]);
+    }
+    expect(await f.db.select().from(f.schema.settlements).where(eq(f.schema.settlements.splitParticipantId, share.id))).toEqual([]);
+  } finally {
+    if (oldSecret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = oldSecret;
+  }
+}), 30000);
+
+dbTest('settlement stale guards retain exact errors at the app, MCP core boundary and adapter', () => fixture(async f => {
+  const share = await f.makeShare();
+  const { sql } = await import('drizzle-orm');
+  const { mcpRelationalWrite } = await import('@/lib/mcp/relational-write-ops');
+  const { runCore, CoreFailure } = await import('@/lib/mcp/run-core');
+  const { recordSettlement } = await import('@/lib/ledger/splits');
+  const refs = await import('@/lib/mcp/refs');
+  const oldSecret = process.env.AUTH_SECRET;
+  process.env.AUTH_SECRET = 'settlement-stale-test-secret';
+  try {
+    const actor = { userId: f.user, accountId: f.account }, tokenId = crypto.randomUUID();
+    await f.db.insert(f.schema.mcpTokens).values({ id: tokenId, userId: f.user, accountId: f.account, name: 'Stale test', tokenHash: crypto.randomUUID(), tokenHint: 'mny_test', scope: 'write', userTokenVersion: 0 });
+    const principal = { actor, scope: 'write' as const, tokenId, label: 'Stale test' };
+    const key = refs.deriveMcpRefKey(process.env.AUTH_SECRET);
+    const rows = [{ splitParticipantId: share.id, amountPaise: 1000 }];
+    unwrap(await f.call(f.split.recordSettlementSpec, { inflowTransactionId: f.credit, allocations: rows }));
+    const message = "This payment's allocations changed since you opened it. Reload and review.";
+    f.paths.length = 0;
+    expect(await f.call(f.split.recordSettlementSpec, { inflowTransactionId: f.credit, allocations: rows, expectedAllocations: [] })).toEqual({ ok: false, code: 'CONFLICT', message });
+    // MCP append intentionally has no client expected-allocations field. Test
+    // that optional core guard through its real MCP Effect error boundary.
+    let caught: unknown;
+    try {
+      await runCore(recordSettlement({ actor, source: 'mcp', tokenId, label: 'Stale test', idempotency: { key: 'stale-core-guard', requestHash: 'test-stale-guard' } }, { inflowTransactionId: f.credit, mode: 'append', allocations: { kind: 'explicit', rows }, expected: { allocations: [] } }), principal);
+    } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(CoreFailure);
+    expect((caught as CoreFailure).error).toEqual({ code: 'stale', message });
+    // The real adapter supplies a full relational snapshot instead. Hold the
+    // actor lock until it reaches the core, change a share, then release it.
+    let acquired!: (pid: number) => void, release!: () => void;
+    const ready = new Promise<number>(resolve => { acquired = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const blocker = f.db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'ledger-relations:' + f.user}, 0))`);
+      const [row] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      acquired(row.pid);
+      await gate;
+    });
+    const pid = await ready;
+    const pending = mcpRelationalWrite(principal, 'record_settlement', { inflow_ref: refs.transactionRef(key, f.user, f.credit), person: 'Kiran', allocations: [{ share_ref: refs.shareRef(key, f.user, f.account, share.id), amount: '10' }], idempotency_key: 'stale-adapter-guard' });
+    try {
+      let waiting = false;
+      for (let i = 0; i < 200 && !waiting; i++) {
+        const [row] = await f.db.execute<{ waiting: boolean }>(sql`select exists(select 1 from pg_stat_activity where ${pid} = any(pg_blocking_pids(pid))) as waiting`);
+        waiting = row.waiting;
+        if (!waiting) await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      expect(waiting).toBe(true);
+      await f.db.update(f.schema.splitParticipants).set({ expectedAmountPaise: 6001 }).where(eq(f.schema.splitParticipants.id, share.id));
+    } finally { release(); await blocker; }
+    expect(await pending).toEqual({ applied: false, errors: [{ code: 'stale', message: 'Shares, settlements or people changed. Read them again before writing.' }] });
+    expect(f.paths).toEqual([]);
+  } finally {
+    if (oldSecret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = oldSecret;
   }
 }), 30000);
