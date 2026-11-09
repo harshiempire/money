@@ -1064,7 +1064,7 @@ dbTest("assistant cards/reads/bootstrap: drafts, no guessed person and foreign i
   expect(unwrap(await f.call(a.prepareAssistantOpSpec, { kind: "note", txnId: f.debit }))).toMatchObject({ draft: { op: "note", note: "", currentNote: null, txnId: f.debit } });
   expect(unwrap(await f.call(a.prepareAssistantOpSpec, { kind: "split", txnId: f.debit }))).toMatchObject({ draft: { op: "split", parts: [{ name: "", amt: "", known: false }] } });
   failure(await f.call(a.prepareAssistantOpSpec, { kind: "split", txnId: f.credit }), "INVALID", "Only a payment you made can be split. Money you received can be net settled instead.");
-  failure(await f.call(a.prepareAssistantOpSpec, { kind: "net", txnId: f.credit }), "INVALID", "I can't tell who sent this. Ask me, e.g. \"Nitin sent me this — net settle it\".");
+  failure(await f.call(a.prepareAssistantOpSpec, { kind: "net", txnId: f.credit }), "INVALID", "I can't tell who sent this. Ask me, e.g. \"Kiran sent me this — net settle it\".");
   expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: [f.debit, f.foreign, 42, null] })).map(t => t.id)).toEqual([f.debit]);
   expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: [f.debit, f.foreign] }, true)).map(t => t.id)).toEqual([f.foreign]);
   expect(unwrap(await f.call(a.loadAssistantTxnsSpec, { ids: 42 }))).toEqual([]);

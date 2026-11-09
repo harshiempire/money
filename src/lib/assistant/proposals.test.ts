@@ -22,19 +22,19 @@ const card = (over: Partial<TxnCardData> = {}): TxnCardData => ({
 });
 
 describe("proposeSplit", () => {
-  test("half each with Nitin (handoff flow 2)", () => {
-    const p = proposeSplit(card(), { mode: "equal", participants: [{ name: "nitin", amountPaise: null }] }, ["Nitin"]);
+  test("half each with Kiran (handoff flow 2)", () => {
+    const p = proposeSplit(card(), { mode: "equal", participants: [{ name: "kiran", amountPaise: null }] }, ["Kiran"]);
     expect(p).toMatchObject({
       ok: true,
-      draft: { op: "split", totalPaise: 76000, yourShare: "380.00", parts: [{ name: "Nitin", amt: "380.00", known: true }] },
+      draft: { op: "split", totalPaise: 76000, yourShare: "380.00", parts: [{ name: "Kiran", amt: "380.00", known: true }] },
     });
   });
 
   test("the user is never a participant", () => {
     const p = proposeSplit(
       card(),
-      { mode: "equal", participants: [{ name: "Nitin", amountPaise: null }, { name: "me", amountPaise: null }] },
-      ["Nitin"],
+      { mode: "equal", participants: [{ name: "Kiran", amountPaise: null }, { name: "me", amountPaise: null }] },
+      ["Kiran"],
     );
     expect(p.ok && p.draft.op === "split" && p.draft.parts.length).toBe(1);
   });
@@ -70,11 +70,11 @@ describe("proposeItemizedSplit", () => {
   });
   const etsi = card({ amountPaise: 224700 });
   const dishes = [shared("pizza", 64500), shared("pasta", 52500), shared("cake", 47500), shared("tax", 5350, 2)];
-  const nitins: BillItemIntent = { label: "Nitin's item", pricePaise: 49500, qty: 1, everyone: false, you: false, names: ["nitin"] };
+  const kirans: BillItemIntent = { label: "Kiran's item", pricePaise: 49500, qty: 1, everyone: false, you: false, names: ["kiran"] };
 
   test("the Etsi bill balances to the paisa", () => {
-    const p = proposeItemizedSplit(etsi, { people: ["Nitin", "Sai Abhinav"], items: [...dishes, nitins] }, [
-      "Nitin",
+    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Sai Abhinav"], items: [...dishes, kirans] }, [
+      "Kiran",
       "Sai Abhinav",
     ]);
     expect(p).toMatchObject({
@@ -82,7 +82,7 @@ describe("proposeItemizedSplit", () => {
       draft: {
         yourShare: "584.00",
         parts: [
-          { name: "Nitin", amt: "1079.00", known: true },
+          { name: "Kiran", amt: "1079.00", known: true },
           { name: "Sai Abhinav", amt: "584.00", known: true },
         ],
         items: { itemsTotalPaise: 224700 },
@@ -90,12 +90,12 @@ describe("proposeItemizedSplit", () => {
     });
     if (!p.ok || p.draft.op !== "split") return;
     expect(splitBalance(p.draft.totalPaise, p.draft.yourShare, p.draft.parts).ok).toBe(true);
-    expect(p.draft.items?.lines.map((l) => l.sharedBy)).toEqual(["everyone", "everyone", "everyone", "everyone", ["Nitin"]]);
+    expect(p.draft.items?.lines.map((l) => l.sharedBy)).toEqual(["everyone", "everyone", "everyone", "everyone", ["Kiran"]]);
     expect(p.say).toContain("exactly");
   });
 
   test("a gap between items and payment is flagged, not hidden in a share", () => {
-    const p = proposeItemizedSplit(etsi, { people: ["Nitin", "Sai Abhinav"], items: dishes }, ["Nitin", "Sai Abhinav"]);
+    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Sai Abhinav"], items: dishes }, ["Kiran", "Sai Abhinav"]);
     expect(p.ok).toBe(true);
     if (!p.ok || p.draft.op !== "split") return;
     expect(splitBalance(p.draft.totalPaise, p.draft.yourShare, p.draft.parts)).toMatchObject({ residualPaise: 49500, ok: false });
@@ -103,8 +103,8 @@ describe("proposeItemizedSplit", () => {
   });
 
   test("someone named only on an item still joins the split", () => {
-    const p = proposeItemizedSplit(etsi, { people: [], items: [nitins, shared("rest", 175200)] }, ["Nitin"]);
-    expect(p.ok && p.draft.op === "split" && p.draft.parts.map((x) => [x.name, x.amt])).toEqual([["Nitin", "1371.00"]]);
+    const p = proposeItemizedSplit(etsi, { people: [], items: [kirans, shared("rest", 175200)] }, ["Kiran"]);
+    expect(p.ok && p.draft.op === "split" && p.draft.parts.map((x) => [x.name, x.amt])).toEqual([["Kiran", "1371.00"]]);
   });
 
   test("nobody else named", () => {
@@ -138,7 +138,7 @@ describe("proposeCategory", () => {
 describe("proposeNetSettle", () => {
   const line = (id: string, outstandingPaise: number): NetLine => ({
     id,
-    person: "Nitin",
+    person: "Kiran",
     date: "2026-08-03",
     desc: id,
     outstandingPaise,
@@ -147,7 +147,7 @@ describe("proposeNetSettle", () => {
   const credit = card({ id: "t0", drCr: "credit", amountPaise: 112000, txnDate: "2026-08-30" });
 
   test("prefills a balanced card (handoff flow 5)", () => {
-    const p = proposeNetSettle(credit, "Nitin", {
+    const p = proposeNetSettle(credit, "Kiran", {
       recv: [line("uber", 124000), line("toit", 38000)],
       pay: [line("movie", 50000)],
     });
@@ -159,8 +159,8 @@ describe("proposeNetSettle", () => {
   });
 
   test("guards", () => {
-    expect(proposeNetSettle(card(), "Nitin", { recv: [line("a", 1)], pay: [] }).ok).toBe(false);
-    expect(proposeNetSettle({ ...credit, netEventId: "ne" }, "Nitin", { recv: [line("a", 1)], pay: [] }).ok).toBe(false);
-    expect(proposeNetSettle(credit, "Nitin", { recv: [], pay: [] }).ok).toBe(false);
+    expect(proposeNetSettle(card(), "Kiran", { recv: [line("a", 1)], pay: [] }).ok).toBe(false);
+    expect(proposeNetSettle({ ...credit, netEventId: "ne" }, "Kiran", { recv: [line("a", 1)], pay: [] }).ok).toBe(false);
+    expect(proposeNetSettle(credit, "Kiran", { recv: [], pay: [] }).ok).toBe(false);
   });
 });

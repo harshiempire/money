@@ -8,21 +8,21 @@ describe("guessPersonFromCounterparty", () => {
   test("matches UPI handle local part to person name", () => {
     expect(
       guessPersonFromCounterparty({
-        counterpartyDisplayName: "nitin@okaxis",
-        rawDescription: "UPI/123/12:00/UPI/nitin@okaxis",
-        knownPersonNames: ["Alice", "Nitin"],
+        counterpartyDisplayName: "kiran@okaxis",
+        rawDescription: "UPI/123/12:00/UPI/kiran@okaxis",
+        knownPersonNames: ["Alice", "Kiran"],
       }),
-    ).toBe("Nitin");
+    ).toBe("Kiran");
   });
 
   test("matches counterparty display name exactly", () => {
     expect(
       guessPersonFromCounterparty({
-        counterpartyDisplayName: "Nitin",
-        rawDescription: "IMPS/P2A/123/NITIN KUMAR",
-        knownPersonNames: ["Nitin"],
+        counterpartyDisplayName: "Kiran",
+        rawDescription: "IMPS/P2A/123/KIRAN KUMAR",
+        knownPersonNames: ["Kiran"],
       }),
-    ).toBe("Nitin");
+    ).toBe("Kiran");
   });
 });
 
@@ -33,9 +33,9 @@ describe("resolveDefaultPersonFilter", () => {
         counterpartyId: "cp-1",
         counterpartyDisplayName: "other@paytm",
         rawDescription: "UPI/1/1/UPI/other@paytm",
-        knownPersonNames: ["Nitin"],
-        counterpartyPersonHints: { "cp-1": "Nitin" },
+        knownPersonNames: ["Kiran"],
+        counterpartyPersonHints: { "cp-1": "Kiran" },
       }),
-    ).toBe("Nitin");
+    ).toBe("Kiran");
   });
 });

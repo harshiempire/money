@@ -258,7 +258,7 @@ export const prepareAssistantOpSpec: ActionSpec<
         })
       : "";
     if (!person) {
-      return yield* new Invalid({ message: "I can't tell who sent this. Ask me, e.g. \"Nitin sent me this — net settle it\"." });
+      return yield* new Invalid({ message: "I can't tell who sent this. Ask me, e.g. \"Kiran sent me this — net settle it\"." });
     }
     const p = proposeNetSettle(card, person, yield* Effect.promise(() => loadOpenLinesForPerson(account.id, user.id, person)));
     if (!p.ok) return yield* proposalFailure(p.reason);

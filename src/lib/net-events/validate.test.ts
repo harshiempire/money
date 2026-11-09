@@ -47,7 +47,7 @@ describe("validateNetEventInvariant", () => {
 });
 
 describe("balanceAllocationsToExpectedNet", () => {
-  test("Nitin-style 14 paise residual: shaves largest receivable", () => {
+  test("Kiran-style 14 paise residual: shaves largest receivable", () => {
     const result = balanceAllocationsToExpectedNet(
       { bookmyshow: 28404 },
       { mfc: 8850 },

@@ -27,7 +27,7 @@ const QUERY_DATA: QueryData = {
     note: null, category: "Food", channel: "upi", isTransfer: false, netSettled: false,
   })),
   categories: [{ name: "Food", kind: "spend" }],
-  people: ["Nitin"],
+  people: ["Kiran"],
   splits: [],
   participants: [],
   owed: [],
@@ -104,7 +104,7 @@ const lastOutput = (input: ResponseItem[]) => JSON.parse(String(input.at(-1)?.ou
 const turn = (message: string, focusTxnId: string | null = null, focusPicked = false) =>
   runAgentTurn({
     userId: "user", accountId: "account", today: "2026-10-06", message, history: [], focusTxnId,
-    resumedAfterPick: false, focusPicked, categories: [{ id: "cat-food", name: "Food", kind: "spend" }], knownPeople: ["Nitin"],
+    resumedAfterPick: false, focusPicked, categories: [{ id: "cat-food", name: "Food", kind: "spend" }], knownPeople: ["Kiran"],
     standingNotes: [],
   });
 

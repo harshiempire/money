@@ -104,20 +104,20 @@ describe("groundIntent", () => {
 });
 
 test("namedByUser: only people the user actually named", () => {
-  const said = "Can you find the ₹760 one?\nSplit it between Nitin and me — half each";
-  expect(namedByUser("Nitin", said)).toBe(true);
-  expect(namedByUser("nitin k", said)).toBe(true);
+  const said = "Can you find the ₹760 one?\nSplit it between Kiran and me — half each";
+  expect(namedByUser("Kiran", said)).toBe(true);
+  expect(namedByUser("kiran k", said)).toBe(true);
   expect(namedByUser("Rahul", said)).toBe(false);
-  expect(namedByUser("Nitin", "split with nit")).toBe(true);
+  expect(namedByUser("Kiran", "split with kir")).toBe(true);
   expect(namedByUser("", said)).toBe(false);
 });
 
 const ETSI_CHAT = [
   "So I have a transaction on 6th August, which is of 2,247 rupees.",
-  "It is between three people: me, Nitin, and Abhinav.",
+  "It is between three people: me, Kiran, and Abhinav.",
   "Wait, it is not Abhinav. It is Sai Abhinav.",
   "So, there is a pizza and it is of 645 rupees. We have a white sauce chicken pasta, which is of 525 rupees. There is a chocolate puddle cake of 475 rupees. And we have a tax of 53.5 into two times. All these things are going to be divided among us by three.",
-  "But there is one transaction which is of 495, which is fully paid by Nitin.",
+  "But there is one transaction which is of 495, which is fully paid by Kiran.",
 ].join("\n");
 
 const item = (amount_text: string, shared_by: string[] = ["everyone"], quantity = 1, label = "item") => ({
@@ -130,7 +130,7 @@ const item = (amount_text: string, shared_by: string[] = ["everyone"], quantity 
 describe("groundBillItems", () => {
   test("accepts the prices the user wrote", () => {
     const g = groundBillItems(
-      [item("645"), item("525"), item("475"), item("53.5", ["everyone"], 2, "tax"), item("495", ["Nitin"])],
+      [item("645"), item("525"), item("475"), item("53.5", ["everyone"], 2, "tax"), item("495", ["Kiran"])],
       ETSI_CHAT,
     );
     expect(g.ok).toBe(true);
@@ -140,7 +140,7 @@ describe("groundBillItems", () => {
       [52500, 1, true, []],
       [47500, 1, true, []],
       [5350, 2, true, []],
-      [49500, 1, false, ["Nitin"]],
+      [49500, 1, false, ["Kiran"]],
     ]);
   });
   test("refuses a total or share the model worked out itself", () => {
