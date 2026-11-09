@@ -82,8 +82,8 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
     const render = (value: CoreResult): Record<string, unknown> => {
       if (tool === "record_settlement" && value.value) {
         const receipt = value.value as SettlementReceipt;
-        details = { allocations: receipt.applied.map(row => ({ share_ref: shRef(row.splitParticipantId), person: row.personName, amount: exactRupees(row.amountPaise), left: exactRupees(row.leftPaise) })), unallocated: exactRupees(receipt.unallocatedPaise), left_open: exactRupees(receipt.stillOpenPaise) };
-        summary = `Recorded ₹${exactRupees(receipt.appliedPaise)} from ${decode("record_settlement", raw).person}; ₹${exactRupees(receipt.stillOpenPaise)} still open and ₹${exactRupees(receipt.unallocatedPaise)} unallocated.`;
+        details = { allocations: receipt.applied.map(row => ({ share_ref: shRef(row.splitParticipantId), person: row.personName, amount: exactRupees(row.amountPaise), left: exactRupees(row.leftPaise) })), unallocated: exactRupees(receipt.unallocatedPaise), left_open: exactRupees(receipt.stillOpenPaise), leftover: receipt.leftover ? { kind: receipt.leftover.kind, amount: exactRupees(receipt.leftover.paise) } : null };
+        summary = `Recorded ₹${exactRupees(receipt.appliedPaise)} from ${decode("record_settlement", raw).person}; ₹${exactRupees(receipt.stillOpenPaise)} still open and ₹${exactRupees(receipt.unallocatedPaise)} unallocated${receipt.leftover ? `; ₹${exactRupees(receipt.leftover.paise)} marked ${receipt.leftover.kind.replace("_", " ")}` : ""}.`;
       }
       if (tool === "net_settle" && value.value) {
         const { receipt } = value.value as { receipt: NetSettlementReceipt };
@@ -146,6 +146,7 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
       }
       case "record_settlement": {
         const input = decode(tool, raw), inflow = txn(input.inflow_ref), name = person(input.person);
+        if (input.allocations?.length === 0 && !input.leftover) refuse("invalid_input", "Give at least one allocation, or a leftover to mark.");
         const allocations: splits.RecordSettlementInput["allocations"] = input.allocations ? { kind: "explicit", rows: input.allocations.map(row => {
           if ("owed_ref" in row) { expense(row.owed_ref); return refuse("invalid_target", "An owed expense is money you owe; an incoming credit cannot repay it. Use net_settle for offsets."); }
           const target = share(row.share_ref);
@@ -153,7 +154,8 @@ export async function mcpRelationalWrite(p: McpPrincipal, tool: RelationalTool, 
           return { splitParticipantId: target.id, amountPaise: moneyPaise(row.amount) };
         }) } : { kind: "oldest_first", personName: name };
         baseRefs.push(input.inflow_ref);
-        result = await runCore(splits.recordSettlement(ctx, { inflowTransactionId: inflow.id, mode: "append", allocations }), p);
+        result = await runCore(splits.recordSettlement(ctx, { inflowTransactionId: inflow.id, mode: "append", allocations,
+          ...(input.leftover ? { residual: { kind: input.leftover.kind, personName: name, note: input.leftover.note ?? null } } : {}) }), p);
         break;
       }
 

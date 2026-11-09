@@ -33,10 +33,14 @@ export const RelationalInputs = {
     replace_existing: Schema.optionalKey(Schema.Boolean.annotate({ description: "Explicit confirmation to replace an existing split; never allowed with settled shares." })), note }).check(Schema.makeFilter(input => !input.replace_existing || input.split_rev !== undefined, { expected: "split_rev is required with replace_existing:true", toJsonSchema: () => ({ if: { properties: { replace_existing: { const: true } }, required: ["replace_existing"] }, then: { required: ["split_rev"] } }) })),
   delete_split: Schema.Struct({ ...common, ref: txn, rev, split_rev: splitRevision }),
   record_settlement: Schema.Struct({ ...common, inflow_ref: txn, person,
-  allocations: Schema.optionalKey(rows(Schema.Union([
+    allocations: Schema.optionalKey(Schema.Array(Schema.Union([
       Schema.Struct({ share_ref: share, amount: PositiveMoney }),
       Schema.Struct({ owed_ref: owed, amount: PositiveMoney }),
-    ]))) }),
+    ])).check(Schema.isMaxLength(100)).annotate({ description: "Omit to allocate oldest-first. An empty list adds no allocations and is only valid with leftover." })),
+    leftover: Schema.optionalKey(Schema.Struct({
+      kind: Schema.Literals(["owed_back", "kept", "written_off"]),
+      note,
+    }).annotate({ description: "After asking the owner, say what the rest of this credit is. owed_back records that the owner owes the named person that amount; kept and written_off acknowledge it." })) }),
   clear_settlement: Schema.Struct({ ...common, inflow_ref: txn }),
   // The existing cash core stores the server date, with no backdating support.
   record_cash_settlement: Schema.Struct({ ...common, share_ref: share, amount: PositiveMoney, note }),
@@ -66,7 +70,8 @@ export const RelationalOutput = Schema.Struct({
   receipt: Schema.optionalKey(Schema.Struct({ date: Schema.String, bank_inflow: Schema.String, bank_outflow: Schema.String,
     legs: Schema.Array(Schema.Struct({ kind: Schema.Literals(["receivable", "payable"]), ref: Schema.String, method: Schema.Literals(["bank", "cash", "offset"]), amount: Schema.String, left: Schema.String })) })),
   allocations: Schema.optionalKey(Schema.Array(Schema.Struct({ share_ref: Schema.String, person: Schema.String, amount: Schema.String, left: Schema.String })).annotate({ description: "Allocations added by this request, exact rupees and each share's remaining balance." })),
-  unallocated: Schema.optionalKey(Schema.String.annotate({ description: "Rupees remaining unallocated on the credit after this request." })),
+  unallocated: Schema.optionalKey(Schema.String.annotate({ description: "Rupees on the credit still neither allocated nor marked as a leftover after this request." })),
+  leftover: Schema.optionalKey(Schema.NullOr(Schema.Struct({ kind: Schema.Literals(["owed_back", "kept", "written_off"]), amount: Schema.String })).annotate({ description: "What this request marked the rest of the credit as, or null." })),
   left_open: Schema.optionalKey(Schema.String.annotate({ description: "Total still owed to the owner by the named person, in exact rupees." })),
   errors: Schema.optionalKey(Schema.Array(WriteError)), replayed: Schema.optionalKey(Schema.Boolean),
 });
@@ -74,7 +79,7 @@ export const RelationalDescriptions: Record<RelationalTool, string> = {
   link_person: "After owner confirmation, link or unlink 1–50 payees to exact person names in one undoable change. Supply a payee key or any transaction ref for each payee, person:null to unlink, and current_person (null if unset) to confirm replacement. Unknown names require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Suggestions are not confirmed links. Refuses stale current_person guards, foreign payees and unknown people. Undo with undo_change.",
   create_split: "Split a debit equally among you and named participants (odd paise go to you), or provide every amount and your_share exactly. Unknown people require create_person:true; a new name close to an existing one also needs distinct_from after asking the owner. Replacing requires split_rev from the current split detail or summary, checked under locks. Refuses stale transaction or split revs, an existing split without replace_existing:true, or replacement with any settled share. Undo with undo_change; new settlements can prevent undo.",
   delete_split: "Delete a debit's split with its current transaction rev and split_rev from get_transactions or find_payments. Both are checked under locks; stale splits return current_split_rev. Refuses stale revs and any settlement, cash or writeoff on any share. Undo with undo_change restores the exact split and shares.",
-  record_settlement: "Allocate a credit to an exact existing person's open shares, oldest bill first then creation order, with a partial final share. Explicit share_ref allocations override that order and must fit both outstanding shares and unallocated inflow. Earlier allocations are preserved. owed_ref is refused: owed expenses are money you owe, not incoming repayments. Refuses debits, fully allocated or explained inflows, net-event inflows and stale balances. Undo with undo_change.",
+  record_settlement: "Allocate a credit to an exact existing person's open shares, oldest bill first then creation order, with a partial final share. Explicit share_ref allocations override that order and must fit both outstanding shares and unallocated inflow. Earlier allocations are preserved. owed_ref is refused: owed expenses are money you owe, not incoming repayments. Pass leftover only after asking the owner what the extra money is: it marks everything left on the credit, once, as owed_back (owed to the named person), kept or written_off. Use allocations:[] to mark it without allocating more. Refuses debits, fully allocated or explained inflows, net-event inflows, a leftover when nothing is left, and stale balances. Undo with undo_change.",
   clear_settlement: "Clear an inflow's ordinary bank allocations and leftover explanation. Refuses removal of a leftover payable already repaid; net-event legs remain. Undo with undo_change restores allocations and the explanation if unchanged.",
   record_cash_settlement: "Record positive cash against an open share using the server's current date; backdating is unsupported. Refuses amounts exceeding outstanding, non-integer paise (more than two rupee decimals), and stale balances. Undo with undo_change.",
   write_off_share: "Forgive the entire outstanding share, recording a writeoff. Refuses a fully settled share or stale balances. Undo with undo_write_off using the returned stl_ ref, or undo_change.",

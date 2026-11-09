@@ -78,11 +78,16 @@ export interface SettlementReceipt {
 export function settlementReceipt(input: Pick<SettlementReceipt, 'inflowTransactionId' | 'mode' | 'applied' | 'leftover'> & { availablePaise: number }): SettlementReceipt {
   const appliedPaise = sumPaise(input.applied.map(r => r.amountPaise))!;
   return { inflowTransactionId: input.inflowTransactionId, mode: input.mode, applied: input.applied, appliedPaise,
-    unallocatedPaise: input.availablePaise - appliedPaise, stillOpenPaise: sumPaise(input.applied.map(r => r.leftPaise))!, leftover: input.leftover };
+    unallocatedPaise: input.availablePaise - appliedPaise - (input.leftover?.paise ?? 0), stillOpenPaise: sumPaise(input.applied.map(r => r.leftPaise))!, leftover: input.leftover };
+}
+/** What remains of a payment once these allocations are applied, for marking as a leftover. */
+export function leftoverCheck(availablePaise: number, allocatedPaise: number): { ok: true; paise: number } | Failure {
+  const paise = availablePaise - allocatedPaise;
+  return paise > 0 ? { ok: true, paise } : fail('fully_allocated', 'Nothing is left over on this payment after these allocations.');
 }
 export function cashAmountCheck(requestedPaise: number, outstandingPaise: number): { ok: true } | Failure {
   if (!Number.isSafeInteger(requestedPaise) || requestedPaise <= 0) return fail('invalid_amount', 'Enter an amount above ₹0.00.');
   if (outstandingPaise <= 0) return fail('over_allocation', 'Nothing is open on this share.');
-  if (requestedPaise > outstandingPaise) return fail('over_allocation', `${formatPaisePlain(outstandingPaise)} is still open; record $${formatPaisePlain(outstandingPaise).slice(1)} or less.`);
+  if (requestedPaise > outstandingPaise) return fail('over_allocation', `${formatPaisePlain(outstandingPaise)} is still open; record ${formatPaisePlain(outstandingPaise)} or less.`);
   return { ok: true };
 }

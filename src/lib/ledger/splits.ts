@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { Actor } from "./services";
 import { ledgerQuery, runRelationalChangeEffect } from "./relational-store";
 import { outstandingPaise, personBalanceKey } from "./rules/balances";
-import { allocateOldestFirst, validateAllocations, inflowExplanation, appendAllowed, sameAllocations, settlementReceipt, type Allocation } from "./rules/settlement-policy";
+import { allocateOldestFirst, validateAllocations, inflowExplanation, appendAllowed, leftoverCheck, sameAllocations, settlementReceipt, type Allocation } from "./rules/settlement-policy";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import {
   cleanAllocations,
@@ -270,7 +270,6 @@ export const recordSettlement = Effect.fn("recordSettlement")(function* (
       owedSourced: helpers.before.owed.some(r => r.sourceInflowTransactionId === inflow.id), residualDisposition: inflow.residualDisposition,
       residualAcknowledgedPaise: inflow.residualAcknowledgedPaise, hasNetEvent: reservedByNetSettlePaise > 0 || netEvents.length > 0 });
     if (mode === "append") {
-      if (input.residual !== undefined) return yield* new LedgerError({ code: "invalid_input", message: "Append mode cannot set a leftover disposition." });
       const allowed = appendAllowed(explanation);
       if (!allowed.ok) return yield* new LedgerError(allowed);
     } else yield* ledgerQuery(() => assertResidualPayableReplaceable(helpers, inflow.id));
@@ -296,14 +295,17 @@ export const recordSettlement = Effect.fn("recordSettlement")(function* (
       checked = validateAllocations(available, open, cleaned.allocations.map(r => ({ id: r.splitParticipantId, amountPaise: r.amountPaise })));
     }
     if (!checked.ok) return yield* new LedgerError(checked);
-    if (mode === "append" && !checked.allocations.length) return yield* new LedgerError({ code: "no_open_shares", message: `No open shares for ${selection.kind === "oldest_first" ? selection.personName : "this person"}.` });
+    if (mode === "append" && !checked.allocations.length && !input.residual) return yield* new LedgerError({ code: "no_open_shares", message: `No open shares for ${selection.kind === "oldest_first" ? selection.personName : "this person"}.` });
     // Replace retains the app's row shape (including repeated rows); append
     // inserts only the new, validated allocations and leaves prior row ids intact.
     const allocations = mode === "replace" && selection.kind === "explicit"
       ? selection.rows.filter(r => r.amountPaise > 0)
       : checked.allocations.map(r => ({ splitParticipantId: r.id, amountPaise: r.amountPaise }));
     const allocationsSum = allocations.reduce((n,r) => n + r.amountPaise, 0);
-    const inflowAmountPaise = Number(inflow.amountPaise);
+    if (mode === "append" && input.residual) {
+      const leftover = leftoverCheck(available, allocationsSum);
+      if (!leftover.ok) return yield* new LedgerError(leftover);
+    }
     if (mode === "replace") yield* ledgerQuery(() => tx.delete(schema.settlements).where(and(eq(schema.settlements.inflowTransactionId, inflow.id), isNull(schema.settlements.netEventId))));
     if (allocations.length) yield* ledgerQuery(() => tx.insert(schema.settlements).values(allocations.map(a => ({ ...a, inflowTransactionId: inflow.id, method: "bank" as const }))));
     if (mode === "replace") {
@@ -317,39 +319,38 @@ export const recordSettlement = Effect.fn("recordSettlement")(function* (
         .update(schema.transactions)
         .set({ residualDisposition: null, residualAcknowledgedPaise: null })
         .where(eq(schema.transactions.id, input.inflowTransactionId)));
+    }
 
-      const residual = input.residual;
-      const residualPaise = inflowAmountPaise - reservedByNetSettlePaise - allocationsSum;
-      if (residual && residualPaise > 0) {
-        if (residual.kind === "owed_back") {
-          const personName = residual.personName?.trim();
-          if (!personName) {
-            return yield* new LedgerError({ code: "invalid_input", message: "A person name is required to record an overpayment as owed back." });
-          }
-          const personId = yield* ledgerQuery(() => helpers.getOrCreatePerson(user.id, personName, tx));
-          yield* ledgerQuery(() => tx.insert(schema.owedExpenses).values({
-            userId: user.id,
-            personId,
-            personName,
-            incurredDate: inflow.txnDate,
-            amountPaise: residualPaise,
-            description: `Overpayment from ${personName}`,
-            note: residual.note ?? null,
-            sourceInflowTransactionId: input.inflowTransactionId,
-          }));
-        } else {
-          const disposition = residual.kind;
-          yield* ledgerQuery(() => tx
-            .update(schema.transactions)
-            .set({
-              residualDisposition: disposition,
-              residualAcknowledgedPaise: residualPaise,
-            })
-            .where(eq(schema.transactions.id, input.inflowTransactionId)));
+    const residual = input.residual;
+    const unallocated = available - allocationsSum;
+    if (residual && unallocated > 0) {
+      if (residual.kind === "owed_back") {
+        const personName = residual.personName?.trim();
+        if (!personName) {
+          return yield* new LedgerError({ code: "invalid_input", message: "A person name is required to record an overpayment as owed back." });
         }
+        const personId = yield* ledgerQuery(() => helpers.getOrCreatePerson(user.id, personName, tx));
+        yield* ledgerQuery(() => tx.insert(schema.owedExpenses).values({
+          userId: user.id,
+          personId,
+          personName,
+          incurredDate: inflow.txnDate,
+          amountPaise: unallocated,
+          description: `Overpayment from ${personName}`,
+          note: residual.note ?? null,
+          sourceInflowTransactionId: input.inflowTransactionId,
+        }));
+      } else {
+        const disposition = residual.kind;
+        yield* ledgerQuery(() => tx
+          .update(schema.transactions)
+          .set({
+            residualDisposition: disposition,
+            residualAcknowledgedPaise: unallocated,
+          })
+          .where(eq(schema.transactions.id, input.inflowTransactionId)));
       }
     }
-    const unallocated = available - allocationsSum;
     const value = settlementReceipt({ inflowTransactionId: inflow.id, mode, availablePaise: available,
       applied: checked.allocations.map(r => ({ splitParticipantId: r.id, amountPaise: r.amountPaise, leftPaise: r.leftPaise, personName: helpers.before.participants.find(p => p.id === r.id)!.personName })),
       leftover: input.residual && unallocated > 0 ? { kind: input.residual.kind, paise: unallocated } : null });

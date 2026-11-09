@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { allocateOldestFirst, validateAllocations, inflowExplanation, appendAllowed, sameAllocations, settlementReceipt, cashAmountCheck } from './settlement-policy';
+import { allocateOldestFirst, validateAllocations, inflowExplanation, appendAllowed, leftoverCheck, sameAllocations, settlementReceipt, cashAmountCheck } from './settlement-policy';
 const shares = [
   { id: 'b', date: '2026-01-02', order: '1', leftPaise: 500 },
   { id: 'a', date: '2026-01-01', order: '2', leftPaise: 300 },
@@ -41,11 +41,17 @@ test('guard compares exact order-independent multisets', () => {
   expect(sameAllocations([a], [b])).toBe(false);
 });
 test('receipt uses integer math and only touched open shares', () => {
-  expect(settlementReceipt({ inflowTransactionId: 'inflow', mode: 'append', availablePaise: 1000, applied: [{ splitParticipantId: 'a', personName: 'Kiran', amountPaise: 301, leftPaise: 199 }], leftover: { kind: 'kept', paise: 699 } })).toEqual({ inflowTransactionId: 'inflow', mode: 'append', applied: [{ splitParticipantId: 'a', personName: 'Kiran', amountPaise: 301, leftPaise: 199 }], appliedPaise: 301, unallocatedPaise: 699, stillOpenPaise: 199, leftover: { kind: 'kept', paise: 699 } });
+  expect(settlementReceipt({ inflowTransactionId: 'inflow', mode: 'append', availablePaise: 1000, applied: [{ splitParticipantId: 'a', personName: 'Kiran', amountPaise: 301, leftPaise: 199 }], leftover: { kind: 'kept', paise: 699 } })).toEqual({ inflowTransactionId: 'inflow', mode: 'append', applied: [{ splitParticipantId: 'a', personName: 'Kiran', amountPaise: 301, leftPaise: 199 }], appliedPaise: 301, unallocatedPaise: 0, stillOpenPaise: 199, leftover: { kind: 'kept', paise: 699 } });
+});
+test('a leftover is what remains after allocations, and must be more than nothing', () => {
+  expect(leftoverCheck(1000, 301)).toEqual({ ok: true, paise: 699 });
+  const nothing = { ok: false, code: 'fully_allocated', message: 'Nothing is left over on this payment after these allocations.' };
+  expect(leftoverCheck(1000, 1000)).toEqual(nothing);
+  expect(leftoverCheck(0, 0)).toEqual(nothing);
 });
 test('cash never caps or rounds and keeps exact refusal messages', () => {
   for (const n of [0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) expect(cashAmountCheck(n, 100)).toEqual({ ok: false, code: 'invalid_amount', message: 'Enter an amount above ₹0.00.' });
   expect(cashAmountCheck(1, 0)).toEqual({ ok: false, code: 'over_allocation', message: 'Nothing is open on this share.' });
-  expect(cashAmountCheck(101, 100)).toEqual({ ok: false, code: 'over_allocation', message: '₹1.00 is still open; record $1.00 or less.' });
+  expect(cashAmountCheck(101, 100)).toEqual({ ok: false, code: 'over_allocation', message: '₹1.00 is still open; record ₹1.00 or less.' });
   expect(cashAmountCheck(100, 100)).toEqual({ ok: true });
 });

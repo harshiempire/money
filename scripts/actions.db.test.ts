@@ -1386,7 +1386,7 @@ dbTest('cash refusal codes and exact messages survive both doors', () => fixture
       { amountPaise: 0, amount: '0', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
       { amountPaise: -1, amount: '-0.01', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
       { amountPaise: 1.5, amount: '0.015', cap: 6000, appMessage: 'Enter an amount above ₹0.00.', code: 'invalid_input', message: schemaMessage },
-      { amountPaise: 6001, amount: '60.01', cap: 6000, appMessage: '₹60.00 is still open; record $60.00 or less.', code: 'over_allocation', message: '₹60.00 is still open; record $60.00 or less.' },
+      { amountPaise: 6001, amount: '60.01', cap: 6000, appMessage: '₹60.00 is still open; record ₹60.00 or less.', code: 'over_allocation', message: '₹60.00 is still open; record ₹60.00 or less.' },
       { amountPaise: 1, amount: '0.01', cap: 0, appMessage: 'Nothing is open on this share.', code: 'over_allocation', message: 'Nothing is open on this share.' },
       { amountPaise: 1, amount: '0.01', cap: Number.MAX_SAFE_INTEGER + 1, appMessage: 'Balance exceeds the exact integer paise range.', code: 'invalid_amount', message: 'Balance exceeds the exact integer paise range.' },
     ];
