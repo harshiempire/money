@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
+import { spendWaterfallRows } from "@/lib/spend/waterfall";
 
 const enabled = process.env.MONEY_LEDGER_TEST_DB === "1";
 if (enabled && !process.env.DATABASE_URL)
@@ -88,6 +89,8 @@ describe.skipIf(!enabled)("a repayment isn't spend", () => {
       expect(linked.totals.netSelfPaise).toBe(withoutRepayment);
       expect(linked.totals.totalDebitPaise).toBe(rawDebits);
       expect(linked.totals.owedSelfPaise).toBe(owedPaise);
+      const waterfall = spendWaterfallRows(linked.bridge, linked.totals.owedSelfPaise, linked.totals.netSelfPaise);
+      expect(waterfall[3].to).toBe(waterfall[4].to);
       expect(linked.bridge.personalDebitGrossPaise).toBe(groceriesPaise + strangerPaise + 8000);
       expect(linked.bridge.yourShareDebitPaise).toBe(groceriesPaise + strangerPaise + shareOfSplit);
       expect(linked.food).toBe(groceriesPaise);

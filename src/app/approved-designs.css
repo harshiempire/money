@@ -1,0 +1,656 @@
+.money-hatch {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--color-owed-to-me) 65%, Canvas) 0 5px,
+    color-mix(in oklch, var(--color-owed-to-me) 30%, Canvas) 5px 10px
+  );
+}
+.spend-waterfall {
+  border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+  border-radius: 14px;
+  padding: 28px;
+  background: Canvas;
+  color: CanvasText;
+}
+.spend-waterfall-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+.spend-waterfall-heading h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.spend-waterfall-heading p,
+.spend-waterfall-heading a {
+  font-size: 13px;
+  color: color-mix(in srgb, CanvasText 65%, Canvas);
+  margin-top: 4px;
+}
+.spend-waterfall-heading a {
+  white-space: nowrap;
+}
+.spend-waterfall-heading a:hover {
+  text-decoration: underline;
+}
+.spend-waterfall-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.spend-waterfall-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 240px) minmax(0, 1fr) 108px;
+  gap: 24px;
+  align-items: center;
+}
+.spend-waterfall-row h3 {
+  font-size: 15px;
+  font-weight: 500;
+}
+.spend-waterfall-row p {
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.spend-waterfall-track {
+  height: 26px;
+  background: color-mix(in srgb, CanvasText 6%, Canvas);
+  border-radius: 5px;
+  position: relative;
+  overflow: hidden;
+}
+.spend-waterfall-mark {
+  position: absolute;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.spend-waterfall-neutral {
+  background: color-mix(in srgb, CanvasText 24%, Canvas);
+}
+.spend-waterfall-inflow,
+.spend-waterfall-paid {
+  background: color-mix(in oklch, var(--color-inflow) 70%, Canvas);
+}
+.spend-waterfall-i-owe {
+  background: color-mix(in oklch, var(--color-i-owe) 70%, Canvas);
+}
+.spend-waterfall-spend {
+  background: color-mix(in oklch, var(--color-spend) 75%, Canvas);
+}
+.spend-waterfall-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 65%, Canvas);
+  margin-top: 8px;
+}
+.spend-waterfall-legend > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.spend-waterfall-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.spend-waterfall-value {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  text-align: right;
+  white-space: nowrap;
+}
+.spend-waterfall-total {
+  border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+  padding-top: 20px;
+  font-weight: 600;
+}
+.spend-waterfall-total h3 {
+  font-weight: 600;
+}
+.spend-waterfall-math {
+  margin-top: 28px;
+  font-size: 13px;
+  color: color-mix(in srgb, CanvasText 65%, Canvas);
+}
+.spend-waterfall-math summary {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.spend-waterfall-math > div {
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 18px;
+  background: color-mix(in srgb, CanvasText 5%, Canvas);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.spend-waterfall-math p + p {
+  margin-top: 5px;
+}
+.spend-waterfall-math .font-mono {
+  color: CanvasText;
+}
+.spend-waterfall-math .font-mono span {
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+}
+.settlement-dialog {
+  width: min(64rem, 96vw);
+  max-width: 96vw;
+  max-height: 92dvh;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+  background: Canvas;
+  color: CanvasText;
+}
+.guided-settlement {
+  padding: 24px;
+  color: CanvasText;
+  background: Canvas;
+  font-size: 14px;
+}
+.guided-settlement h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.guided-settlement h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.gs-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.gs-fields {
+  min-inline-size: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.gs-fields:disabled {
+  opacity: 0.65;
+}
+.gs-muted {
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, CanvasText 60%, Canvas);
+}
+.gs-person-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.gs-person-picker select {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+  padding: 10px;
+  font-size: 14px;
+}
+.gs-balances {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 24px 0 18px;
+}
+.gs-balances > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 10px;
+  min-width: 0;
+}
+.gs-owed {
+  background: color-mix(in oklch, var(--color-owed-to-me) 9%, Canvas);
+  color: var(--color-owed-to-me);
+}
+.gs-payable {
+  background: color-mix(in oklch, var(--color-i-owe) 9%, Canvas);
+  color: var(--color-i-owe);
+}
+.gs-balances strong {
+  font:
+    24px ui-monospace,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.gs-balances small {
+  font-size: 12px;
+  line-height: 1.4;
+  color: color-mix(in srgb, CanvasText 60%, Canvas);
+  overflow-wrap: anywhere;
+}
+.gs-offset-track {
+  height: 28px;
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, CanvasText 7%, Canvas);
+}
+.gs-offset-track > span:first-child {
+  flex-shrink: 0;
+}
+.gs-offset-track > span:last-child {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  align-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.gs-payable-fill {
+  background: color-mix(in oklch, var(--color-i-owe) 65%, Canvas);
+  color: CanvasText;
+}
+.gs-owed-fill {
+  background: color-mix(in oklch, var(--color-owed-to-me) 45%, Canvas);
+  color: CanvasText;
+}
+.gs-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.gs-offset-track + .gs-between {
+  margin-top: 8px;
+}
+.gs-person-net {
+  border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.gs-person-net strong {
+  margin-inline-start: 5px;
+  font:
+    600 20px ui-monospace,
+    monospace;
+}
+.gs-methods {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gs-methods h3 {
+  font-size: 13px;
+  font-weight: 400;
+  color: color-mix(in srgb, CanvasText 65%, Canvas);
+  margin-bottom: 8px;
+}
+.gs-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 17%, Canvas);
+  border-radius: 10px;
+  background: Canvas;
+}
+.gs-option.is-selected {
+  border-color: CanvasText;
+  box-shadow: inset 0 0 0 0.5px CanvasText;
+  background: color-mix(in srgb, CanvasText 2%, Canvas);
+}
+.gs-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: CanvasText;
+}
+.gs-option > span:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.gs-option strong {
+  font-weight: 500;
+}
+.gs-option small {
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.gs-option input:disabled + span {
+  opacity: 0.55;
+}
+.gs-money {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gs-person-picker:has(select) + .gs-muted {
+  margin-top: 4px;
+}
+.gs-methods + .gs-person-picker {
+  margin-top: 16px;
+}
+.gs-person-footer {
+  margin: 24px 0 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.gs-primary {
+  border: 0;
+  border-radius: 8px;
+  background: CanvasText;
+  color: Canvas;
+  padding: 11px 18px;
+  font:
+    500 14px ui-sans-serif,
+    system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.gs-primary:disabled {
+  background: color-mix(in srgb, CanvasText 16%, Canvas);
+  color: color-mix(in srgb, CanvasText 50%, Canvas);
+  cursor: default;
+}
+.gs-text-button {
+  border: 0;
+  background: transparent;
+  padding: 6px 0;
+  color: color-mix(in srgb, CanvasText 65%, Canvas);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-align: left;
+  cursor: pointer;
+}
+.gs-text-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gs-payment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 0;
+  margin-bottom: 20px;
+  border-top: 1px solid color-mix(in srgb, CanvasText 10%, Canvas);
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, Canvas);
+}
+.gs-payment > div:first-child {
+  min-width: 0;
+}
+.gs-payment h3 {
+  margin-top: 4px;
+}
+.gs-payment-description {
+  font-size: 12px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+}
+.gs-payment-amount {
+  font:
+    24px ui-monospace,
+    monospace;
+  white-space: nowrap;
+}
+.gs-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+.gs-selection {
+  padding: 0 24px 0 0;
+  border-right: 1px solid color-mix(in srgb, CanvasText 10%, Canvas);
+}
+.gs-selection > h3 + .gs-muted {
+  margin-top: 6px;
+}
+.gs-role-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin: 24px 0 10px;
+}
+.gs-role-heading strong {
+  font-weight: 600;
+}
+.gs-role-heading span {
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+}
+.gs-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gs-role-help {
+  margin-top: 10px;
+}
+.gs-selection > .gs-text-button {
+  margin-top: 14px;
+}
+.gs-bills {
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 60%, Canvas);
+  margin: 6px 0 4px 16px;
+}
+.gs-bills summary {
+  cursor: pointer;
+}
+.gs-bills ul {
+  padding-left: 16px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.gs-add-people {
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+  margin-top: 8px;
+}
+.gs-add-people button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.gs-add-people small {
+  display: block;
+  font-size: 12px;
+  color: color-mix(in srgb, CanvasText 58%, Canvas);
+  margin-top: 4px;
+}
+.gs-summary {
+  padding-left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.gs-summary > h3 + .gs-muted {
+  margin-top: -12px;
+}
+.gs-math {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+.gs-math-detail {
+  padding-left: 12px;
+  color: color-mix(in srgb, CanvasText 60%, Canvas);
+  font-size: 12px;
+}
+.gs-math-offset {
+  margin-top: 12px;
+}
+.gs-math-result {
+  border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+  padding-top: 16px;
+  margin-top: 6px;
+  font-weight: 600;
+}
+.gs-math-result strong {
+  font-size: 20px;
+}
+.gs-status {
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 12px;
+}
+.gs-status p {
+  margin-top: 6px;
+}
+.gs-match {
+  background: color-mix(in oklch, var(--color-inflow) 9%, Canvas);
+  color: var(--color-inflow);
+}
+.gs-warning {
+  background: color-mix(in oklch, var(--color-owed-to-me) 10%, Canvas);
+  color: var(--color-owed-to-me);
+}
+.gs-fix {
+  display: block;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+  padding: 9px 12px;
+  margin-top: 10px;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.gs-effects {
+  font-size: 13px;
+  color: color-mix(in srgb, CanvasText 60%, Canvas);
+  line-height: 1.6;
+}
+.gs-effects summary {
+  color: CanvasText;
+  cursor: pointer;
+}
+.gs-effects ul {
+  padding-left: 18px;
+  list-style: disc;
+  margin-top: 8px;
+}
+.gs-summary > .gs-primary {
+  width: 100%;
+}
+.gs-save-help {
+  text-align: center;
+  margin-top: -10px;
+}
+.gs-confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gs-confirmation .gs-primary {
+  align-self: flex-start;
+}
+@media (max-width: 760px) {
+  .spend-waterfall-row {
+    grid-template-columns: minmax(140px, 180px) minmax(0, 1fr) 100px;
+    gap: 16px;
+  }
+  .gs-columns {
+    grid-template-columns: 1fr;
+  }
+  .gs-selection {
+    border-right: 0;
+    padding-right: 0;
+  }
+  .gs-summary {
+    border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+    padding: 24px 0 0;
+    margin-top: 24px;
+  }
+  .guided-settlement {
+    padding: 20px;
+  }
+}
+@media (max-width: 600px) {
+  .spend-waterfall {
+    padding: 20px;
+  }
+  .spend-waterfall-row {
+    grid-template-columns: minmax(0, 1fr) 120px;
+    gap: 10px 16px;
+  }
+  .spend-waterfall-row > div:first-child {
+    grid-column: 1/-1;
+  }
+  .spend-waterfall-value {
+    font-size: 14px;
+  }
+  .spend-waterfall-heading {
+    margin-bottom: 24px;
+  }
+  .gs-payment {
+    flex-wrap: wrap;
+  }
+  .gs-balances {
+    grid-template-columns: 1fr;
+  }
+  .gs-title h2 {
+    font-size: 18px;
+  }
+}
+@media (max-width: 400px) {
+  .guided-settlement {
+    padding: 16px;
+  }
+  .gs-option {
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px;
+  }
+  .gs-option > .gs-money {
+    grid-column: 2;
+  }
+  .gs-between {
+    flex-wrap: wrap;
+  }
+  .gs-math-result strong {
+    font-size: 18px;
+  }
+  .spend-waterfall {
+    padding: 16px;
+  }
+}

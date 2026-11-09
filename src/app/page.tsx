@@ -111,7 +111,7 @@ export default async function DashboardPage({
     triage.uncategorizedCount > 0 || triage.needsReviewCount > 0;
 
   const showBreakdown =
-    bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0;
+    bridge.personalDebitGrossPaise > 0 || bridge.netCreditPaise > 0 || totals.owedSelfPaise > 0;
   const isEmptyTenant = totals.count === 0 && cats.length === 0;
 
   return (
@@ -192,26 +192,15 @@ export default async function DashboardPage({
       ) : (
         <>
           {showBreakdown && (
-            <SectionCard
-              className="mt-8"
-              title="Spend breakdown"
-              action={
-                <Link
-                  href={spendLink}
-                  className="text-xs text-neutral-500 underline-offset-2 hover:underline"
-                >
-                  Full report →
-                </Link>
-              }
-            >
+            <div className="mt-10">
               <SpendBreakdown
                 bridge={bridge}
                 netSelfPaise={totals.netSelfPaise}
                 owedSelfPaise={totals.owedSelfPaise}
                 reimbursement={reimbursement}
-                compact
+                reportHref={spendLink}
               />
-            </SectionCard>
+            </div>
           )}
 
           <section className="mt-10 grid gap-8 md:grid-cols-2">

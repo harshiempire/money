@@ -3,9 +3,11 @@ import type { PayableOption, ReceivableOption } from "@/lib/net-events/load-net-
 import {
   guidedSettlementLegs as plan,
   personSettlementSelection,
+  selectionAllocations,
   selectionTotals,
   settlementFix,
   settlementGroups,
+  settlementPersonKey,
   suggestSettlement,
   type SettlementPayment,
 } from "./net-settlement-plan";
@@ -61,6 +63,33 @@ const groupScenario = () =>
     ],
     [payable("neha", "Neha", 185000)],
   );
+
+describe("person keys and draft allocations", () => {
+  const bothWays = settlementGroups(
+    [{ ...receivable("uber", "Alex", 60000), personId: "p1" }],
+    [{ ...payable("dinner", "Alex", 185000), personId: "p1" }],
+  );
+  test("one saved person owing in both directions keeps one id key", () => {
+    expect(settlementPersonKey(bothWays, " alex ")).toBe("id:p1");
+    expect(selectionTotals(bothWays, personSettlementSelection(bothWays, "Alex", "bank"))).toEqual({
+      receivable: 60000,
+      payable: 185000,
+      net: -125000,
+    });
+  });
+  test("an unbalanced selection still produces a draft, oldest bill first", () => {
+    const groups = settlementGroups(
+      [receivable("a", "Neha", 1000, "2026-01-01"), receivable("b", "Neha", 2000, "2026-02-01")],
+      [],
+    );
+    const key = groups[0].key;
+    expect(selectionAllocations(groups, { [key]: 1500 })).toEqual([
+      { kind: "receivable", id: "a", paise: 1000, cap: 1000 },
+      { kind: "receivable", id: "b", paise: 500, cap: 2000 },
+    ]);
+    expect(selectionAllocations(groups, { [key]: 3001 })).toBeNull();
+  });
+});
 
 describe("approved one-person settlement", () => {
   const groups = settlementGroups(

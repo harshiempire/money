@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "./approved-designs.css";
+
+/* Restore native modal centering after Tailwind's universal margin reset. */
+dialog:modal {
+  margin: auto;
+}
 
 /*
  * Dark mode = explicit user choice via data-theme on <html> (set by the Phase-4
