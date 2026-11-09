@@ -8,6 +8,7 @@ import { uncategorizedCondition } from "./uncategorized";
  *
  *   net_self =
  *     + (debit amount, or your_share + forgiven shares if split)  when !is_transfer
+ *       and the debit is not a net settlement's outflow
  *     - (credit amount - allocated - overpaymentPayables)         when !is_transfer
  *     + 0                                                         otherwise
  *
@@ -45,9 +46,22 @@ const writeoffShareExpr = sql<number>`
   )
 `;
 
+// Paying back a recorded owed expense is a settlement, not a second expense: the
+// owed expense already counted when it was incurred. Derived from the link, so
+// deleting or undoing the net event makes the bank row count again. The net event
+// must belong to the owner of this transaction's account.
+const netSettlementOutflowExpr = sql<boolean>`exists (
+  select 1 from ${schema.netEvents}
+  inner join ${schema.moneyAccounts}
+    on ${schema.moneyAccounts.userId} = ${schema.netEvents.userId}
+  where ${schema.netEvents.outflowTransactionId} = ${schema.transactions.id}
+    and ${schema.moneyAccounts.id} = ${schema.transactions.accountId}
+)`;
+
 export const netSelfExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit' and ${netSettlementOutflowExpr} then 0
     when ${schema.transactions.drCr} = 'debit'
       then least(
         ${schema.transactions.amountPaise},
@@ -77,6 +91,7 @@ export const netSelfExpr = sql<number>`
 const yourShareDebitExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit' and ${netSettlementOutflowExpr} then 0
     when ${schema.transactions.drCr} = 'debit'
       then least(
         ${schema.transactions.amountPaise},
@@ -93,6 +108,7 @@ const yourShareDebitExpr = sql<number>`
 const personalDebitGrossExpr = sql<number>`
   case
     when ${schema.transactions.isTransfer} = true then 0
+    when ${schema.transactions.drCr} = 'debit' and ${netSettlementOutflowExpr} then 0
     when ${schema.transactions.drCr} = 'debit'
       then ${schema.transactions.amountPaise}
     else 0

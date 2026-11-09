@@ -4,6 +4,7 @@ import { cache } from "react";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { counterpartyLabel, formatDate } from "@/lib/format";
+import { readOutstanding } from "@/lib/ledger/read/money";
 import { settlementSummaryByParticipantIds } from "@/lib/splits/outstanding";
 import type { ParticipantSettlementSummary } from "@/lib/splits/settlement-breakdown";
 import type { ParticipantOption } from "@/app/transactions/SettleDialog";
@@ -102,7 +103,7 @@ export function buildOpenReceivablesFromLedger(
       const meta = splitMeta.get(p.splitId)!;
       const expected = Number(p.expectedAmountPaise);
       const paid = ledger.settledByParticipant.get(p.id) ?? 0;
-      const outstandingPaise = Math.max(0, expected - paid);
+      const outstandingPaise = readOutstanding(expected, paid);
       return {
         id: p.id,
         personName: p.personName,

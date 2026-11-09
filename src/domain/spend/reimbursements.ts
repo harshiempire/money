@@ -3,6 +3,7 @@ import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
 import { txnMonthKeyExpr } from "@/domain/spend/net";
+import { readOutstanding } from "@/lib/ledger/read/money";
 import {
   settledAmountByOwedExpenseIds,
   settledAmountByParticipantIds,
@@ -18,6 +19,8 @@ export interface ReimbursementBridgeTotals {
   receivedInPeriodPaise: number;
   splitCount: number;
   openSplitCount: number;
+  /** Outstanding shares on personal (non-transfer debit) bills only. */
+  spendOutstandingPaise: number;
 }
 
 export async function reimbursementBridgeTotals(
@@ -43,7 +46,10 @@ export async function reimbursementBridgeTotals(
 
   const [splitsInPeriod, receivedInPeriodPaise] = await Promise.all([
     db
-      .select({ splitId: schema.splits.id })
+      .select({
+        splitId: schema.splits.id,
+        personal: sql<boolean>`${schema.transactions.drCr} = 'debit' and not ${schema.transactions.isTransfer}`,
+      })
       .from(schema.splits)
       .innerJoin(
         schema.transactions,
@@ -76,7 +82,7 @@ export async function reimbursementBridgeTotals(
       for (const o of owedInPeriod) {
         const expected = Number(o.amountPaise);
         const paid = settled.get(o.id) ?? 0;
-        outstandingPayablePaise += Math.max(0, expected - paid);
+        outstandingPayablePaise += readOutstanding(expected, paid);
       }
     }
   }
@@ -90,6 +96,7 @@ export async function reimbursementBridgeTotals(
       receivedInPeriodPaise,
       splitCount: 0,
       openSplitCount: 0,
+      spendOutstandingPaise: 0,
     };
   }
 
@@ -114,10 +121,17 @@ export async function reimbursementBridgeTotals(
       : new Map<string, number>();
 
   let settledReimbursePaise = 0;
+  let spendOutstandingPaise = 0;
+  const personalSplitIds = new Set(
+    splitsInPeriod.filter((s) => s.personal).map((s) => s.splitId),
+  );
   const openSplitIds = new Set<string>();
   for (const p of partsWithSplit) {
     const settled = settledByParticipant.get(p.participantId) ?? 0;
     settledReimbursePaise += settled;
+    if (personalSplitIds.has(p.splitId)) {
+      spendOutstandingPaise += readOutstanding(Number(p.expectedAmountPaise), settled);
+    }
     if (settled < Number(p.expectedAmountPaise)) {
       openSplitIds.add(p.splitId);
     }
@@ -126,14 +140,12 @@ export async function reimbursementBridgeTotals(
   return {
     expectedReimbursePaise,
     settledReimbursePaise,
-    outstandingReimbursePaise: Math.max(
-      0,
-      expectedReimbursePaise - settledReimbursePaise,
-    ),
+    outstandingReimbursePaise: readOutstanding(expectedReimbursePaise, settledReimbursePaise),
     outstandingPayablePaise,
     receivedInPeriodPaise,
     splitCount: splitIds.length,
     openSplitCount: openSplitIds.size,
+    spendOutstandingPaise,
   };
 }
 
@@ -243,7 +255,7 @@ export async function loadBulkMonthlyReimburseOutstanding(
 
   const result = new Map<string, number>();
   for (const [monthKey, { expected, settled: settledAmt }] of byMonth) {
-    result.set(monthKey, Math.max(0, expected - settledAmt));
+    result.set(monthKey, readOutstanding(expected, settledAmt));
   }
   return result;
 }
