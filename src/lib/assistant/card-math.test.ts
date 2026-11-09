@@ -59,12 +59,12 @@ test("typedPaise", () => {
 });
 
 describe("resolvePerson", () => {
-  const known = ["Kiran", "Kiya", "Satvik"];
+  const known = ["Kiran", "Kiya", "Vikram"];
   test("exact, case-insensitive", () => {
     expect(resolvePerson("kiran", known)).toEqual({ name: "Kiran", known: true });
   });
   test("unique prefix", () => {
-    expect(resolvePerson("Satv", known)).toEqual({ name: "Satvik", known: true });
+    expect(resolvePerson("Vikr", known)).toEqual({ name: "Vikram", known: true });
   });
   test("ambiguous or unknown stays as said", () => {
     expect(resolvePerson("Ki", known)).toEqual({ name: "Ki", known: false });

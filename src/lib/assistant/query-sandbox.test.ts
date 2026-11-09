@@ -11,11 +11,11 @@ const data: QueryData = {
     { id: "d", date: "2026-09-01", paise: 107900, direction: "received", payee: "Kiran", note: null, category: null, channel: "upi", isTransfer: false, netSettled: true },
   ],
   categories: [{ name: "Food", kind: "spend" }],
-  people: ["Kiran", "Sai Abhinav"],
+  people: ["Kiran", "Tarun Mehta"],
   splits: [{ txnId: "a", totalPaise: 224700, yourSharePaise: 58400 }],
   participants: [
     { txnId: "a", person: "Kiran", expectedPaise: 107900, settledPaise: 107900 },
-    { txnId: "a", person: "Sai Abhinav", expectedPaise: 58400, settledPaise: 0 },
+    { txnId: "a", person: "Tarun Mehta", expectedPaise: 58400, settledPaise: 0 },
   ],
   owed: [],
 };
@@ -39,7 +39,7 @@ describe("query sandbox", () => {
     const r = await open().run(
       "select t.payee, p.person, p.open_paise from split_participant p join txn t on t.ref = p.txn_ref where p.open_paise > 0",
     );
-    expect(r).toEqual({ ok: true, columns: ["payee", "person", "open_paise"], rows: [["Etsi", "Sai Abhinav", 58400]], truncated: false });
+    expect(r).toEqual({ ok: true, columns: ["payee", "person", "open_paise"], rows: [["Etsi", "Tarun Mehta", 58400]], truncated: false });
   });
 
   test("allows LIKE, dates and window functions", async () => {

@@ -40,10 +40,10 @@ describe("proposeSplit", () => {
   });
 
   test("I paid for him", () => {
-    const p = proposeSplit(card(), { mode: "paid_for_them", participants: [{ name: "Satvik", amountPaise: null }] }, []);
+    const p = proposeSplit(card(), { mode: "paid_for_them", participants: [{ name: "Vikram", amountPaise: null }] }, []);
     expect(p).toMatchObject({
       ok: true,
-      draft: { yourShare: "0.00", parts: [{ name: "Satvik", amt: "760.00", known: false }] },
+      draft: { yourShare: "0.00", parts: [{ name: "Vikram", amt: "760.00", known: false }] },
     });
   });
 
@@ -73,9 +73,9 @@ describe("proposeItemizedSplit", () => {
   const kirans: BillItemIntent = { label: "Kiran's item", pricePaise: 49500, qty: 1, everyone: false, you: false, names: ["kiran"] };
 
   test("the Etsi bill balances to the paisa", () => {
-    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Sai Abhinav"], items: [...dishes, kirans] }, [
+    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Tarun Mehta"], items: [...dishes, kirans] }, [
       "Kiran",
-      "Sai Abhinav",
+      "Tarun Mehta",
     ]);
     expect(p).toMatchObject({
       ok: true,
@@ -83,7 +83,7 @@ describe("proposeItemizedSplit", () => {
         yourShare: "584.00",
         parts: [
           { name: "Kiran", amt: "1079.00", known: true },
-          { name: "Sai Abhinav", amt: "584.00", known: true },
+          { name: "Tarun Mehta", amt: "584.00", known: true },
         ],
         items: { itemsTotalPaise: 224700 },
       },
@@ -95,7 +95,7 @@ describe("proposeItemizedSplit", () => {
   });
 
   test("a gap between items and payment is flagged, not hidden in a share", () => {
-    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Sai Abhinav"], items: dishes }, ["Kiran", "Sai Abhinav"]);
+    const p = proposeItemizedSplit(etsi, { people: ["Kiran", "Tarun Mehta"], items: dishes }, ["Kiran", "Tarun Mehta"]);
     expect(p.ok).toBe(true);
     if (!p.ok || p.draft.op !== "split") return;
     expect(splitBalance(p.draft.totalPaise, p.draft.yourShare, p.draft.parts)).toMatchObject({ residualPaise: 49500, ok: false });
