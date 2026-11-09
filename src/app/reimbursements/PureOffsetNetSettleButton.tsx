@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatIsoDate, indiaCivilDate } from "@/lib/dates/india";
 import { NetSettleButton } from "../transactions/NetSettleDialog";
 import type { SettlementPayment } from "@/lib/ledger/rules/net-settlement-plan";
 import type { CategoryOption } from "../transactions/RowActions";
@@ -22,7 +23,7 @@ export function PureOffsetNetSettleButton({
   knownPersonNames: string[];
   bankPayments: SettlementPayment[];
 }) {
-  const [today] = useState(() => new Date().toISOString().slice(0, 10));
+  const [today] = useState(() => formatIsoDate(indiaCivilDate()));
 
   return (
     <NetSettleButton

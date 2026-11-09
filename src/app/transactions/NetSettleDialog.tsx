@@ -188,9 +188,11 @@ export function NetSettleButton({
     setSaveAttempted(false);
     dialogRef.current?.showModal();
   };
+  const invalidateReads = useInvalidateMoneyReads();
   const close = () => {
     if (busy) return;
     dialogRef.current?.close();
+    invalidateReads();
     router.refresh();
   };
   const payment = selectedBankPayment({

@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useRef, useState } from "react";
 import { callAction, type ActionResult } from "@/lib/action/result";
+import { formatIsoDate, indiaCivilDate } from "@/lib/dates/india";
 import { formatDate, formatPaise } from "@/lib/format";
 import type {
   PayableOption,
@@ -185,7 +186,11 @@ export function GuidedSettlementForm({
     try {
       const result = await callAction(() =>
         onSave({
-          eventDate: activePayment?.date ?? eventDate,
+          // Cash has no bank date, and the server only accepts today's India date for it.
+          eventDate:
+            activeMethod === "cash"
+              ? formatIsoDate(indiaCivilDate())
+              : (activePayment?.date ?? eventDate),
           ...(activePayment?.direction === "credit"
             ? { inflowTransactionId: activePayment.id }
             : {}),

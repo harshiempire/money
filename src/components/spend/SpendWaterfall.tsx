@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { formatPaise } from "@/lib/format";
 import type { SplitBridgeTotals } from "@/domain/spend/net";
 import type { ReimbursementBridgeTotals } from "@/domain/spend/reimbursements";
@@ -45,7 +46,7 @@ export function SpendWaterfall({
             Read top to bottom. Each bar starts where the previous one ended.
           </p>
         </div>
-        {reportHref && <a href={reportHref}>Full spend report →</a>}
+        {reportHref && <Link href={reportHref}>Full spend report →</Link>}
       </header>
       <div className="spend-waterfall-rows">
         {rows.map((row) => (
