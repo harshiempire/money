@@ -123,15 +123,15 @@ export function NoteButton({
       <dialog
         ref={dialogRef}
         onClose={() => setIsOpen(false)}
-        className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog p-0 backdrop:bg-black/40"
       >
-        <div className="w-[36rem] max-w-[90vw] p-5">
-          <header className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Note</h2>
+        <div className="md w-[36rem] max-w-[90vw]">
+          <header className="md-title">
+            <h2>Note</h2>
             <button
               type="button"
               onClick={close}
-              className="text-sm text-neutral-500 hover:underline"
+              className="gs-text-button"
             >
               Close
             </button>
@@ -260,12 +260,12 @@ export function NoteButton({
           )}
           {(error || query.error) && <p className="mt-2 text-xs text-red-600">{error ?? query.error?.message}</p>}
 
-          <footer className="mt-5 flex items-center justify-between gap-2">
+          <footer className="md-footer">
             <button
               type="button"
               onClick={close}
               disabled={pending}
-              className="rounded px-3 py-1.5 text-sm text-neutral-600 disabled:opacity-50 dark:text-neutral-400"
+              className="md-cancel"
             >
               Cancel
             </button>
@@ -273,7 +273,7 @@ export function NoteButton({
               type="button"
               onClick={save}
               disabled={pending}
-              className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+              className="gs-primary"
             >
               {pending
                 ? "Saving…"

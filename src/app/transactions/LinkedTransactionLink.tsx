@@ -102,7 +102,7 @@ export function LinkedTransactionLink({
       <dialog
         ref={dialogRef}
         onClose={() => setOpen(false)}
-        className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog p-0 backdrop:bg-black/40"
       >
         <PreviewPanel
           preview={preview}
@@ -140,13 +140,13 @@ function PreviewPanel({
   onClose: () => void;
 }) {
   return (
-    <div className="w-[28rem] max-w-[90vw] p-5">
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Linked transaction</h2>
+    <div className="md w-[28rem] max-w-[90vw]">
+      <header className="md-title">
+        <h2>Linked transaction</h2>
         <button
           type="button"
           onClick={onClose}
-          className="text-sm text-neutral-500 hover:underline"
+          className="gs-text-button"
         >
           Close
         </button>
@@ -218,10 +218,10 @@ function PreviewPanel({
             </div>
           )}
 
-          <footer className="mt-4 flex justify-end">
+          <footer className="md-footer md-footer-end">
             <Link
               href={transactionHref(preview.id)}
-              className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+              className="gs-primary"
             >
               Open in statement →
             </Link>

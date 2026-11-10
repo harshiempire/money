@@ -286,18 +286,18 @@ export function SplitAwaitingItem({
         ref={forgiveDialogRef}
         onCancel={closeForgiveDialog}
         aria-labelledby="forgive-dialog-title"
-        className="w-[min(28rem,calc(100%-2rem))] rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog w-[min(28rem,calc(100%-2rem))] p-0 backdrop:bg-black/40"
       >
         <form
-          className="p-5"
+          className="md"
           onSubmit={(event) => {
             event.preventDefault();
             confirmForgive();
           }}
         >
-          <h3 id="forgive-dialog-title" className="text-base font-semibold">
+          <h2 id="forgive-dialog-title">
             Forget this amount?
-          </h3>
+          </h2>
           {participantToForgive && (
             <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
               Resolve {formatPaise(participantToForgive.outstandingPaise)} from{" "}
@@ -324,19 +324,19 @@ export function SplitAwaitingItem({
           <p className="mt-1 text-right text-[10px] text-neutral-500">
             {forgiveReason.length}/200
           </p>
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="md-footer md-footer-end">
             <button
               type="button"
               onClick={closeForgiveDialog}
               disabled={pending}
-              className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-neutral-700"
+              className="md-cancel"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={pending || participantToForgive == null}
-              className="rounded bg-amber-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              className="gs-primary"
             >
               {pending ? "Saving…" : "Forgive amount"}
             </button>
