@@ -245,6 +245,7 @@ On 2026-09-25 a config-injection worm force-pushed an obfuscated payload into ev
 bun run dev
 bun run security:check   # supply-chain preflight (also runs before dev/build)
 bun run typecheck
+E2E_DATABASE_URL=<local money_e2e url> bun run test:e2e   # browser tests; needs a migrated local database named money_e2e
 bun run lint   # oxlint (rules-of-hooks errors; other hooks rules warn)
 bun run check:actions
 DATABASE_URL="$(cat ~/.money-scratch/ledger-test/dburl)" bun run test:actions-db   # server actions on the local Docker test DB; skipped on any other DB

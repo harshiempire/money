@@ -1,0 +1,61 @@
+# Clicks through the app's dialogs in a real browser against a throwaway
+# Postgres container. The database password below exists only in that container.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  E2E_DATABASE_URL: postgres://money_e2e:money_e2e@127.0.0.1:5432/money_e2e
+  DATABASE_URL: postgres://money_e2e:money_e2e@127.0.0.1:5432/money_e2e
+  AUTH_SECRET: ci-e2e-only
+  AUTH_URL: http://localhost:3200
+  AUTH_TRUST_HOST: "true"
+  NEXT_TELEMETRY_DISABLED: "1"
+  SKIP_AUTH_BOOTSTRAP_CHECK: "1"
+
+jobs:
+  browser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_USER: money_e2e
+          POSTGRES_PASSWORD: money_e2e
+          POSTGRES_DB: money_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U money_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: npm install --global pnpm@11.1.3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec drizzle-kit migrate
+      - run: node e2e/seed.ts
+      - run: pnpm build
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
