@@ -290,7 +290,7 @@ Bank settlement defaults to `replace` (app, explicit rows); MCP uses `append`, p
 
 ## Domain / ingest (unchanged by auth)
 
-- PDF parsing: [`src/domain/adapters/bob/parser.ts`](src/domain/adapters/bob/parser.ts), [`src/domain/pdf/`](src/domain/pdf/)
+- PDF parsing: [`src/domain/adapters/bob/parser.ts`](src/domain/adapters/bob/parser.ts), [`src/domain/pdf/`](src/domain/pdf/). Three Bank of Baroda layouts are detected from the text: the older bob World export (`bobWorld`), the emailed e-Statement (`eStatement`) and the statement downloaded inside the bob World app (`bobWorldApp`, dates like `04 Sep 2026`). The app layout refuses a file whose running balance does not follow row by row. Never commit a real statement; parser tests use made-up text.
 - Ingest: [`src/domain/ingest/pipeline.ts`](src/domain/ingest/pipeline.ts) — receives `accountId` from trusted server action only
 - Transfers: [`src/domain/transfers/detect.ts`](src/domain/transfers/detect.ts)
 
