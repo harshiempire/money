@@ -201,8 +201,9 @@ const buildCanonical = (
   };
 };
 
+// The older bob World layout prints "01-03-2026"; the app layout prints "01 - 09 - 2026".
 const PERIOD_RE =
-  /Account Statement from (\d{2}-\d{2}-\d{4}) to (\d{2}-\d{2}-\d{4})/;
+  /Account [Ss]tatement from (\d{2})\s*-\s*(\d{2})\s*-\s*(\d{4}) to (\d{2})\s*-\s*(\d{2})\s*-\s*(\d{4})/;
 
 const ESTATEMENT_PERIOD_RE =
   /(?:Statement Period from|for the period)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+(?:to|-)\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})/;
@@ -236,7 +237,10 @@ export const extractPeriod = (pages: string[]) => {
   const blob = pages.join("\n");
   const bobWorld = blob.match(PERIOD_RE);
   if (bobWorld) {
-    return { periodStart: toIsoDate(bobWorld[1]), periodEnd: toIsoDate(bobWorld[2]) };
+    return {
+      periodStart: `${bobWorld[3]}-${bobWorld[2]}-${bobWorld[1]}`,
+      periodEnd: `${bobWorld[6]}-${bobWorld[5]}-${bobWorld[4]}`,
+    };
   }
   const eStatement = blob.match(ESTATEMENT_PERIOD_RE);
   if (eStatement) {
@@ -258,10 +262,100 @@ export const extractPeriod = (pages: string[]) => {
   return { periodStart: null, periodEnd: null };
 };
 
-type BobStatementFormat = "bobWorld" | "eStatement";
+// ─── bob World app layout (statement downloaded inside the mobile app) ────────
+//
+// One row per transaction, serial first and the balance last:
+//
+//   <sr> <DD Mon YYYY> <DD Mon YYYY> <description> [<cheque>] <debit|-> <credit|-> <balance> CR|DR
+//
+// A long description is hard-wrapped mid-word, so its tail and the amounts
+// land on the next line. unpdf can also glue unrelated page text straight
+// after "CR", so a row ends at its amounts and nothing after them is read.
+const APP_DATE = String.raw`\d{2} [A-Za-z]{3} \d{4}`;
+const APP_ANCHOR = new RegExp(`^(\\d+)\\s+(${APP_DATE})\\s+(${APP_DATE})\\s+(.*)$`);
+const APP_ANCHOR_ANYWHERE = new RegExp(`^\\d+\\s+${APP_DATE}\\s+${APP_DATE}\\s`, "m");
+const APP_TRAIL = new RegExp(
+  String.raw`(?:^|\s)(${MONEY}|-)\s+(${MONEY}|-)\s+(${MONEY})\s?(CR|DR)`,
+);
+
+const appDateToIso = (text: string): string | null => {
+  const [day, month, year] = text.split(" ");
+  return monthDayYearToIso(month, day, year);
+};
+
+/** Parses the app layout from extracted page text. Exported for tests. */
+export const parseBobAppPages = (
+  pages: string[],
+): { ok: true; rows: CanonicalTxn[] } | { ok: false; detail: string } => {
+  const rows: CanonicalTxn[] = [];
+  let open: { serial: number; txnDate: string; valueDate: string; parts: string[] } | null = null;
+  let previousBalance: number | null = null;
+
+  for (const page of pages) {
+    for (const rawLine of page.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let body = line;
+      const anchor = line.match(APP_ANCHOR);
+      if (anchor) {
+        if (open) return { ok: false, detail: `Sr no ${open.serial}: no amounts found before the next row` };
+        open = { serial: Number.parseInt(anchor[1], 10), txnDate: anchor[2], valueDate: anchor[3], parts: [] };
+        body = anchor[4];
+      } else if (!open) {
+        continue;
+      }
+      const trail = body.match(APP_TRAIL);
+      if (!trail) {
+        if (isFooter(body)) return { ok: false, detail: `Sr no ${open.serial}: no amounts found before the page footer` };
+        open.parts.push(body);
+        continue;
+      }
+      open.parts.push(body.slice(0, trail.index).trim());
+      const parts = open.parts.filter((part) => part.length > 0);
+      // UPI text never contains spaces, so a wrap there is rejoined without one.
+      const description = (parts[0]?.startsWith("UPI/") ? parts.join("") : parts.join(" ")).replace(/\s+/g, " ");
+      const [, debit, credit, balanceText, side] = trail;
+      const txnDate = appDateToIso(open.txnDate);
+      const valueDate = appDateToIso(open.valueDate);
+      if (!txnDate || !valueDate) return { ok: false, detail: `Sr no ${open.serial}: unreadable date` };
+      if ((debit === "-") === (credit === "-")) {
+        return { ok: false, detail: `Sr no ${open.serial}: expected exactly one of debit and credit` };
+      }
+      const drCr = debit !== "-" ? "debit" : "credit";
+      const amountPaise = toPaise(drCr === "debit" ? debit : credit);
+      const balancePaise = (side === "DR" ? -1 : 1) * toPaise(balanceText);
+      // The balance column must follow from the previous row; otherwise a column was misread.
+      if (previousBalance !== null && previousBalance + (drCr === "credit" ? amountPaise : -amountPaise) !== balancePaise) {
+        return { ok: false, detail: `Sr no ${open.serial}: the balance does not follow from the previous row` };
+      }
+      previousBalance = balancePaise;
+      const channel = detectChannel(description);
+      const extracted = extractFromDescription(description, channel);
+      rows.push({
+        txnDate,
+        valueDate,
+        amountPaise,
+        drCr,
+        channel,
+        refId: extracted.refId,
+        rawDescription: description,
+        parsedPurpose: extracted.parsedPurpose,
+        counterpartyKey: extracted.counterpartyKey,
+        balancePaise,
+        rawPayload: { serial: open.serial, balanceText: `${balanceText} ${side}`, format: "bobWorldApp" },
+      });
+      open = null;
+    }
+  }
+  if (open) return { ok: false, detail: `Sr no ${open.serial}: no amounts found` };
+  return { ok: true, rows };
+};
+
+type BobStatementFormat = "bobWorld" | "bobWorldApp" | "eStatement";
 
 const detectBobFormat = (pages: string[]): BobStatementFormat => {
   const blob = pages.join("\n");
+  if (APP_ANCHOR_ANYWHERE.test(blob)) return "bobWorldApp";
   if (ANCHOR.test(blob)) return "bobWorld";
   if (
     /DATE\s+NARRATION/i.test(blob) ||
@@ -579,6 +673,16 @@ export const bobAdapter: BankAdapter = {
       const rows: CanonicalTxn[] =
         format === "eStatement"
           ? yield* parseEStatementPages(pages)
+          : format === "bobWorldApp"
+            ? yield* Effect.gen(function* () {
+                const parsed = parseBobAppPages(pages);
+                if (!parsed.ok) {
+                  return yield* Effect.fail(
+                    new ParseError({ bank: "bob", stage: "splitAmounts", detail: parsed.detail }),
+                  );
+                }
+                return parsed.rows;
+              })
           : yield* Effect.gen(function* () {
               const bobWorldRows: CanonicalTxn[] = [];
               for (const page of pages) {
