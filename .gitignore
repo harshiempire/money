@@ -47,3 +47,8 @@ drizzle/migrations/meta/_journal.json.bak
 *.xlsx
 sample-data/
 .frugal-fable/
+
+# playwright
+/test-results/
+/playwright-report/
+/e2e/.auth/
