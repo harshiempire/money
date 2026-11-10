@@ -1459,3 +1459,17 @@ dbTest('settlement stale guards retain exact errors at the app, MCP core boundar
     if (oldSecret === undefined) delete process.env.AUTH_SECRET; else process.env.AUTH_SECRET = oldSecret;
   }
 }), 30000);
+
+dbTest("default categories: simultaneous first loads for a new user do not collide", () => fixture(async (f) => {
+  const { ensureDefaultCategories } = await import("@/db/seed-categories");
+  const id = crypto.randomUUID();
+  await f.db.insert(f.schema.users).values({ id, email: `${id}@example.test` });
+  try {
+    await Promise.all(Array.from({ length: 8 }, () => ensureDefaultCategories(id)));
+    const rows = await f.db.select({ name: f.schema.categories.name }).from(f.schema.categories).where(eq(f.schema.categories.userId, id));
+    expect(rows).toHaveLength(13);
+    expect(new Set(rows.map((r) => r.name)).size).toBe(13);
+  } finally {
+    await f.db.delete(f.schema.users).where(eq(f.schema.users.id, id));
+  }
+}), 30000);

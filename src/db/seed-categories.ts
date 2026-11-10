@@ -37,5 +37,9 @@ export async function ensureDefaultCategories(userId: string) {
 
   await db
     .insert(schema.categories)
-    .values(missing.map((d) => ({ userId, name: d.name, kind: d.kind })));
+    .values(missing.map((d) => ({ userId, name: d.name, kind: d.kind })))
+    // Two first page loads for a new user can both see "missing" and insert.
+    .onConflictDoNothing({
+      target: [schema.categories.userId, schema.categories.name],
+    });
 }
