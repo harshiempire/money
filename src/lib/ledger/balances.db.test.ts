@@ -63,7 +63,8 @@ describe.skipIf(!enabled)('shared balance adapters on local Docker DB', () => {
       const sql=buildMcpQueryTables(view,[],[]);
       expect(view.people).toHaveLength(3);
       expect(core.find(p=>p.personId===people[2].id)).toMatchObject({owedToYouPaise:1000,openShareCount:1});
-      expect(view.shares[4].person).toBe('Arjun');
+      // The read model has no row order; view.shares maps model.shares one to one.
+      expect(view.shares[model.shares.findIndex(s=>s.id===shares[4])].person).toBe('Arjun');
       expect(view.people[0].linked_payees).toHaveLength(0); // Arjun sorts first
       for (const p of core) {
         const index=core.indexOf(p), mcp=view.people[index];
