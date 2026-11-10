@@ -1,0 +1,107 @@
+# Typecheck, unit tests and database tests. The database tests only ever talk
+# to the throwaway Postgres service below; nothing here uses a repository secret.
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Named explicitly so pipelines run with pipefail.
+    shell: bash
+
+jobs:
+  typecheck-and-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No service container here, and these keep the guarded database tests
+    # skipped, so this job cannot reach a database.
+    env:
+      DATABASE_URL: ""
+      MONEY_LEDGER_TEST_DB: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - run: npm install --global pnpm@11.1.3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: bun --no-env-file test
+
+  database-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac # 17-alpine
+        env:
+          POSTGRES_DB: money_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:54330:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d money_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres@127.0.0.1:54330/money_test
+      MONEY_LEDGER_TEST_DB: "1"
+      # The tests set their own secret where it matters; this is not a real one.
+      AUTH_SECRET: ci-placeholder-not-a-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - run: npm install --global pnpm@11.1.3
+      - run: pnpm install --frozen-lockfile
+      - name: Write the URL file the test guards compare against
+        run: |
+          url_file="$HOME/.money-scratch/ledger-test/dburl"
+          mkdir -p "$(dirname "$url_file")"
+          printf '%s\n' "$DATABASE_URL" > "$url_file"
+          echo "MONEY_LEDGER_TEST_DBURL_FILE=$url_file" >> "$GITHUB_ENV"
+      - name: Run migrations on the throwaway database
+        run: |
+          case "$DATABASE_URL" in
+            *127.0.0.1:54330/money_test) ;;
+            *) echo "Refusing to migrate: unexpected DATABASE_URL" >&2; exit 1 ;;
+          esac
+          pnpm exec drizzle-kit migrate
+      # A guard mismatch skips tests instead of failing them, so a run counts
+      # only if something passed and nothing was skipped.
+      - name: Run the database tests
+        run: |
+          log="$(mktemp)"
+          check_counts() {
+            grep -Eq '^ *[1-9][0-9]* pass$' "$log" || { echo "No tests passed" >&2; exit 1; }
+            if grep -Eq '^ *[1-9][0-9]* skip$' "$log"; then echo "Tests were skipped; the guards did not match" >&2; exit 1; fi
+          }
+          for file in src/lib/ledger/ledger.db.test.ts src/lib/ledger/balances.db.test.ts src/lib/ledger/spend-repayment.db.test.ts; do
+            bun test --no-env-file --conditions=react-server "$file" 2>&1 | tee "$log"
+            check_counts
+          done
+      # On its own process: this file's module mocks are process-wide.
+      - name: Run the action database tests
+        run: |
+          log="$(mktemp)"
+          bun --no-env-file test --conditions=react-server ./scripts/actions.db.test.ts 2>&1 | tee "$log"
+          grep -Eq '^ *[1-9][0-9]* pass$' "$log" || { echo "No tests passed" >&2; exit 1; }
+          if grep -Eq '^ *[1-9][0-9]* skip$' "$log"; then echo "Tests were skipped; the guards did not match" >&2; exit 1; fi
