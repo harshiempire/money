@@ -229,7 +229,7 @@ export function SettleButton({
       <dialog
         ref={dialogRef}
         onClose={() => setReceipt(null)}
-        className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog p-0 backdrop:bg-black/40"
       >
         {receipt ? (
           <SettleReceipt receipt={receipt} onDone={close} />
@@ -275,8 +275,8 @@ function SettleReceipt({
 }) {
   const hasShares = receipt.applied.length > 0;
   return (
-    <div className="w-[32rem] max-w-[90vw] p-5">
-      <h2 className="text-lg font-semibold">Settlement saved</h2>
+    <div className="md w-[32rem] max-w-[90vw]">
+      <h2>Settlement saved</h2>
       {hasShares && (
         <ul className="mt-3 space-y-1.5 text-sm">
           {receipt.applied.map((row) => (
@@ -313,11 +313,11 @@ function SettleReceipt({
           </div>
         )}
       </dl>
-      <footer className="mt-5 flex justify-end">
+      <footer className="md-footer md-footer-end">
         <button
           type="button"
           onClick={onDone}
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+          className="gs-primary"
         >
           Done
         </button>
@@ -444,13 +444,13 @@ function SettleForm({
   };
 
   return (
-    <div className="w-[32rem] max-w-[90vw] p-5">
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Mark as settlement</h2>
+    <div className="md w-[32rem] max-w-[90vw]">
+      <header className="md-title">
+        <h2>Mark as settlement</h2>
         <button
           type="button"
           onClick={onClose}
-          className="text-sm text-neutral-500 hover:underline"
+          className="gs-text-button"
         >
           Close
         </button>
@@ -647,7 +647,7 @@ function SettleForm({
         </fieldset>
       )}
 
-      <footer className="mt-5 flex items-center justify-between">
+      <footer className="md-footer">
         {existing.length > 0 ||
         residual.disposition !== null ||
         residual.overpaymentPayablePaise > 0 ? (
@@ -655,7 +655,7 @@ function SettleForm({
             type="button"
             onClick={remove}
             disabled={pending}
-            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+            className="md-danger"
           >
             Clear settlement
           </button>
@@ -667,7 +667,7 @@ function SettleForm({
             type="button"
             onClick={onClose}
             disabled={pending}
-            className="rounded px-3 py-1.5 text-sm text-neutral-600 disabled:opacity-50 dark:text-neutral-400"
+            className="md-cancel"
           >
             Cancel
           </button>
@@ -686,7 +686,7 @@ function SettleForm({
                     ? "Enter who you owe the overpayment back to"
                     : undefined
             }
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+            className="gs-primary"
           >
             {pending ? "Saving…" : "Save"}
           </button>

@@ -144,7 +144,7 @@ export function MonthJumpDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="m-auto w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-neutral-200 bg-white p-4 text-neutral-900 shadow-lg backdrop:bg-black/60 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+      className="money-dialog m-auto w-[min(22rem,calc(100vw-2rem))] p-4 shadow-lg backdrop:bg-black/40"
       onClose={onClose}
       onClick={(event) => {
         if (event.target === event.currentTarget) dialogRef.current?.close();

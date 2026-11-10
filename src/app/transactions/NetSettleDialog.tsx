@@ -221,7 +221,7 @@ export function NetSettleButton({
       </button>
       <dialog
         ref={dialogRef}
-        className="settlement-dialog rounded-xl p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog settlement-dialog p-0 backdrop:bg-black/40"
         aria-label="Settle up"
         onCancel={(event) => {
           event.preventDefault();
@@ -559,13 +559,13 @@ function NetSettleForm({
   };
 
   return (
-    <div className="max-h-[90vh] w-[42rem] max-w-[95vw] overflow-y-auto p-5">
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Net settle</h2>
+    <div className="md w-[42rem] max-w-[95vw]">
+      <header className="md-title">
+        <h2>Net settle</h2>
         <button
           type="button"
           onClick={onClose}
-          className="text-sm text-neutral-500 hover:underline"
+          className="gs-text-button"
         >
           Close
         </button>
@@ -690,13 +690,13 @@ function NetSettleForm({
 
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
 
-      <footer className="mt-5 flex items-center justify-between">
+      <footer className="md-footer">
         {existingNetEventId ? (
           <button
             type="button"
             onClick={remove}
             disabled={pending}
-            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+            className="md-danger"
           >
             Reverse net event
           </button>
@@ -708,7 +708,7 @@ function NetSettleForm({
             type="button"
             onClick={onClose}
             disabled={pending}
-            className="rounded px-3 py-1.5 text-sm text-neutral-600 disabled:opacity-50 dark:text-neutral-400"
+            className="md-cancel"
           >
             Cancel
           </button>
@@ -721,7 +721,7 @@ function NetSettleForm({
               !hasNonZeroLeg ||
               Boolean(overAllocationError)
             }
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+            className="gs-primary"
           >
             {pending ? "Saving…" : "Save net event"}
           </button>

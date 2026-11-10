@@ -45,7 +45,7 @@ export function CashSettlementButton({
       </button>
       <dialog
         ref={dialogRef}
-        className="rounded-lg p-0 backdrop:bg-black/40 dark:bg-neutral-900 dark:text-neutral-100"
+        className="money-dialog p-0 backdrop:bg-black/40"
       >
         <CashSettlementForm
           splitParticipantId={splitParticipantId}
@@ -112,13 +112,13 @@ function CashSettlementForm({
   };
 
   return (
-    <div className="w-[28rem] max-w-[90vw] p-5">
-      <header className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Record cash settlement</h2>
+    <div className="md w-[28rem] max-w-[90vw]">
+      <header className="md-title">
+        <h2>Record cash settlement</h2>
         <button
           type="button"
           onClick={onClose}
-          className="text-sm text-neutral-500 hover:underline"
+          className="gs-text-button"
         >
           Close
         </button>
@@ -182,7 +182,7 @@ function CashSettlementForm({
                   type="button"
                   onClick={() => remove(settlement.id)}
                   disabled={pending}
-                  className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                  className="md-danger"
                 >
                   Remove
                 </button>
@@ -192,12 +192,12 @@ function CashSettlementForm({
         </div>
       )}
 
-      <footer className="mt-5 flex justify-end gap-2">
+      <footer className="md-footer md-footer-end">
         <button
           type="button"
           onClick={onClose}
           disabled={pending}
-          className="rounded px-3 py-1.5 text-sm text-neutral-600 disabled:opacity-50 dark:text-neutral-400"
+          className="md-cancel"
         >
           Cancel
         </button>
@@ -205,7 +205,7 @@ function CashSettlementForm({
           type="button"
           onClick={submit}
           disabled={pending || !!amountError || outstandingPaise <= 0}
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="gs-primary"
         >
           {pending ? "Saving..." : "Save"}
         </button>
